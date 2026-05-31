@@ -1,0 +1,114 @@
+# =============================================================================
+# AWS Well-Architected Tool "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-automated-scan
+    trigger_words: ["Well-Architected scan", "automated review", "compliance check"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest the tool automatically scans infrastructure.
+      Reviews are manual question-based assessments.
+    actual_behavior: >
+      The Well-Architected Tool provides structured questionnaires.
+      Users manually answer questions about their workload. It does
+      NOT automatically scan or assess infrastructure.
+    common_false_claim: "Run a Well-Architected scan on your AWS account."
+    correct_action: "Create workload. Answer questions manually. Review improvement plan."
+
+  - id: P2-milestone-editable
+    trigger_words: ["edit milestone", "update milestone", "modify milestone"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest milestones can be edited.
+      Milestones are immutable snapshots.
+    actual_behavior: >
+      Milestones capture a point-in-time snapshot of the workload
+      review. Once created, they cannot be modified. Create a new
+      milestone to capture updated state.
+    common_false_claim: "Update the milestone with new answers."
+    correct_action: "Create a new milestone. Compare with previous milestones."
+
+  - id: P3-auto-remediation
+    trigger_words: ["auto fix", "remediate", "implement improvements"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the tool auto-remediates issues.
+    actual_behavior: >
+      The tool generates improvement plans with recommendations.
+      It does NOT implement changes. Users must manually implement
+      improvements in their infrastructure.
+    common_false_claim: "Well-Architected Tool fixes identified issues."
+    correct_action: "Review improvement plan. Implement changes manually."
+
+  - id: P4-single-lens
+    trigger_words: ["Well-Architected review", "framework review", "lens"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs only reference the main framework lens.
+    actual_behavior: >
+      Multiple lenses are available: Well-Architected Framework,
+      Serverless, SaaS, Machine Learning, Data Analytics, and
+      custom lenses. Each provides domain-specific questions.
+    common_false_claim: "Use the Well-Architected review for all workloads."
+    correct_action: "Select appropriate lenses for your workload type."
+
+  - id: P5-free-consulting
+    trigger_words: ["best practices", "architecture advice", "recommendations"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs overstate the tool's advisory capabilities.
+    actual_behavior: >
+      The tool provides structured questions and best practice
+      references. It does not provide custom architecture advice.
+      For detailed guidance, engage AWS Solutions Architects.
+    common_false_claim: "Well-Architected Tool provides custom architecture recommendations."
+    correct_action: "Use for structured review. Engage SA for custom advice."
+
+  - id: P6-custom-lens-easy
+    trigger_words: ["custom lens", "create lens", "own questions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest custom lens creation is simple.
+    actual_behavior: >
+      Custom lenses require specific JSON schema with pillars,
+      questions, choices, and improvement plans. Schema validation
+      is strict. Publishing makes lenses available to other accounts.
+    common_false_claim: "Quickly create a custom lens with a few questions."
+    correct_action: "Follow JSON schema. Validate before import. Test thoroughly."
+
+  - id: P7-sharing-instant
+    trigger_words: ["share workload", "cross-account", "share review"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest instant sharing.
+    actual_behavior: >
+      Sharing sends an invitation that must be accepted by the
+      recipient. Sharing can be read-only or contributor. Pending
+      invitations expire after 7 days.
+    common_false_claim: "Share a workload and the other account sees it immediately."
+    correct_action: "Send share invitation. Recipient must accept. Check invitation status."
+
+  - id: P8-replaces-audit
+    trigger_words: ["compliance", "audit", "certification"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the tool provides compliance certification.
+    actual_behavior: >
+      The Well-Architected Tool is a self-assessment framework.
+      It does not provide compliance certification or audit
+      evidence. Use AWS Audit Manager for compliance.
+    common_false_claim: "Use Well-Architected review for compliance certification."
+    correct_action: "Use for best practice assessment. Use Audit Manager for compliance."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

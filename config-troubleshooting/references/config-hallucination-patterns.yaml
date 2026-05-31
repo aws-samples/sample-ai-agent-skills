@@ -1,0 +1,143 @@
+# =============================================================================
+# AWS Config "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-recorder-not-needed
+    trigger_words: ["config rule", "rule evaluation", "compliance", "non-compliant"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume Config rules work independently of the recorder.
+      Rules require the recorder to be running to receive configuration
+      change events and evaluate resources.
+    actual_behavior: >
+      The configuration recorder must be in "recording" state for
+      change-triggered rules to fire. Periodic rules also require the
+      recorder to have recorded configuration items. If the recorder
+      is stopped, rules show stale or no compliance data.
+    common_false_claim: "Config rules evaluate independently — the recorder is only for history."
+    correct_action: "Always verify recorder status with describe-configuration-recorder-status before debugging rules."
+
+  - id: P2-all-resources-recorded
+    trigger_words: ["record all", "all resource types", "recording everything", "configuration items"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume "Record all supported resource types" means every
+      AWS resource is recorded. Some types require explicit inclusion.
+    actual_behavior: >
+      "Record all supported resource types" covers most but not all
+      resource types. Newer services, third-party resources, and some
+      specific resource types require explicit inclusion. Global
+      resources (IAM) are only recorded in the home region by default.
+      Recording global resources in multiple regions creates duplicates.
+    common_false_claim: "Enable 'Record all' and every resource in your account will be tracked."
+    correct_action: "Check describe-configuration-recorders for the specific resource types being recorded."
+
+  - id: P3-conformance-pack-unlimited
+    trigger_words: ["conformance pack", "compliance pack", "rule pack", "pack deployment"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest conformance packs can contain unlimited rules.
+      Packs are limited to 50 rules and are CloudFormation-based.
+    actual_behavior: >
+      A conformance pack can contain a maximum of 50 Config rules.
+      Packs deploy as CloudFormation stacks and are subject to
+      CloudFormation limits. Organization conformance packs deploy
+      to all member accounts. Failed deployments show in CloudFormation
+      stack events. Template parameters must match expected inputs.
+    common_false_claim: "Add all 200 rules to a single conformance pack for centralized compliance."
+    correct_action: "Split rules across multiple conformance packs if exceeding the 50-rule limit."
+
+  - id: P4-remediation-config-role
+    trigger_words: ["auto-remediation", "automatic remediation", "remediation action", "fix automatically"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate the Config service role with the remediation
+      execution role. Remediation uses SSM Automation with its own
+      role and permissions.
+    actual_behavior: >
+      Auto-remediation executes SSM Automation documents. The execution
+      role for remediation is separate from the Config service role.
+      The role must have ssm:StartAutomationExecution plus all permissions
+      required by the specific automation document. Remediation failures
+      appear in SSM Automation execution history, not Config console.
+    common_false_claim: "The Config service role handles remediation — just add SSM permissions to it."
+    correct_action: "Check the remediation configuration for the execution role and verify SSM Automation execution status."
+
+  - id: P5-aggregator-automatic
+    trigger_words: ["aggregator", "multi-account", "cross-account config", "centralized view"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest aggregators automatically collect data from all
+      accounts. Source accounts must explicitly authorize the aggregator
+      unless using Organizations.
+    actual_behavior: >
+      Individual account aggregators require explicit authorization
+      from each source account via put-aggregation-authorization.
+      Organization aggregators bypass this but need Organizations
+      access. Without authorization, the aggregator shows no data
+      from that account. Data is eventually consistent with delays.
+    common_false_claim: "Create an aggregator and it will automatically pull data from all accounts."
+    correct_action: "Verify aggregation authorizations exist for each source account, or use organization aggregator."
+
+  - id: P6-advanced-query-historical
+    trigger_words: ["advanced query", "select resource", "SQL query", "config query"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest advanced queries can search historical configuration
+      data. Queries only run against the current configuration snapshot.
+    actual_behavior: >
+      Advanced queries using select-resource-config run against the
+      CURRENT configuration snapshot only. For historical data, use
+      get-resource-config-history. Not all resource attributes are
+      queryable. SELECT * is not supported — specific fields must be
+      listed. Results are paginated at 100 per page. Complex queries
+      may time out.
+    common_false_claim: "Use advanced queries to find what your resource looked like last week."
+    correct_action: "Use advanced queries for current state. Use get-resource-config-history for historical data."
+
+  - id: P7-organization-rule-member-control
+    trigger_words: ["organization rule", "org rule", "member account rule", "organization config"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest member accounts can modify or delete organization
+      Config rules. Only the management account or delegated admin
+      can manage them.
+    actual_behavior: >
+      Organization Config rules are managed exclusively by the
+      management account or delegated administrator. Member accounts
+      can see the rules and their compliance results but cannot modify,
+      delete, or override them. Organization rules count toward the
+      per-account rule limit in each member account.
+    common_false_claim: "The member account admin can customize the organization rule for their account."
+    correct_action: "Manage organization rules from the management account or delegated admin only."
+
+  - id: P8-config-free-tier
+    trigger_words: ["config cost", "config pricing", "free tier", "configuration item cost"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs underestimate Config costs or suggest it has a generous
+      free tier. Config charges per configuration item and per rule
+      evaluation, which scales quickly.
+    actual_behavior: >
+      AWS Config charges per configuration item recorded and per
+      Config rule evaluation. There is no perpetual free tier for
+      Config. High-frequency changes on many resources generate
+      thousands of configuration items daily. Each rule evaluation
+      per resource is a separate charge. Conformance packs with
+      many rules multiply costs. Use resource type filtering to
+      control costs.
+    common_false_claim: "AWS Config is essentially free for small accounts with few resources."
+    correct_action: "Estimate costs based on number of resources, change frequency, and number of rules."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

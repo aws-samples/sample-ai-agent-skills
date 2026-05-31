@@ -1,0 +1,120 @@
+# =============================================================================
+# CodeArtifact "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-token-long-lived
+    trigger_words: ["codeartifact token", "authorization token", "codeartifact login"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest CodeArtifact tokens are long-lived or permanent.
+      Maximum token lifetime is 12 hours.
+    actual_behavior: >
+      CodeArtifact auth tokens expire after 12 hours maximum. The
+      --duration-seconds parameter caps at 43200 (12 hours). CI/CD
+      pipelines must refresh tokens per build job.
+    common_false_claim: "The CodeArtifact token lasts for 24 hours."
+    correct_action: "Refresh auth token before each build job. Max lifetime is 12 hours."
+
+  - id: P2-overwrite-version
+    trigger_words: ["overwrite package", "republish version", "update package version"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest overwriting existing package versions. CodeArtifact
+      versions are immutable once published.
+    actual_behavior: >
+      Published package versions cannot be overwritten. Publishing the
+      same version again fails with ConflictException. You must delete
+      the version first or publish with a new version number.
+    common_false_claim: "Just publish the same version again to update it."
+    correct_action: "Publish a new version number, or delete-package-versions then re-publish."
+
+  - id: P3-extra-index-url-safe
+    trigger_words: ["pip extra-index-url", "pip codeartifact", "pypi codeartifact"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using --extra-index-url for pip with CodeArtifact.
+      This creates a dependency confusion attack vector.
+    actual_behavior: >
+      Using --extra-index-url allows pip to check both CodeArtifact and
+      PyPI, enabling dependency confusion attacks. An attacker can publish
+      a malicious package with the same name on PyPI.
+    common_false_claim: "Use pip install --extra-index-url to add CodeArtifact."
+    correct_action: "Use --index-url (not --extra-index-url) and configure upstream connections."
+
+  - id: P4-cross-account-iam-only
+    trigger_words: ["cross-account codeartifact", "share domain", "cross-account repository"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest only IAM permissions for cross-account access.
+      Domain permissions policy is also required.
+    actual_behavior: >
+      Cross-account CodeArtifact access requires a domain permissions
+      policy granting access to the remote account AND IAM permissions
+      in the remote account. Missing either causes access denied.
+    common_false_claim: "Just add CodeArtifact permissions to the IAM role."
+    correct_action: "Configure both domain permissions policy and IAM policy."
+
+  - id: P5-multiple-external-connections
+    trigger_words: ["external connection", "public registry", "npmjs pypi"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest adding multiple external connections to one repository.
+      Each repository supports only one external connection.
+    actual_behavior: >
+      A CodeArtifact repository can have at most one external connection.
+      To access npm and PyPI, create separate repositories with different
+      external connections and chain them as upstreams.
+    common_false_claim: "Add both npmjs and pypi external connections to your repository."
+    correct_action: "Create separate repos for each external connection and chain as upstreams."
+
+  - id: P6-npm-auto-configured
+    trigger_words: ["npm codeartifact", "npm install codeartifact", "npm registry"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume npm automatically uses CodeArtifact after login.
+      npm requires explicit registry configuration.
+    actual_behavior: >
+      npm does not automatically use CodeArtifact. You must run
+      aws codeartifact login --tool npm or manually configure the
+      registry in .npmrc. Without this, npm uses public npmjs.
+    common_false_claim: "After getting the auth token, npm will use CodeArtifact."
+    correct_action: "Run aws codeartifact login --tool npm or configure .npmrc manually."
+
+  - id: P7-domain-different-kms
+    trigger_words: ["domain encryption", "repository kms", "different kms key"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest using different KMS keys for repositories in the
+      same domain. All repos in a domain share one KMS key.
+    actual_behavior: >
+      All repositories within a CodeArtifact domain share the same
+      KMS encryption key. You cannot configure per-repository encryption.
+      Create separate domains if different encryption keys are needed.
+    common_false_claim: "Configure a different KMS key for each repository."
+    correct_action: "Use separate domains for different encryption requirements."
+
+  - id: P8-upstream-order-irrelevant
+    trigger_words: ["upstream repository", "upstream order", "package resolution"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may claim upstream resolution order doesn't matter.
+      Order determines which package version is returned.
+    actual_behavior: >
+      Upstream repositories are checked in order. The first repository
+      containing the requested package wins. Incorrect ordering can
+      cause dependency confusion or wrong version resolution.
+    common_false_claim: "The order of upstream repositories doesn't matter."
+    correct_action: "Order upstreams with internal repos first, external connections last."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,135 @@
+# =============================================================================
+# Amazon FSx "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-lustre-scratch-durability
+    trigger_words: ["lustre scratch", "scratch file system", "scratch durability", "scratch replication"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate Lustre scratch and persistent deployment types.
+      Scratch has NO data replication — hardware failure means data loss.
+      Persistent replicates within the AZ.
+    actual_behavior: >
+      Lustre scratch file systems do not replicate data. If underlying
+      hardware fails, data is lost permanently. Scratch is designed for
+      temporary workloads where data can be regenerated from S3 or
+      recomputed. Persistent Lustre replicates data within the AZ and
+      supports automatic server replacement.
+    common_false_claim: "Lustre scratch file systems replicate data for durability."
+    correct_action: "Use persistent Lustre for durable storage. Use scratch only for temporary/reproducible data."
+
+  - id: P2-storage-capacity-shrink
+    trigger_words: ["shrink storage", "decrease capacity", "reduce storage", "downsize file system"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume storage capacity can be both increased and decreased.
+      FSx storage capacity scaling is one-way — increase only.
+    actual_behavior: >
+      Storage capacity can only be increased, never decreased, for all
+      FSx file system types. For Lustre, increases must be in increments
+      of the original capacity. To reduce storage, you must create a new
+      smaller file system and migrate data. Over-provisioning cannot be
+      reversed in place.
+    common_false_claim: "You can decrease the storage capacity to save costs."
+    correct_action: "Plan capacity carefully. To reduce, create a new file system and migrate data."
+
+  - id: P3-openzfs-smb-support
+    trigger_words: ["openzfs smb", "openzfs windows", "openzfs cifs", "openzfs share"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs generalize multi-protocol support across all FSx types.
+      OpenZFS supports NFS only — no SMB or iSCSI.
+    actual_behavior: >
+      FSx for OpenZFS supports only NFS (v3, v4.0, v4.1, v4.2). It does
+      not support SMB/CIFS or iSCSI protocols. For Windows client access,
+      an NFS client must be installed on the Windows host. Only ONTAP
+      supports multi-protocol (NFS + SMB + iSCSI) access.
+    common_false_claim: "Mount the OpenZFS file system as an SMB share on Windows."
+    correct_action: "Use NFS client on Windows or choose ONTAP for multi-protocol needs."
+
+  - id: P4-windows-no-ad
+    trigger_words: ["windows fsx without ad", "windows standalone", "windows no directory"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating Windows FSx without Active Directory.
+      Windows FSx requires AD for authentication — it cannot function
+      without joining a domain.
+    actual_behavior: >
+      FSx for Windows File Server requires joining an Active Directory
+      domain at creation time. This can be AWS Managed Microsoft AD or
+      a self-managed AD. The file system uses AD for all authentication
+      and authorization. There is no standalone mode for Windows FSx.
+    common_false_claim: "Create a Windows FSx file system with local user authentication."
+    correct_action: "Set up AWS Managed Microsoft AD or configure self-managed AD before creating Windows FSx."
+
+  - id: P5-lustre-multi-az
+    trigger_words: ["lustre multi-az", "lustre cross-az", "lustre failover az"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Lustre supports multi-AZ like Windows FSx.
+      Lustre is single-AZ only — both scratch and persistent.
+    actual_behavior: >
+      FSx for Lustre is always single-AZ. Neither scratch nor persistent
+      deployment types support multi-AZ. Persistent Lustre replicates
+      within the single AZ for durability. For cross-AZ access, clients
+      in other AZs can connect but with higher latency. Only Windows FSx
+      supports multi-AZ deployment.
+    common_false_claim: "Deploy Lustre in multi-AZ for high availability."
+    correct_action: "Use persistent Lustre for within-AZ durability. Use Windows FSx or ONTAP for multi-AZ."
+
+  - id: P6-ontap-svm-deletion
+    trigger_words: ["delete svm", "remove svm", "svm cleanup", "svm volumes"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deleting SVMs without warning about volume deletion.
+      Deleting an SVM deletes ALL volumes within it.
+    actual_behavior: >
+      Deleting an ONTAP SVM deletes all volumes, LUNs, and data within
+      that SVM. This is irreversible. Volumes must be individually backed
+      up before SVM deletion. You cannot delete an SVM that has volumes
+      with active data repository associations or SnapMirror relationships.
+    common_false_claim: "Delete the SVM — the volumes will be preserved."
+    correct_action: "Back up all volumes before SVM deletion. Verify no active relationships exist."
+
+  - id: P7-throughput-auto-scale
+    trigger_words: ["throughput auto", "throughput scales with storage", "automatic throughput"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume throughput automatically scales with storage capacity
+      for all FSx types. Throughput behavior differs by file system type.
+    actual_behavior: >
+      Lustre throughput is tied to storage capacity (MB/s per TiB varies
+      by deployment type). Windows, ONTAP, and OpenZFS have independently
+      configurable throughput capacity. Increasing storage on Windows FSx
+      does NOT increase throughput. ONTAP and OpenZFS throughput must be
+      explicitly updated.
+    common_false_claim: "Increasing storage capacity will automatically increase throughput."
+    correct_action: "Check file system type. For Windows/ONTAP/OpenZFS, update throughput capacity separately."
+
+  - id: P8-dra-immediate-sync
+    trigger_words: ["dra sync", "s3 sync immediate", "data repository instant", "auto import"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs claim Lustre DRA immediately syncs all S3 data to the file
+      system. Data is lazy-loaded on first access by default.
+    actual_behavior: >
+      Lustre Data Repository Association lazy-loads data from S3 on first
+      access — only metadata is imported initially. Full data transfer
+      requires an explicit import task or accessing the files. Auto-import
+      keeps metadata in sync with S3 changes but does not pre-load data.
+      Export tasks must be explicitly triggered to push changes to S3.
+    common_false_claim: "Creating a DRA immediately copies all S3 data to the Lustre file system."
+    correct_action: "Use import tasks for bulk data loading. DRA lazy-loads on first access by default."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

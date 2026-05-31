@@ -1,0 +1,127 @@
+# =============================================================================
+# AWS Elemental MediaPackage "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-v1-v2-api-mix
+    trigger_words: ["mediapackage", "channel group", "mediapackagev2"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs mix MediaPackage v1 and v2 APIs. They are separate services
+      with different resource models and CLI commands.
+    actual_behavior: >
+      MediaPackage v1 uses aws mediapackage commands with channels and
+      origin endpoints. MediaPackage v2 uses aws mediapackagev2 with
+      channel groups, channels, and origin endpoints. Resources are
+      not interchangeable between versions.
+    common_false_claim: "Use aws mediapackage list-channel-groups to see your channel groups."
+    correct_action: "Use aws mediapackagev2 for v2 resources, aws mediapackage for v1."
+
+  - id: P2-channel-url-playback
+    trigger_words: ["playback URL", "channel URL", "stream URL", "player URL"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs provide the channel ingest URL as the playback URL.
+      Players must use origin endpoint URLs.
+    actual_behavior: >
+      Channel URLs are for ingest (receiving content from MediaLive).
+      Origin endpoint URLs are for playback (serving content to players).
+      Each origin endpoint has a unique URL based on its packaging format.
+    common_false_claim: "Use the channel URL in your video player."
+    correct_action: "Use the origin endpoint URL from describe-origin-endpoint for playback."
+
+  - id: P3-drm-built-in-keys
+    trigger_words: ["DRM", "content protection", "Widevine", "FairPlay", "PlayReady"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MediaPackage manages DRM keys directly.
+      It requires an external SPEKE key provider.
+    actual_behavior: >
+      MediaPackage uses SPEKE protocol to request encryption keys from
+      an external key provider. You must set up a SPEKE-compatible
+      key server. MediaPackage does not store or manage DRM keys.
+      Common providers: AWS SPEKE Reference Server, PallyCon, BuyDRM.
+    common_false_claim: "Configure Widevine keys directly in MediaPackage."
+    correct_action: "Set up SPEKE key provider, configure its URL in origin endpoint encryption settings."
+
+  - id: P4-cdn-auth-header-name
+    trigger_words: ["CDN auth", "authorization header", "CloudFront secret", "origin access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs use wrong header names for CDN authorization.
+      MediaPackage uses specific custom header configuration.
+    actual_behavior: >
+      CDN authorization uses a custom header (configurable name) with
+      a secret value stored in Secrets Manager. CloudFront adds this
+      header via origin custom headers. MediaPackage validates the
+      header value against the Secrets Manager secret ARN.
+    common_false_claim: "Use the Authorization header for CDN auth."
+    correct_action: "Configure custom header name in MediaPackage, add matching header in CloudFront origin."
+
+  - id: P5-harvest-job-realtime
+    trigger_words: ["harvest", "clip", "live to VOD", "create VOD"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest harvest jobs are instant. They process
+      asynchronously and require content within the startover window.
+    actual_behavior: >
+      Harvest jobs are asynchronous and take time proportional to the
+      content duration. Content must be within the startover window
+      to be harvestable. Once content falls outside the window, it
+      cannot be harvested. Harvest jobs output to S3.
+    common_false_claim: "Create a harvest job to instantly clip the last hour."
+    correct_action: "Verify content is within startover window, create harvest job, poll for completion."
+
+  - id: P6-cors-native-apps
+    trigger_words: ["CORS", "cross-origin", "browser playback", "web player"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs apply CORS fixes to all playback issues. CORS only
+      affects browser-based players.
+    actual_behavior: >
+      CORS headers are only required for browser-based players (HLS.js,
+      dash.js, Shaka Player). Native apps (iOS, Android, smart TVs)
+      do not enforce CORS. Configuring CORS unnecessarily doesn't
+      cause harm but won't fix native app playback issues.
+    common_false_claim: "Enable CORS to fix playback on all devices."
+    correct_action: "Only configure CORS if browser-based players fail. Check other causes for native apps."
+
+  - id: P7-segment-duration-override
+    trigger_words: ["segment duration", "segment length", "latency reduction"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest MediaPackage can change segment duration independently.
+      It depends on the source segment duration from MediaLive.
+    actual_behavior: >
+      MediaPackage repackages content but cannot split or merge segments
+      from the source. The segment duration in MediaPackage must be
+      compatible with the source. To change segment duration, update
+      the source (MediaLive) encoding settings.
+    common_false_claim: "Set segment duration to 2 seconds in MediaPackage for lower latency."
+    correct_action: "Change segment duration in MediaLive first, then match in MediaPackage."
+
+  - id: P8-ingest-credential-rotation
+    trigger_words: ["rotate credentials", "ingest password", "credential rotation"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest rotating credentials without updating the source.
+      Rotation breaks ingest until the source is updated.
+    actual_behavior: >
+      Rotating ingest endpoint credentials generates new username/password.
+      The source (MediaLive) must be updated with new credentials
+      immediately. During the update window, ingest is interrupted.
+      Plan rotation during maintenance windows.
+    common_false_claim: "Rotate credentials for security — it's seamless."
+    correct_action: "Rotate credentials, immediately update MediaLive input with new credentials."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

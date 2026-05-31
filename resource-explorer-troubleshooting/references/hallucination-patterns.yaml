@@ -1,0 +1,149 @@
+# =============================================================================
+# AWS Resource Explorer "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-real-time-search
+    trigger_words: ["Resource Explorer", "real-time", "instant search", "live inventory"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Resource Explorer provides real-time resource
+      discovery. Indexing has significant delays.
+    actual_behavior: >
+      Resource Explorer indexes resources asynchronously. New or
+      modified resources may take up to 36 hours to appear in
+      search results. Deleted resources may persist in results
+      for a similar period. Resource Explorer is NOT a real-time
+      inventory system.
+    common_false_claim: "Resource Explorer instantly shows all resources in your account."
+    correct_action: "Allow up to 36 hours for indexing. Use service-specific APIs for real-time resource status."
+
+  - id: P2-all-resources-indexed
+    trigger_words: ["all resources", "every resource", "complete inventory", "all AWS services"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Resource Explorer indexes all AWS resource types.
+      Only a subset of resource types is supported.
+    actual_behavior: >
+      Resource Explorer supports a specific subset of AWS resource
+      types. Many resource types are NOT indexed, including some
+      common ones. The supported list is published and can be
+      queried via list-supported-resource-types. Unsupported
+      resources never appear in search results.
+    common_false_claim: "Resource Explorer provides a complete inventory of all AWS resources."
+    correct_action: "Check supported resource types with list-supported-resource-types. Use AWS Config for comprehensive inventory."
+
+  - id: P3-multiple-aggregators
+    trigger_words: ["aggregator", "multiple aggregators", "aggregator per region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating aggregator indexes in multiple regions.
+      Only one aggregator is allowed per account.
+    actual_behavior: >
+      Only ONE aggregator index is allowed per AWS account. The
+      aggregator collects data from all local indexes. Creating
+      a second aggregator fails with a ConflictException. To
+      change the aggregator region, delete the existing one and
+      create a new one.
+    common_false_claim: "Create an aggregator index in each region for better performance."
+    correct_action: "Create one aggregator index in your primary region. Create local indexes in all other regions."
+
+  - id: P4-search-grants-access
+    trigger_words: ["search", "discover", "find resources", "access resources"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate resource discovery with resource access.
+      Search permissions are separate from resource permissions.
+    actual_behavior: >
+      Resource Explorer search returns resource metadata (ARN,
+      type, region, tags). Having search permission does NOT
+      grant permission to access, modify, or delete the discovered
+      resources. Separate IAM permissions are required for each
+      resource type and action.
+    common_false_claim: "If you can find a resource in Resource Explorer, you can access it."
+    correct_action: "Use Resource Explorer for discovery. Grant separate IAM permissions for resource access."
+
+  - id: P5-automatic-indexing
+    trigger_words: ["automatic", "auto-index", "no setup", "works out of the box"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Resource Explorer works automatically without
+      setup. Index creation is required in each region.
+    actual_behavior: >
+      Resource Explorer requires explicit setup. You must create
+      an index in each region you want to search. An aggregator
+      index must be created for cross-region search. There is no
+      automatic indexing — regions without indexes are invisible.
+    common_false_claim: "Resource Explorer automatically indexes all resources in your account."
+    correct_action: "Create local indexes in each region. Create one aggregator index for cross-region search."
+
+  - id: P6-view-security
+    trigger_words: ["view", "filter", "restrict access", "security boundary"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest views provide security boundaries for resource
+      access. Views only filter search results.
+    actual_behavior: >
+      Views filter what resources appear in search results. They
+      do NOT provide security boundaries. A user with
+      resource-explorer-2:Search permission can create their own
+      view or use the default view to see all indexed resources.
+      Use IAM policies for access control, not views.
+    common_false_claim: "Create views to restrict which resources users can see."
+    correct_action: "Use views for convenience filtering. Use IAM policies for security boundaries."
+
+  - id: P7-tag-based-search-complete
+    trigger_words: ["tag search", "find by tag", "tag filter"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest tag-based search finds all tagged resources.
+      Only indexed resource types with tags are searchable.
+    actual_behavior: >
+      Tag-based search only works for supported resource types
+      that have been indexed. If a resource type is not supported
+      by Resource Explorer, its tags are not searchable. Tag
+      propagation delays also affect search results.
+    common_false_claim: "Search by tag to find all resources with a specific tag across your account."
+    correct_action: "Use Resource Explorer for tag search on supported types. Use Resource Groups Tagging API for comprehensive tag queries."
+
+  - id: P8-index-deletion-instant
+    trigger_words: ["delete index", "remove index", "recreate index"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deleting and recreating an index is a quick
+      fix. Re-indexing takes up to 36 hours.
+    actual_behavior: >
+      Deleting an index removes all indexed data for that region.
+      Re-creating the index starts fresh indexing which can take
+      up to 36 hours to complete. During this time, search results
+      for that region are incomplete or empty.
+    common_false_claim: "Delete and recreate the index to fix search issues."
+    correct_action: "Avoid deleting indexes unless necessary. Investigate the root cause first. If deletion is needed, plan for 36-hour re-indexing."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-index
+    trigger_words: ["delete index", "recreate", "start fresh"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Deleting an index removes all indexed resource data and
+      requires up to 36 hours to re-index. During this period,
+      resource search is unavailable for that region.
+    correct_approach: >
+      Investigate the root cause without deleting the index.
+      Check index status, view configuration, and supported
+      resource types first. Only delete as a last resort with
+      awareness of the re-indexing delay.
+
+  - id: R2-grant-admin-access
+    trigger_words: ["admin access", "full permissions", "resource-explorer-2:*"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Granting resource-explorer-2:* allows creating, modifying,
+      and deleting indexes and views. This can disrupt resource
+      search for the entire account.
+    correct_approach: >
+      Grant least-privilege permissions. For search-only users,
+      grant resource-explorer-2:Search and resource-explorer-2:GetView.
+      Reserve index and view management permissions for administrators.

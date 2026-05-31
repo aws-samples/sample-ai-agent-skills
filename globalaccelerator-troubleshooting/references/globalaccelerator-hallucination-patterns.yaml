@@ -1,0 +1,128 @@
+# =============================================================================
+# Global Accelerator "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-ga-is-not-cdn
+    trigger_words: ["cache", "CDN", "content delivery", "edge caching"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse Global Accelerator with CloudFront because both use
+      AWS edge locations. GA optimizes network paths but does NOT cache.
+    actual_behavior: >
+      Global Accelerator routes traffic over the AWS global network for
+      lower latency and better availability. It does NOT cache content.
+      Every request is forwarded to the endpoint. CloudFront is the CDN.
+    common_false_claim: "Global Accelerator caches content at edge locations for faster delivery."
+    correct_action: "Use CloudFront for caching. Use Global Accelerator for TCP/UDP network path optimization."
+
+  - id: P2-traffic-dial-scope
+    trigger_words: ["traffic dial", "traffic percentage", "weighted routing", "traffic shift"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse traffic dial (per-endpoint-group/regional) with
+      endpoint weights (per-endpoint). They suggest traffic dial for
+      per-endpoint control.
+    actual_behavior: >
+      Traffic dial is set per endpoint group and controls the percentage
+      of traffic routed to that region. Endpoint weights (0-255) control
+      distribution among endpoints within a group. Traffic dial 50% means
+      half the traffic that would go to that region is rerouted elsewhere.
+    common_false_claim: "Set the traffic dial to 50% on the endpoint to send half the traffic there."
+    correct_action: "Use traffic dial for regional traffic control. Use endpoint weights for per-endpoint distribution."
+
+  - id: P3-client-affinity-scope
+    trigger_words: ["client affinity", "sticky sessions", "session persistence", "SOURCE_IP"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume client affinity can be configured per endpoint group
+      or per endpoint, similar to ALB sticky sessions.
+    actual_behavior: >
+      Client affinity is configured at the listener level only. Options
+      are NONE (default) or SOURCE_IP. When SOURCE_IP is set, all
+      connections from the same client IP go to the same endpoint.
+      It applies to all endpoint groups under that listener.
+    common_false_claim: "Enable client affinity on the endpoint group for session persistence."
+    correct_action: "Configure client affinity on the listener. It applies to all endpoint groups under that listener."
+
+  - id: P4-health-check-independence
+    trigger_words: ["health check", "endpoint health", "unhealthy endpoint", "health status"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Global Accelerator uses the same health checks as
+      the underlying ELB. GA has its own independent health checks.
+    actual_behavior: >
+      Global Accelerator performs its own health checks with configurable
+      port, protocol, path, interval, and threshold. These are independent
+      of ALB/NLB target group health checks. An endpoint can be healthy
+      in ELB but unhealthy in GA if configurations differ.
+    common_false_claim: "Global Accelerator uses the ALB health check results to determine endpoint health."
+    correct_action: "Check GA health check configuration separately. Align GA and ELB health check settings if needed."
+
+  - id: P5-custom-routing-endpoints
+    trigger_words: ["custom routing", "port mapping", "deterministic routing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using custom routing with ALB or NLB endpoints.
+      Custom routing only supports EC2 instances via VPC subnets.
+    actual_behavior: >
+      Custom routing accelerators map specific port ranges to specific
+      EC2 instances in VPC subnets. They do NOT support ALB, NLB, or
+      EIP endpoints. Custom routing uses different API calls than
+      standard accelerators.
+    common_false_claim: "Use custom routing to map ports to your ALB targets."
+    correct_action: "Custom routing only supports EC2 instances in VPC subnets. Use standard accelerators for ALB/NLB."
+
+  - id: P6-static-ip-changes
+    trigger_words: ["static IP", "anycast IP", "change IP", "IP address"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest changing or releasing Global Accelerator static IPs.
+      The 2 anycast IPs are immutable for the accelerator's lifetime.
+    actual_behavior: >
+      Each accelerator gets exactly 2 static anycast IPs that cannot be
+      changed, released, or transferred. They persist until the accelerator
+      is deleted. To get different IPs, create a new accelerator. BYOIP
+      is supported for using your own IP ranges.
+    common_false_claim: "Release the static IP and allocate a new one for the accelerator."
+    correct_action: "Static IPs are immutable. Create a new accelerator for different IPs, or use BYOIP."
+
+  - id: P7-shield-advanced-cost
+    trigger_words: ["DDoS", "Shield", "DDoS protection", "Shield Advanced"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs either claim Shield Advanced is free with GA or fail to
+      mention that Shield Standard is automatically included.
+    actual_behavior: >
+      Shield Standard is automatically included at no extra cost.
+      Shield Advanced requires a separate subscription ($3,000/month)
+      and provides enhanced DDoS protection, DDoS response team access,
+      and cost protection for scaling during attacks.
+    common_false_claim: "Enable Shield Advanced on your accelerator for free DDoS protection."
+    correct_action: "Shield Standard is automatic and free. Shield Advanced is $3,000/month with enhanced features."
+
+  - id: P8-endpoint-group-region
+    trigger_words: ["endpoint group", "region", "multi-region", "endpoint region"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest adding endpoints from different regions to the same
+      endpoint group. Each endpoint group maps to exactly one region.
+    actual_behavior: >
+      Each endpoint group is associated with a specific AWS region.
+      All endpoints in a group must be in that region. For multi-region
+      failover, create multiple endpoint groups (one per region) under
+      the same listener. Traffic dial controls regional distribution.
+    common_false_claim: "Add endpoints from us-east-1 and eu-west-1 to the same endpoint group."
+    correct_action: "Create separate endpoint groups for each region. Use traffic dial for regional traffic control."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

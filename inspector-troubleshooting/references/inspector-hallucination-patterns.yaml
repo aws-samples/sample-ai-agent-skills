@@ -1,0 +1,148 @@
+# =============================================================================
+# Amazon Inspector "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-classic-vs-v2
+    trigger_words: ["Inspector", "assessment template", "assessment target", "assessment run"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse Inspector Classic and Inspector v2 because both
+      are called "Amazon Inspector." They suggest Classic concepts
+      like assessment templates and targets for v2 issues.
+    actual_behavior: >
+      Inspector v2 (inspector2 API) does not use assessment templates
+      or targets. It automatically discovers and scans resources when
+      enabled. Inspector Classic (inspector API) is legacy and uses
+      assessment templates, targets, and runs. The two services have
+      completely different APIs and workflows.
+    common_false_claim: "Create an assessment template to start scanning your EC2 instances."
+    correct_action: "Enable Inspector v2 scanning types (EC2, ECR, Lambda) via batch-update-account-status or the console."
+
+  - id: P2-agentless-scanning
+    trigger_words: ["agentless", "no agent needed", "automatic scanning", "scan without agent"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs claim Inspector v2 is fully agentless for EC2 scanning.
+      While Inspector v2 supports some agentless capabilities,
+      software vulnerability scanning for EC2 still requires SSM agent.
+    actual_behavior: >
+      EC2 software vulnerability scanning requires the SSM agent
+      running on the instance and the instance registered as a
+      managed instance in Systems Manager. Network reachability
+      analysis may work without an agent. ECR and Lambda scanning
+      are truly agentless. Always verify SSM agent status for
+      EC2 scanning issues.
+    common_false_claim: "Inspector v2 scans EC2 instances automatically without any agent."
+    correct_action: "Ensure SSM agent is installed, running, and the instance has an IAM role with SSM permissions."
+
+  - id: P3-suppression-fixes-vuln
+    trigger_words: ["suppress finding", "hide finding", "dismiss finding", "ignore vulnerability"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest suppression as a way to handle vulnerabilities,
+      implying the vulnerability is resolved. Suppression only
+      hides the finding from the active view.
+    actual_behavior: >
+      Suppression rules filter findings from the active findings
+      list. The vulnerability still exists on the resource. The
+      finding still exists in Inspector (viewable with suppressed
+      filter). Suppression is for accepted risks after proper
+      risk assessment, not for remediation. Always prefer
+      patching or mitigation over suppression.
+    common_false_claim: "Suppress the finding to resolve the vulnerability."
+    correct_action: "Remediate the vulnerability by patching. Only suppress after formal risk acceptance."
+
+  - id: P4-cross-region-findings
+    trigger_words: ["all findings", "cross-region", "global view", "all regions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Inspector provides a global view of findings
+      across all regions. Findings are regional and require
+      per-region queries or Security Hub aggregation.
+    actual_behavior: >
+      Inspector findings exist only in the region where the
+      resource is located. To see all findings, you must query
+      each region separately or use Security Hub with cross-region
+      aggregation enabled. The Inspector console shows only
+      findings for the current region.
+    common_false_claim: "Check the Inspector dashboard for findings across all regions."
+    correct_action: "Query each region separately or use Security Hub cross-region aggregation."
+
+  - id: P5-manual-rescan
+    trigger_words: ["rescan", "trigger scan", "manual scan", "force scan"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manually triggering Inspector scans. Inspector v2
+      scanning is event-driven and cannot be manually triggered.
+    actual_behavior: >
+      Inspector v2 scans are triggered automatically by events:
+      EC2 — SSM inventory changes, new CVEs, instance state changes.
+      ECR — image push, new CVEs. Lambda — function create/update,
+      new CVEs. There is no "start scan" API. To trigger a rescan
+      of an EC2 instance, update the SSM agent inventory or
+      restart the SSM agent.
+    common_false_claim: "Run aws inspector2 start-scan to rescan your instances."
+    correct_action: "Inspector scans automatically. To trigger EC2 rescan, restart SSM agent or update inventory."
+
+  - id: P6-ecr-basic-vs-enhanced
+    trigger_words: ["ECR scanning", "basic scanning", "enhanced scanning", "image scan"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse ECR basic scanning with Inspector enhanced
+      scanning. They suggest enabling both simultaneously or
+      using basic scanning commands with Inspector.
+    actual_behavior: >
+      ECR basic scanning uses Clair and is built into ECR.
+      Enhanced scanning uses Inspector and provides continuous
+      monitoring. They cannot be active simultaneously on the
+      same repository. Switching to enhanced scanning disables
+      basic scanning. Enhanced scanning provides richer findings
+      and continuous rescanning when new CVEs are published.
+    common_false_claim: "Enable both basic and enhanced scanning for comprehensive coverage."
+    correct_action: "Choose enhanced scanning (Inspector) for continuous monitoring. It replaces basic scanning."
+
+  - id: P7-all-instances-scanned
+    trigger_words: ["all instances", "automatic coverage", "every EC2", "full coverage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume enabling Inspector EC2 scanning automatically
+      covers all instances. Coverage depends on SSM agent status
+      and instance configuration.
+    actual_behavior: >
+      Enabling EC2 scanning tells Inspector to scan instances
+      that are SSM-managed. Instances without SSM agent, without
+      proper IAM role, or with SSM agent stopped will NOT be
+      scanned. Check coverage with list-coverage to identify
+      gaps. Tag-based exclusions may also limit coverage.
+    common_false_claim: "Enable EC2 scanning and all your instances will be automatically scanned."
+    correct_action: "Enable EC2 scanning, then check coverage gaps. Ensure SSM agent runs on all target instances."
+
+  - id: P8-finding-auto-close
+    trigger_words: ["auto close", "finding resolved", "automatic remediation", "finding lifecycle"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest findings automatically close when vulnerabilities
+      are patched. While Inspector does update finding status,
+      the timing and mechanism are specific.
+    actual_behavior: >
+      Inspector marks findings as CLOSED when the vulnerability
+      is remediated (patch applied, image updated, function updated).
+      This happens on the next scan cycle, not immediately. For
+      EC2, the SSM agent must report updated inventory. For ECR,
+      a new image must be pushed. Findings may take hours to
+      update after remediation.
+    common_false_claim: "Findings close immediately after patching."
+    correct_action: "Patch the vulnerability. Wait for the next scan cycle. Verify finding status updates."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,59 @@
+hallucination_patterns:
+  - id: H1-appconfig-vs-paramstore
+    trigger_words: ["parameter store", "ssm parameter", "appconfig"]
+    hallucination_risk: HIGH
+    common_false_claim: "AppConfig and SSM Parameter Store are the same service"
+    correct_fact: "AppConfig and SSM Parameter Store are separate services with different APIs, pricing, and deployment models. AppConfig provides deployment strategies, validation, and rollback."
+
+  - id: H2-deployment-strategy-mutable
+    trigger_words: ["modify strategy", "update strategy", "change deployment strategy"]
+    hallucination_risk: MEDIUM
+    common_false_claim: "You can modify an existing deployment strategy"
+    correct_fact: "Deployment strategies are immutable. You must create a new strategy and reference it in future deployments."
+
+  - id: H3-instant-propagation
+    trigger_words: ["immediate", "instant", "real-time config"]
+    hallucination_risk: HIGH
+    common_false_claim: "AppConfig changes propagate instantly to all clients"
+    correct_fact: "Propagation depends on the deployment strategy duration and the AppConfig agent cache TTL. Clients poll at intervals."
+
+  - id: H4-feature-flag-any-profile
+    trigger_words: ["feature flag", "toggle", "flag profile"]
+    hallucination_risk: MEDIUM
+    common_false_claim: "Any configuration profile can be used as feature flags"
+    correct_fact: "Feature flags require the AWS.AppConfig.FeatureFlags configuration type with a specific schema."
+
+  - id: H5-rollback-automatic
+    trigger_words: ["automatic rollback", "rollback trigger"]
+    hallucination_risk: MEDIUM
+    common_false_claim: "AppConfig automatically rolls back failed deployments"
+    correct_fact: "Automatic rollback requires CloudWatch alarm-based rollback triggers configured on the environment. Without them, failed deployments must be manually rolled back."
+
+  - id: H6-config-size-unlimited
+    trigger_words: ["large config", "config size", "configuration limit"]
+    hallucination_risk: LOW
+    common_false_claim: "Hosted configurations can be any size"
+    correct_fact: "Hosted configuration versions have a 1MB size limit. Use S3 or SSM Document sources for larger configurations."
+
+  - id: H7-extension-async
+    trigger_words: ["extension", "hook", "action point"]
+    hallucination_risk: MEDIUM
+    common_false_claim: "Extensions run asynchronously and don't affect deployment speed"
+    correct_fact: "Extensions run synchronously at their action points. A slow or failing extension blocks the deployment pipeline."
+
+  - id: H8-validator-during-deploy
+    trigger_words: ["validator", "validation", "schema check"]
+    hallucination_risk: MEDIUM
+    common_false_claim: "Validators run during deployment rollout"
+    correct_fact: "Validators (JSON Schema or Lambda) run BEFORE deployment starts. If validation fails, the deployment never begins."
+
+remediation_hallucinations:
+  - id: R1-delete-strategy-fix
+    trigger: "deployment strategy not working"
+    dangerous_suggestion: "Delete and recreate the application to fix strategy issues"
+    correct_approach: "Create a new deployment strategy with the desired settings and use it in the next deployment"
+
+  - id: R2-disable-validation
+    trigger: "validation blocking deployment"
+    dangerous_suggestion: "Remove all validators to unblock the deployment"
+    correct_approach: "Fix the configuration to pass validation, or update the validator to accept the new schema"

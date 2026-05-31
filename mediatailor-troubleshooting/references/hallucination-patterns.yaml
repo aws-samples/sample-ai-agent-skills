@@ -1,0 +1,153 @@
+# =============================================================================
+# AWS Elemental MediaTailor "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-mediatailor-transcodes
+    trigger_words: ["MediaTailor", "transcode", "encoding", "video processing"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse MediaTailor with MediaConvert or MediaLive.
+      MediaTailor does NOT transcode video — it manipulates manifests.
+    actual_behavior: >
+      MediaTailor performs manifest manipulation to insert ad segments
+      into video streams. It does NOT transcode, encode, or process
+      video content. The origin server and ad server provide
+      already-encoded segments. MediaTailor only rewrites the manifest
+      to point to ad segments during ad breaks.
+    common_false_claim: "MediaTailor will transcode your ads to match the content format."
+    correct_action: "Ensure ads are pre-transcoded to match content profiles. Use MediaConvert for transcoding."
+
+  - id: P2-ads-validates-at-config
+    trigger_words: ["ADS URL", "ad server", "validate configuration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MediaTailor validates the ADS URL when creating
+      a configuration. It does not — validation happens at playback.
+    actual_behavior: >
+      MediaTailor does NOT validate the ad decision server URL at
+      configuration creation time. It accepts any URL. Errors from
+      invalid ADS URLs, authentication failures, or malformed VAST
+      responses only appear during actual playback sessions. You must
+      test playback to verify ADS integration.
+    common_false_claim: "If the configuration was created successfully, the ADS URL is valid."
+    correct_action: "Test playback after configuration. Monitor ADS error metrics in CloudWatch."
+
+  - id: P3-channel-assembly-live
+    trigger_words: ["channel assembly", "live source", "live stream", "linear"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest channel assembly can use live sources. It only
+      supports VOD sources for scheduled playback.
+    actual_behavior: >
+      Channel assembly creates linear channels by scheduling VOD
+      sources in a program schedule. It does NOT support live source
+      inputs. For live stream ad insertion, use SSAI playback
+      configurations with a live HLS/DASH origin, not channel assembly.
+    common_false_claim: "Use channel assembly to insert ads into your live stream."
+    correct_action: "Use SSAI playback configurations for live streams. Use channel assembly only for VOD-to-linear."
+
+  - id: P4-prefetch-guarantees-fill
+    trigger_words: ["prefetch", "ad fill", "guaranteed", "100% fill"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest prefetch schedules guarantee ad fill rates.
+      Prefetch improves but does not guarantee fill.
+    actual_behavior: >
+      Prefetch schedules pre-fetch ad decisions before ad breaks
+      to reduce latency and improve fill rates. However, they do
+      NOT guarantee 100% fill. If the ADS returns no ads, or if
+      prefetch windows expire before playback, the prefetched
+      decisions are discarded. Slate content fills remaining time.
+    common_false_claim: "Enable prefetch to guarantee all ad breaks are filled."
+    correct_action: "Use prefetch to improve fill rates. Configure slate for unfilled time. Monitor fill rate metrics."
+
+  - id: P5-logs-enabled-default
+    trigger_words: ["MediaTailor logs", "CloudWatch logs", "debug logs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume MediaTailor logs are enabled by default like
+      many other AWS services.
+    actual_behavior: >
+      MediaTailor does NOT enable CloudWatch logging by default.
+      You must explicitly configure log percentages (1-100%) on
+      each playback configuration using put-playback-configuration
+      with ConfigurationAliases for logging. Without explicit
+      configuration, no logs are generated.
+    common_false_claim: "Check CloudWatch Logs for MediaTailor errors."
+    correct_action: "First verify logging is configured. Enable via put-playback-configuration with log percentage."
+
+  - id: P6-cdn-optional
+    trigger_words: ["CDN", "CloudFront", "content delivery"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CDN configuration is optional for production.
+      Without CDN prefixes, playback URLs point directly to origin.
+    actual_behavior: >
+      While MediaTailor works without CDN configuration for testing,
+      production deployments require CDN prefix configuration.
+      Without CDN prefixes, manifest segment URLs point to the
+      origin server directly, bypassing CDN caching. This causes
+      high origin load and poor viewer experience at scale.
+    common_false_claim: "MediaTailor handles CDN routing automatically."
+    correct_action: "Configure AdSegmentUrlPrefix and ContentSegmentUrlPrefix for production deployments."
+
+  - id: P7-vast-version-any
+    trigger_words: ["VAST", "VMAP", "ad response", "ad markup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MediaTailor supports any VAST version.
+      Only specific versions are supported.
+    actual_behavior: >
+      MediaTailor supports VAST 2.0, 3.0, and 4.x, plus VMAP 1.0.
+      Older VAST versions (1.0) and non-standard extensions may
+      not be fully supported. VAST responses must include valid
+      MediaFile elements with supported formats. Wrapper/redirect
+      chains have depth limits.
+    common_false_claim: "MediaTailor supports all VAST versions and extensions."
+    correct_action: "Verify ADS returns VAST 2.0+ or VMAP 1.0. Test VAST responses with a VAST validator."
+
+  - id: P8-ssai-drm-handling
+    trigger_words: ["DRM", "encryption", "content protection", "Widevine", "FairPlay"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MediaTailor handles DRM encryption directly.
+      It passes through DRM signals without modification.
+    actual_behavior: >
+      MediaTailor does NOT encrypt or decrypt content. It passes
+      through DRM signaling (e.g., EXT-X-KEY tags in HLS,
+      ContentProtection elements in DASH) from the origin manifest.
+      Ad segments must be either unencrypted or use compatible DRM.
+      MediaTailor manipulates manifests but does not handle key
+      exchange or license acquisition.
+    common_false_claim: "MediaTailor will encrypt your ads to match content DRM."
+    correct_action: "Ensure ad segments are compatible with content DRM scheme. MediaTailor passes through DRM signals."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-config
+    trigger_words: ["delete configuration", "recreate", "start over"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a playback configuration immediately breaks all
+      active viewer sessions using that configuration. There is
+      no graceful drain.
+    correct_approach: >
+      Update the existing configuration with put-playback-configuration
+      instead of deleting and recreating. If deletion is necessary,
+      ensure no active sessions exist and update DNS/CDN to point
+      to the new configuration first.
+
+  - id: R2-increase-log-100
+    trigger_words: ["enable all logs", "100% logging", "full logging"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Setting log percentage to 100% on high-traffic configurations
+      generates massive CloudWatch Logs volume with significant cost.
+      This can also impact MediaTailor performance.
+    correct_approach: >
+      Start with 1-5% log sampling for production configurations.
+      Increase temporarily to 10-25% for active debugging. Only use
+      100% for low-traffic test configurations. Monitor CloudWatch
+      Logs costs.

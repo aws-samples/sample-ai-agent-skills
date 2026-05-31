@@ -1,0 +1,158 @@
+# =============================================================================
+# AWS Clean Rooms ML "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-standalone-ml
+    trigger_words: ["Clean Rooms ML", "standalone", "without collaboration"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Clean Rooms ML can operate independently.
+      It requires an active Clean Rooms collaboration.
+    actual_behavior: >
+      Clean Rooms ML is tightly integrated with Clean Rooms
+      collaborations. You cannot train models or generate
+      audiences without first establishing a collaboration.
+      The collaboration defines data sharing rules, privacy
+      parameters, and member permissions that govern ML operations.
+    common_false_claim: "You can use Clean Rooms ML independently without setting up a collaboration."
+    correct_action: "Create a Clean Rooms collaboration first, then configure ML capabilities within it."
+
+  - id: P2-unlimited-privacy-budget
+    trigger_words: ["privacy budget", "unlimited", "reset budget", "refund"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest privacy budgets can be reset or are unlimited.
+      Privacy budgets are finite and consumption is irreversible.
+    actual_behavior: >
+      Privacy budgets in Clean Rooms ML are finite resources
+      that are consumed with each audience generation job.
+      Once exhausted, no more jobs can run until the budget
+      period refreshes. Budget consumption cannot be reversed,
+      refunded, or manually reset. This is by design to enforce
+      differential privacy guarantees.
+    common_false_claim: "Reset the privacy budget to run more audience generation jobs."
+    correct_action: "Monitor budget consumption before running jobs. Wait for budget period refresh or request budget increase through collaboration settings."
+
+  - id: P3-instant-training
+    trigger_words: ["train model", "instant", "quick training", "real-time"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest model training is fast or instant.
+      Training is asynchronous and can take hours.
+    actual_behavior: >
+      Model training in Clean Rooms ML is an asynchronous
+      process that can take minutes to hours depending on
+      dataset size and complexity. Training progresses through
+      CREATING state before reaching ACTIVE or CREATE_FAILED.
+      There is no way to speed up training.
+    common_false_claim: "Train the model and it will be ready in seconds."
+    correct_action: "Start training and poll status. Allow adequate time based on dataset size. Check for CREATE_FAILED status."
+
+  - id: P4-any-data-format
+    trigger_words: ["any format", "data format", "CSV", "JSON", "Parquet"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Clean Rooms ML accepts any data format.
+      Only specific formats with strict schema requirements are supported.
+    actual_behavior: >
+      Training datasets must conform to specific schema
+      requirements with exact column types and formats.
+      Data must be in CSV format stored in S3. Column names,
+      types, and ordering must match the declared schema
+      precisely. Schema mismatches cause training failures.
+    common_false_claim: "Upload your data in any format — JSON, Parquet, or CSV."
+    correct_action: "Prepare data as CSV matching the exact schema requirements. Validate column types before creating training datasets."
+
+  - id: P5-cross-region-data
+    trigger_words: ["cross-region", "different region", "any region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest S3 data can be in any region.
+      Data must be co-located with the collaboration region.
+    actual_behavior: >
+      S3 training data and output buckets must reside in the
+      same AWS region as the Clean Rooms collaboration. Cross-region
+      data access is not supported. This applies to both input
+      training data and audience generation output destinations.
+    common_false_claim: "Your S3 data can be in any region — Clean Rooms ML handles cross-region access."
+    correct_action: "Ensure S3 buckets are in the same region as the collaboration. Copy data to the correct region if needed."
+
+  - id: P6-epsilon-recommendations
+    trigger_words: ["epsilon", "recommended epsilon", "best epsilon", "privacy parameter"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs invent specific epsilon recommendations without
+      understanding the mathematical tradeoffs involved.
+    actual_behavior: >
+      Differential privacy epsilon is a mathematical parameter
+      controlling the privacy-utility tradeoff. Higher epsilon
+      means less noise but weaker privacy. Lower epsilon means
+      stronger privacy but noisier results. The correct epsilon
+      depends on data sensitivity, regulatory requirements, and
+      acceptable utility loss. There is no universal best value.
+    common_false_claim: "Set epsilon to 1.0 for optimal results."
+    correct_action: "Consult privacy requirements and data sensitivity guidelines. Test different epsilon values to find acceptable tradeoff."
+
+  - id: P7-auto-audience-refresh
+    trigger_words: ["auto refresh", "automatic update", "audience refresh"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest audiences automatically refresh.
+      Audience generation jobs must be explicitly triggered.
+    actual_behavior: >
+      Audience generation jobs are one-time operations that
+      must be explicitly triggered. Generated audiences are
+      static snapshots — they do not automatically refresh
+      when underlying data changes. To get updated audiences,
+      you must run a new audience generation job, which
+      consumes additional privacy budget.
+    common_false_claim: "The generated audience automatically updates when your data changes."
+    correct_action: "Schedule periodic audience generation jobs manually. Account for privacy budget consumption with each run."
+
+  - id: P8-model-portability
+    trigger_words: ["export model", "download model", "move model", "portable"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest trained models can be exported or moved.
+      Models are bound to the collaboration context.
+    actual_behavior: >
+      Trained models in Clean Rooms ML are bound to the
+      collaboration context and cannot be exported, downloaded,
+      or moved to other environments. This is by design to
+      protect the privacy of training data from all collaboration
+      members. Models can only be used within the collaboration
+      where they were created.
+    common_false_claim: "Export the trained model and deploy it in your own environment."
+    correct_action: "Use models within the collaboration context. Generate audiences through the collaboration workflow."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-model
+    trigger_words: ["delete model", "recreate", "start over"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting and recreating a model consumes additional
+      training time and may produce different results. Previous
+      audience generation jobs referencing the old model become
+      orphaned. Privacy budget already consumed is not refunded.
+    correct_approach: >
+      Investigate the specific error before deleting. Check
+      training dataset schema, S3 permissions, and KMS access.
+      Only delete and recreate as a last resort after confirming
+      the root cause has been fixed.
+
+  - id: R2-increase-epsilon-blindly
+    trigger_words: ["increase epsilon", "more epsilon", "higher epsilon"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Increasing epsilon weakens differential privacy guarantees.
+      This may violate regulatory requirements or data sharing
+      agreements between collaboration members. Privacy parameters
+      are typically agreed upon by all parties.
+    correct_approach: >
+      Review the privacy requirements agreed upon by collaboration
+      members. Any epsilon changes must be approved by all parties.
+      Consider whether the utility issue can be resolved by
+      improving seed audience quality instead of weakening privacy.

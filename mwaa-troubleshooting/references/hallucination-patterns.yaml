@@ -1,0 +1,133 @@
+# =============================================================================
+# Amazon MWAA "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-ssh-into-workers
+    trigger_words: ["ssh worker", "connect to scheduler", "airflow.cfg", "restart airflow", "systemctl"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on self-hosted Airflow documentation suggest SSH access
+      to workers or schedulers and direct configuration file editing. MWAA
+      is fully managed with no server-level access.
+    actual_behavior: >
+      MWAA does not expose SSH, shell, or file system access to any
+      component. Configuration overrides use environment variables with
+      the AIRFLOW__SECTION__KEY prefix set through the MWAA API or
+      console. Airflow CLI commands are executed via create-cli-token.
+    common_false_claim: "SSH into the worker node and check the Airflow logs in /var/log/airflow."
+    correct_action: "Use aws mwaa create-cli-token for CLI access. Check CloudWatch log groups for component logs."
+
+  - id: P2-local-dag-files
+    trigger_words: ["copy dag", "local dags folder", "git-sync", "mount volume", "dag folder"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs reference self-hosted Airflow patterns like git-sync sidecars
+      or local DAG folders. MWAA exclusively uses S3 for DAG storage.
+    actual_behavior: >
+      DAGs must be uploaded to the configured S3 bucket and path. MWAA
+      syncs DAGs from S3 periodically. There is no git-sync, volume
+      mount, or local file system option. DAG changes require uploading
+      new files to S3 and waiting for the sync cycle.
+    common_false_claim: "Place your DAG file in the /dags folder on the Airflow server."
+    correct_action: "Upload DAGs to s3://<bucket>/<dags-path>/ and wait for MWAA to sync."
+
+  - id: P3-public-subnet-deployment
+    trigger_words: ["public subnet", "internet gateway", "public IP", "assign public IP"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest deploying MWAA in public subnets for internet
+      access. MWAA requires private subnets with NAT gateway.
+    actual_behavior: >
+      MWAA environments must use private subnets. Outbound internet
+      access is provided via NAT gateway or VPC endpoints. Public
+      subnets are not supported and will cause creation failures.
+      The environment needs at least two private subnets in different AZs.
+    common_false_claim: "Deploy MWAA in a public subnet with an internet gateway for connectivity."
+    correct_action: "Use private subnets with NAT gateway. Verify NAT gateway is active and route tables are configured."
+
+  - id: P4-per-task-iam-roles
+    trigger_words: ["task role", "dag role", "per-task IAM", "task execution role"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest configuring per-DAG or per-task IAM roles similar
+      to ECS task roles. MWAA uses a single execution role for all operations.
+    actual_behavior: >
+      All MWAA operations use the single execution role configured on
+      the environment. There is no per-DAG or per-task IAM role assignment.
+      If a DAG needs to access a specific AWS service, the execution role
+      must have those permissions. For cross-account access, the execution
+      role must be able to assume roles in other accounts.
+    common_false_claim: "Configure a separate IAM role for each DAG to follow least privilege."
+    correct_action: "Add required permissions to the MWAA execution role. Use assume-role in DAG code for cross-account access."
+
+  - id: P5-instant-dag-sync
+    trigger_words: ["dag appears immediately", "instant deploy", "real-time sync", "immediate pickup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may imply DAG changes are picked up instantly after S3 upload.
+      MWAA has a sync interval that introduces delay.
+    actual_behavior: >
+      MWAA syncs DAGs from S3 on a periodic schedule (default ~30 seconds
+      but can vary). After upload, there is a delay before the scheduler
+      parses the new DAG. The DAG must also pass parsing without errors.
+      Check the DAGProcessing log group for parse status.
+    common_false_claim: "Upload the DAG to S3 and it will be available immediately in the Airflow UI."
+    correct_action: "Upload to S3 and wait for the sync cycle. Monitor DAGProcessing logs for parse confirmation."
+
+  - id: P6-requirements-no-risk
+    trigger_words: ["just add package", "pip install", "add to requirements", "install library"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat requirements.txt changes as low-risk. In MWAA, a bad
+      requirements.txt can make the entire environment unhealthy.
+    actual_behavior: >
+      requirements.txt is installed at environment startup. A failed
+      package installation (version conflict, missing wheel, network
+      timeout) can prevent the environment from becoming healthy. Always
+      pin versions, use constraints files matching the Airflow version,
+      and test locally before updating. Check the requirements install
+      log in CloudWatch for errors.
+    common_false_claim: "Add the package to requirements.txt and update the environment — it's safe."
+    correct_action: "Pin versions, test locally with matching Airflow/Python versions, use --constraint, and monitor environment health after update."
+
+  - id: P7-celery-executor-config
+    trigger_words: ["celery config", "redis broker", "flower", "celery worker command"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs reference Celery executor configuration from self-hosted
+      Airflow. MWAA manages the executor infrastructure internally.
+    actual_behavior: >
+      MWAA manages the Celery executor, message broker (SQS-based),
+      and worker infrastructure. You cannot configure Redis/RabbitMQ
+      brokers, run Celery commands, or access Flower. Worker scaling
+      is managed through min/max worker configuration on the environment.
+    common_false_claim: "Configure the Celery broker URL in airflow.cfg to point to your Redis instance."
+    correct_action: "Configure min/max workers through the MWAA environment settings. MWAA manages the executor infrastructure."
+
+  - id: P8-webserver-customization
+    trigger_words: ["custom webserver", "webserver plugin", "modify UI", "custom login page"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest web server customizations from self-hosted Airflow.
+      MWAA web server customization is limited.
+    actual_behavior: >
+      The MWAA web server is managed by AWS. You cannot install custom
+      web server plugins, modify the login page, or change web server
+      configuration directly. Some UI customization is possible through
+      Airflow plugins (custom views, menu items) but the core web server
+      behavior is AWS-managed. Authentication is handled by IAM.
+    common_false_claim: "Install a custom authentication backend plugin to change the login flow."
+    correct_action: "Use IAM-based authentication. Custom Airflow plugins can add views but cannot modify core web server behavior."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

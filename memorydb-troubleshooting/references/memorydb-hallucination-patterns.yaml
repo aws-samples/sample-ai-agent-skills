@@ -1,0 +1,133 @@
+# =============================================================================
+# Amazon MemoryDB "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-memorydb-is-elasticache
+    trigger_words: ["elasticache same", "cache only", "memorydb cache", "not durable"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate MemoryDB and ElastiCache because both use Redis.
+      MemoryDB is a durable database with a transaction log. ElastiCache
+      is a cache without durability guarantees.
+    actual_behavior: >
+      MemoryDB writes to a multi-AZ transaction log before acknowledging
+      writes, providing data durability. Data survives node failures,
+      restarts, and failovers. ElastiCache is a cache — data may be lost
+      on failure. MemoryDB is suitable as a primary database; ElastiCache
+      is a caching layer in front of another database.
+    common_false_claim: "MemoryDB is just ElastiCache with a different name."
+    correct_action: "Understand the durability difference. Use MemoryDB for durable data, ElastiCache for caching."
+
+  - id: P2-auth-token
+    trigger_words: ["AUTH token", "auth-token", "redis AUTH", "password auth"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest AUTH token authentication for MemoryDB because
+      ElastiCache supports it. MemoryDB uses ACLs only.
+    actual_behavior: >
+      MemoryDB uses Access Control Lists (ACLs) with username/password
+      pairs. There is no AUTH token option. Each user has a username,
+      password, and access string. The default user provides open access.
+      ACLs are associated with clusters. ElastiCache supports both AUTH
+      tokens and ACLs, but MemoryDB supports only ACLs.
+    common_false_claim: "Set an AUTH token on your MemoryDB cluster for authentication."
+    correct_action: "Create ACL users with passwords and access strings. Associate ACL with the cluster."
+
+  - id: P3-non-cluster-mode
+    trigger_words: ["non-cluster mode", "cluster mode disabled", "single node", "standalone redis"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest non-cluster mode for MemoryDB because ElastiCache
+      supports it. MemoryDB always uses cluster mode.
+    actual_behavior: >
+      MemoryDB always operates in cluster mode with hash slot distribution.
+      There is no non-cluster mode option. Even single-shard clusters use
+      the cluster protocol. Applications must use Redis Cluster-aware
+      clients. Standard Redis clients will receive MOVED/ASK redirections.
+    common_false_claim: "Create a MemoryDB cluster with cluster mode disabled for simpler client configuration."
+    correct_action: "Use Redis Cluster-aware clients. MemoryDB always uses cluster mode."
+
+  - id: P4-tls-optional
+    trigger_words: ["disable tls", "without tls", "no encryption transit", "plain redis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest disabling TLS on MemoryDB because ElastiCache allows
+      it. MemoryDB requires TLS — it cannot be disabled.
+    actual_behavior: >
+      MemoryDB requires TLS for all connections. There is no option to
+      disable TLS. All clients must support TLS 1.2+. Use redis-cli with
+      --tls flag. This is a security feature that cannot be turned off,
+      unlike ElastiCache where TLS is optional.
+    common_false_claim: "Disable TLS on MemoryDB for lower latency connections."
+    correct_action: "Always use TLS. Configure clients with TLS support. Use --tls with redis-cli."
+
+  - id: P5-elasticache-snapshot-to-memorydb
+    trigger_words: ["restore elasticache snapshot", "migrate from elasticache", "elasticache backup to memorydb"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest restoring ElastiCache snapshots to MemoryDB.
+      Snapshot compatibility is one-way: MemoryDB → ElastiCache only.
+    actual_behavior: >
+      MemoryDB snapshots can create ElastiCache clusters. ElastiCache
+      snapshots CANNOT create MemoryDB clusters directly. To migrate
+      from ElastiCache to MemoryDB, use the MemoryDB snapshot feature
+      that can snapshot an ElastiCache cluster, or use online migration.
+    common_false_claim: "Restore your ElastiCache snapshot to create a MemoryDB cluster."
+    correct_action: "Use MemoryDB's ElastiCache snapshot feature or online migration for ElastiCache → MemoryDB."
+
+  - id: P6-write-latency-same
+    trigger_words: ["same latency", "microsecond writes", "sub-millisecond writes"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim MemoryDB has the same write latency as ElastiCache.
+      The transaction log adds write latency.
+    actual_behavior: >
+      MemoryDB write latency is higher than ElastiCache because writes
+      go to the transaction log before acknowledgment. Typical MemoryDB
+      write latency is single-digit milliseconds. ElastiCache write
+      latency is sub-millisecond. Read latency is comparable between
+      both services since reads are served from memory.
+    common_false_claim: "MemoryDB provides sub-millisecond write latency like ElastiCache."
+    correct_action: "Expect single-digit millisecond write latency. Read latency is sub-millisecond."
+
+  - id: P7-eviction-preserves-data
+    trigger_words: ["eviction durable", "evicted data recoverable", "eviction transaction log"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume MemoryDB's durability means evicted data is preserved.
+      Evicted data is removed from both memory and the transaction log.
+    actual_behavior: >
+      When MemoryDB evicts data due to memory pressure (based on
+      maxmemory-policy), the eviction is also recorded in the transaction
+      log. Evicted data is permanently removed. Durability means data
+      survives failures, not eviction. Use noeviction policy if data
+      loss from eviction is unacceptable.
+    common_false_claim: "Evicted data can be recovered from the MemoryDB transaction log."
+    correct_action: "Set noeviction policy if data loss is unacceptable. Monitor memory usage."
+
+  - id: P8-single-az-option
+    trigger_words: ["single az", "one availability zone", "disable multi-az"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest single-AZ deployment for cost savings. MemoryDB
+      is always multi-AZ — there is no single-AZ option.
+    actual_behavior: >
+      MemoryDB clusters are always deployed across multiple AZs. The
+      transaction log is replicated across AZs for durability. You
+      cannot create a single-AZ MemoryDB cluster. This is fundamental
+      to MemoryDB's durability guarantee.
+    common_false_claim: "Deploy MemoryDB in a single AZ to reduce costs."
+    correct_action: "MemoryDB is always multi-AZ. Use ElastiCache for single-AZ cache deployments."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

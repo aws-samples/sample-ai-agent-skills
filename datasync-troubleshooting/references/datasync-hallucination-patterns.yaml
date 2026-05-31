@@ -1,0 +1,146 @@
+# =============================================================================
+# AWS DataSync "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-agent-vs-ssm-agent
+    trigger_words: ["DataSync agent", "agent installation", "SSM agent", "agent deployment"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate DataSync agents with SSM agents because both are
+      called "agents" in AWS. DataSync agents are dedicated VMs for
+      data transfer, not software installed on existing instances.
+    actual_behavior: >
+      DataSync agents are standalone virtual machines (VMware ESXi,
+      Hyper-V, KVM, or EC2 instances) that run the DataSync agent
+      software. They are NOT installed on existing servers like SSM
+      agents. The agent VM requires minimum 4 vCPUs, 16 GB RAM, and
+      80 GB disk. Agents are activated via the DataSync console or
+      API using the agent's IP address on port 80.
+    common_false_claim: "Install the DataSync agent on your source server."
+    correct_action: "Deploy a dedicated DataSync agent VM. Do not install on existing servers."
+
+  - id: P2-filter-regex
+    trigger_words: ["filter", "include filter", "exclude filter", "pattern matching", "file filter"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest regex patterns for DataSync filters because regex
+      is common in programming. DataSync uses glob patterns only.
+    actual_behavior: >
+      DataSync include/exclude filters use glob-style patterns only.
+      Use * for any characters, ? for single character. Patterns like
+      *.log, /temp/*, /data/**/*.csv are valid. Regex patterns like
+      .*\.log$, [0-9]+, (a|b) are NOT supported and will not match
+      as expected. Excludes are evaluated before includes.
+    common_false_claim: "Use the regex pattern .*\\.log$ to filter log files."
+    correct_action: "Use glob pattern *.log to filter log files. DataSync does not support regex."
+
+  - id: P3-verification-modes
+    trigger_words: ["verification", "verify transfer", "data integrity", "checksum"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs invent verification mode names or confuse the behavior of
+      existing modes. There are exactly three verification options.
+    actual_behavior: >
+      DataSync has three verification options: ONLY_FILES_TRANSFERRED
+      (default, verifies only transferred files), POINT_IN_TIME_CONSISTENT
+      (verifies all files at source and destination), and NONE (skips
+      verification). There is no "FULL", "CHECKSUM", or "MD5" mode.
+      Verification failures indicate mismatches, not transfer failures.
+    common_false_claim: "Set verification mode to FULL for complete data integrity checking."
+    correct_action: "Use POINT_IN_TIME_CONSISTENT for full verification. Valid modes: ONLY_FILES_TRANSFERRED, POINT_IN_TIME_CONSISTENT, NONE."
+
+  - id: P4-bandwidth-per-agent
+    trigger_words: ["bandwidth", "throttling", "BytesPerSecond", "transfer speed", "rate limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim bandwidth throttling applies per-agent or per-account.
+      It applies per-task execution only.
+    actual_behavior: >
+      The BytesPerSecond option in task configuration limits bandwidth
+      for a single task execution. Multiple concurrent tasks on the
+      same agent each have their own throttle setting and share the
+      agent's physical network bandwidth. There is no agent-level or
+      account-level bandwidth throttle in DataSync. Set to -1 for
+      no throttling (default).
+    common_false_claim: "Set the agent bandwidth limit to control total throughput."
+    correct_action: "Set BytesPerSecond on individual task executions. There is no agent-level bandwidth setting."
+
+  - id: P5-s3-role-confusion
+    trigger_words: ["IAM role", "S3 permissions", "service-linked role", "DataSync role"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse the DataSync service-linked role with the IAM role
+      required for S3 location access. These are two different roles.
+    actual_behavior: >
+      DataSync uses two types of roles: (1) AWSServiceRoleForDataSyncDataAccess
+      is a service-linked role created automatically — you cannot modify
+      its permissions. (2) The S3 location IAM role is a role YOU create
+      with S3 permissions (GetObject, PutObject, ListBucket, etc.) that
+      DataSync assumes to access S3 buckets. You must specify this role
+      when creating an S3 location. They are NOT interchangeable.
+    common_false_claim: "The DataSync service-linked role handles S3 access automatically."
+    correct_action: "Create a separate IAM role with S3 permissions for S3 locations. The service-linked role does not provide S3 access."
+
+  - id: P6-cross-region-automatic
+    trigger_words: ["cross-region", "different region", "region transfer", "inter-region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume cross-region transfers work automatically without
+      additional configuration. Cross-region transfers require the
+      task and locations to be properly configured across regions.
+    actual_behavior: >
+      DataSync supports cross-region transfers but the task must be
+      created in the same region as the source location (for agent-based
+      transfers) or either location (for in-cloud transfers). Cross-region
+      transfers incur AWS data transfer charges. The destination location
+      can be in a different region. For agent-based transfers, the agent
+      must be in the same region as the task.
+    common_false_claim: "DataSync automatically handles cross-region transfers with no extra setup."
+    correct_action: "Create the task in the source region. Configure destination location in the target region. Account for data transfer charges."
+
+  - id: P7-task-stuck-launching
+    trigger_words: ["task stuck", "launching state", "queued", "not starting", "pending"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest restarting the task when it's stuck, without
+      investigating the actual cause which is usually agent-related.
+    actual_behavior: >
+      A task stuck in LAUNCHING state typically indicates the agent
+      cannot communicate with the DataSync service. Check agent status
+      (should be ONLINE), network connectivity (port 443 outbound),
+      and VPC endpoint configuration. A task stuck in QUEUED means
+      the agent is busy with another task (agents process one task
+      at a time by default). PREPARING state means scanning files
+      at source/destination, which is slow for millions of files.
+    common_false_claim: "Cancel and restart the stuck task to fix the issue."
+    correct_action: "Check agent status and connectivity first. LAUNCHING = agent issue. QUEUED = agent busy. PREPARING = scanning large dataset."
+
+  - id: P8-nfs-version-auto
+    trigger_words: ["NFS mount", "NFS version", "NFS location", "mount options"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume DataSync automatically negotiates the NFS version.
+      The NFS version must be explicitly configured and match the server.
+    actual_behavior: >
+      When creating an NFS location, you can specify the NFS version:
+      AUTOMATIC (tries NFSv4.1, falls back to NFSv4.0, then NFSv3),
+      NFS3, NFS4_0, or NFS4_1. If the server only supports NFSv3 and
+      you specify NFS4_1, the mount will fail. AUTOMATIC is the default
+      but may not work if the server has strict version requirements.
+      Mount failures appear as location validation errors during task
+      execution.
+    common_false_claim: "DataSync always uses the latest NFS version automatically."
+    correct_action: "Specify the correct NFS version matching your server. Use AUTOMATIC only if the server supports version negotiation."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

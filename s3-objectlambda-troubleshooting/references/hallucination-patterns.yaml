@@ -1,0 +1,142 @@
+# =============================================================================
+# S3 Object Lambda "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-direct-bucket-attachment
+    trigger_words: ["Object Lambda", "attach to bucket", "bucket access point"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest attaching Object Lambda directly to an S3 bucket.
+      OLAPs require a supporting standard S3 access point.
+    actual_behavior: >
+      Object Lambda Access Points must be created on top of a
+      supporting S3 access point, not directly on a bucket. The
+      supporting access point provides the base S3 access, and
+      the OLAP adds the Lambda transformation layer. Without the
+      supporting access point, OLAP creation fails.
+    common_false_claim: "Create an Object Lambda access point directly on your S3 bucket."
+    correct_action: "First create a standard S3 access point, then create the OLAP referencing that supporting access point."
+
+  - id: P2-auto-response
+    trigger_words: ["Object Lambda", "return data", "response", "transform"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs omit the requirement to call WriteGetObjectResponse,
+      suggesting the Lambda return value is sent to the client.
+    actual_behavior: >
+      The Lambda function MUST explicitly call the
+      WriteGetObjectResponse API to send transformed data back
+      to the S3 Object Lambda service. The standard Lambda return
+      value is NOT forwarded to the caller. Failing to call
+      WriteGetObjectResponse results in a 500 error.
+    common_false_claim: "Return the transformed data from the Lambda handler and it will be sent to the client."
+    correct_action: "Call s3.writeGetObjectResponse() with the transformed data, statusCode, and requestRoute/requestToken from the event."
+
+  - id: P3-standard-lambda-timeout
+    trigger_words: ["timeout", "Lambda timeout", "15 minutes", "execution time"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs apply standard Lambda timeout limits to Object Lambda.
+      Object Lambda has its own 60-second limit.
+    actual_behavior: >
+      S3 Object Lambda enforces a 60-second timeout for the Lambda
+      function to call WriteGetObjectResponse, regardless of the
+      Lambda function's configured timeout. Even if the function
+      timeout is set to 15 minutes, Object Lambda will return a
+      timeout error after 60 seconds.
+    common_false_claim: "Increase the Lambda timeout to 15 minutes to handle large object transformations."
+    correct_action: "Optimize transformation to complete within 60 seconds. For large objects, consider streaming or pre-processing."
+
+  - id: P4-anonymous-access
+    trigger_words: ["public access", "anonymous", "unsigned", "pre-signed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest OLAPs can serve public/anonymous requests
+      like standard S3 endpoints.
+    actual_behavior: >
+      Object Lambda Access Points do NOT support anonymous or
+      unsigned requests. All requests must be authenticated with
+      SigV4. Pre-signed URLs can be generated for OLAPs but must
+      reference the OLAP ARN. Public website hosting through
+      OLAPs is not possible.
+    common_false_claim: "Make the Object Lambda access point public for unauthenticated access."
+    correct_action: "Use SigV4 authentication or generate pre-signed URLs for the OLAP ARN."
+
+  - id: P5-oai-cloudfront
+    trigger_words: ["CloudFront", "OAI", "Origin Access Identity", "origin"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using OAI for CloudFront-to-OLAP integration.
+      Only OAC is supported.
+    actual_behavior: >
+      CloudFront integration with Object Lambda Access Points
+      requires Origin Access Control (OAC). Origin Access Identity
+      (OAI) is a legacy mechanism that does NOT support Object
+      Lambda origins. Using OAI results in 403 Access Denied errors.
+    common_false_claim: "Create an OAI to allow CloudFront to access your Object Lambda access point."
+    correct_action: "Create an OAC for the CloudFront distribution and configure the OLAP policy to allow the OAC."
+
+  - id: P6-range-auto-handled
+    trigger_words: ["range GET", "byte range", "partial content", "part number"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest range requests are automatically handled by
+      Object Lambda. The function must handle them explicitly.
+    actual_behavior: >
+      Range GET and part-number requests are forwarded to the
+      Lambda function via the event payload. The function must
+      read the range/partNumber from the event and either honor
+      the range request or return the full object. Object Lambda
+      does NOT automatically slice the transformed output.
+    common_false_claim: "Object Lambda automatically handles range requests after transformation."
+    correct_action: "Check event.getObjectContext for range/partNumber and implement range handling in the Lambda function."
+
+  - id: P7-single-policy-check
+    trigger_words: ["OLAP policy", "access point policy", "permissions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest only the OLAP policy controls access. Both
+      the OLAP and supporting access point policies are evaluated.
+    actual_behavior: >
+      S3 Object Lambda evaluates BOTH the OLAP policy AND the
+      supporting access point policy. A request must be allowed
+      by both policies. The bucket policy is also evaluated for
+      the Lambda function's access to the original object. Three
+      layers of policy must align.
+    common_false_claim: "Set the OLAP policy to allow access and you're done."
+    correct_action: "Configure policies on the OLAP, supporting access point, and bucket. Ensure the Lambda execution role has appropriate permissions."
+
+  - id: P8-presigned-url-reuse
+    trigger_words: ["inputS3Url", "pre-signed URL", "fetch original"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the Lambda function can construct its own S3
+      request instead of using the provided pre-signed URL.
+    actual_behavior: >
+      The Lambda function receives a pre-signed inputS3Url in the
+      event context to fetch the original object. This URL is
+      time-limited and scoped. The function should use this URL
+      directly — constructing a separate S3 GetObject request
+      bypasses Object Lambda's access control and audit trail.
+    common_false_claim: "Use the S3 SDK to fetch the object directly from the bucket in your Lambda function."
+    correct_action: "Use the inputS3Url from event.getObjectContext to fetch the original object via HTTPS GET."
+
+remediation_hallucinations:
+
+  - id: R1-increase-lambda-timeout
+    false_fix: "Increase Lambda function timeout to handle Object Lambda timeouts."
+    why_wrong: >
+      Object Lambda has a fixed 60-second timeout independent of
+      the Lambda function timeout. Increasing the function timeout
+      beyond 60 seconds does not help Object Lambda requests.
+    correct_fix: "Optimize transformation logic to complete within 60 seconds. For large objects, use streaming or pre-process data."
+
+  - id: R2-use-bucket-url
+    false_fix: "Access the S3 bucket directly instead of through the Object Lambda access point."
+    why_wrong: >
+      Bypassing the OLAP defeats the purpose of Object Lambda.
+      The transformation is only applied when accessing through
+      the OLAP. Direct bucket access returns untransformed data.
+    correct_fix: "Fix the OLAP configuration, Lambda function, or permissions. Ensure the OLAP ARN is used in all client requests."

@@ -1,0 +1,161 @@
+# =============================================================================
+# Amazon Connect "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about Amazon Connect behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-lambda-timeout-configurable
+    trigger_words: ["Lambda", "timeout", "8 seconds", "contact flow Lambda"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs know Lambda timeout is configurable (up to 900s) and assume
+      this applies within Connect contact flows. Connect enforces its
+      own hard 8-second limit regardless of the Lambda configuration.
+    actual_behavior: >
+      Lambda functions invoked from Connect contact flows have a hard
+      8-second timeout. This cannot be changed. The Lambda function's
+      own timeout setting is irrelevant — Connect will cut it off at 8s.
+    common_false_claim: >
+      "Increase the Lambda function timeout to 30 seconds to avoid the timeout in the contact flow."
+    correct_action: "Optimize the Lambda to complete within 8 seconds, or use async patterns (invoke async, store result, poll)."
+
+  - id: P2-flow-logs-default-enabled
+    trigger_words: ["contact flow logs", "logging", "debug flow"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume logging is enabled by default like many AWS services.
+      Connect requires explicit enablement at two levels.
+    actual_behavior: >
+      Contact flow logs require enablement at BOTH the instance level
+      (via instance attributes) AND on each individual contact flow
+      (via Set logging behavior block or flow settings). Neither is
+      enabled by default.
+    common_false_claim: >
+      "Check the contact flow logs in CloudWatch — they're enabled by default."
+    correct_action: "Enable logging on the instance AND on each contact flow. Then check /aws/connect/<instance> log group."
+
+  - id: P3-play-prompt-captures-dtmf
+    trigger_words: ["DTMF", "key press", "Play prompt", "IVR input"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate "Play prompt" and "Get customer input" because both
+      involve audio playback. Only the latter captures DTMF.
+    actual_behavior: >
+      "Play prompt" plays audio/TTS but captures NO input.
+      "Get customer input" plays a prompt AND captures DTMF or Lex intent.
+      Using "Play prompt" for menus means no input will be captured.
+    common_false_claim: >
+      "Add a Play prompt block with DTMF options for the customer to choose."
+    correct_action: "Use 'Get customer input' block to capture DTMF. 'Play prompt' is for announcements only."
+
+  - id: P4-ctrs-immediate
+    trigger_words: ["CTR", "contact trace record", "call record", "reporting"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume data is available immediately after an event, like
+      CloudTrail. Connect CTRs have significant delivery delays.
+    actual_behavior: >
+      CTRs can take up to 24 hours to appear in Connect's built-in
+      reporting. For near-real-time access, configure Kinesis data
+      streaming. Missing CTRs may just be delayed, not lost.
+    common_false_claim: >
+      "Check the CTR for the call that just ended to see the disconnect reason."
+    correct_action: "Use Kinesis streaming for near-real-time CTRs. Built-in reporting has up to 24-hour delay."
+
+  - id: P5-custom-status-routes
+    trigger_words: ["agent status", "custom status", "routable", "Available"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs see "routable" custom statuses and assume they work like
+      "Available." The routing behavior depends on configuration.
+    actual_behavior: >
+      Only "Available" routes contacts by default. Custom statuses
+      marked "routable" only route if the routing profile and queue
+      are configured to support them. Non-routable custom statuses
+      never receive contacts.
+    common_false_claim: >
+      "Set the agent to any routable status and they'll receive calls."
+    correct_action: "Verify the routing profile configuration. Use 'Available' for guaranteed routing."
+
+  - id: P6-phone-number-cross-region
+    trigger_words: ["phone number", "region", "transfer number", "port"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not realize phone numbers are bound to the AWS region
+      where they were claimed. Cross-region sharing is not supported.
+    actual_behavior: >
+      Phone numbers are region-specific. A number claimed in us-east-1
+      cannot be used by an instance in eu-west-2. Porting also requires
+      the target region to match the Connect instance region.
+    common_false_claim: >
+      "Move the phone number to your Connect instance in the other region."
+    correct_action: "Claim a new number in the target region or port the number to the correct region."
+
+  - id: P7-lex-cross-region
+    trigger_words: ["Lex", "bot", "NLU", "intent", "contact flow Lex"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may suggest using a Lex bot from any region. Connect
+      requires the Lex bot to be in the same region as the instance.
+    actual_behavior: >
+      Lex bots must be in the same AWS region as the Connect instance.
+      Cross-region Lex integration is not supported. The "Get customer
+      input" block will fail if the bot is in a different region.
+    common_false_claim: >
+      "Point the contact flow to your Lex bot in us-west-2 from your us-east-1 instance."
+    correct_action: "Deploy the Lex bot in the same region as the Connect instance."
+
+  - id: P8-softphone-only
+    trigger_words: ["desk phone", "hard phone", "SIP", "physical phone"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may assume Connect works like traditional PBX systems with
+      desk phones as the primary endpoint. Connect is softphone-first.
+    actual_behavior: >
+      Connect uses CCP (softphone via WebRTC) as the primary agent
+      endpoint. Desk phones are supported but add PSTN latency, cost
+      per minute, and are subject to carrier quality. Desk phones
+      cannot use all CCP features.
+    common_false_claim: >
+      "Connect works the same with desk phones and softphones."
+    correct_action: "Use softphone (CCP) for best quality and full features. Desk phones add latency and cost."
+
+  - id: P9-transfer-without-quick-connect
+    trigger_words: ["transfer", "quick connect", "agent transfer", "warm transfer"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume agents can transfer to any destination like a
+      traditional phone system. Connect requires quick connect entries.
+    actual_behavior: >
+      Agents can only transfer to destinations defined as quick connects
+      and assigned to the queue they're handling. Without a quick connect
+      entry, the destination won't appear in the CCP transfer directory.
+    common_false_claim: >
+      "The agent can just transfer the call to any other agent or number."
+    correct_action: "Create quick connect entries for all transfer destinations and assign them to the appropriate queues."
+
+  - id: P10-contact-flow-size
+    trigger_words: ["contact flow", "complex flow", "large flow", "flow limit"]
+    hallucination_risk: LOW
+    why_llms_get_this_wrong: >
+      LLMs may not mention the 32 KB flow definition size limit when
+      suggesting complex contact flow designs.
+    actual_behavior: >
+      Contact flow JSON definitions cannot exceed 32 KB. Complex flows
+      with many blocks hit this limit. The flow fails to save or publish
+      with a generic error that doesn't clearly indicate the size issue.
+    common_false_claim: >
+      "Add all the logic into a single contact flow for simplicity."
+    correct_action: "Split large flows into sub-flows using 'Transfer to flow' blocks. Keep each flow under 32 KB."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

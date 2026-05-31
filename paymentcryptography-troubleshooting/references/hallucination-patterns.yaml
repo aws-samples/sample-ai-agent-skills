@@ -1,0 +1,139 @@
+# =============================================================================
+# AWS Payment Cryptography "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-direct-key-import
+    trigger_words: ["import key", "upload key", "direct import", "key material"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest directly importing raw key material. Payment
+      Cryptography requires TR-31 key block format with wrapping keys.
+    actual_behavior: >
+      Key import requires a multi-step process: first call
+      get-parameters-for-import to get a temporary wrapping key,
+      then wrap the key material in TR-31 format using the wrapping
+      key, then call import-key with the wrapped key block. Direct
+      raw key material import is not supported.
+    common_false_claim: "Import your key by providing the raw key material directly."
+    correct_action: "Use get-parameters-for-import to get wrapping key. Wrap key in TR-31 format. Call import-key with wrapped key block."
+
+  - id: P2-universal-key-usage
+    trigger_words: ["use key for", "any operation", "general purpose key", "multi-purpose"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest keys can be used for any cryptographic operation.
+      Key usage attributes are strictly enforced.
+    actual_behavior: >
+      Keys have specific usage attributes set at creation time:
+      encrypt/decrypt, generate/verify (MAC), wrap/unwrap, or
+      PIN-specific operations. A key created for encryption cannot
+      be used for MAC verification. Usage attributes cannot be
+      changed after creation. Create separate keys for each
+      operation type.
+    common_false_claim: "Create one key and use it for encryption, MAC, and PIN operations."
+    correct_action: "Create separate keys with appropriate usage attributes for each operation type."
+
+  - id: P3-kms-compatibility
+    trigger_words: ["KMS key", "use KMS", "KMS compatible", "same as KMS"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Payment Cryptography with AWS KMS. They are
+      separate services with different APIs and key formats.
+    actual_behavior: >
+      AWS Payment Cryptography is a separate service from AWS KMS.
+      KMS keys cannot be used in Payment Cryptography and vice
+      versa. Payment Cryptography uses payment-industry-specific
+      key formats (TR-31, TR-34) and supports payment-specific
+      operations (PIN blocks, MAC). KMS is for general-purpose
+      encryption.
+    common_false_claim: "Use your existing KMS key for payment cryptographic operations."
+    correct_action: "Create keys in Payment Cryptography service. KMS keys are not compatible."
+
+  - id: P4-change-key-attributes
+    trigger_words: ["change key usage", "modify key", "update key attributes"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest key attributes can be modified after creation.
+      Key attributes are immutable.
+    actual_behavior: >
+      Key attributes (key class, usage, algorithm, exportability)
+      are set at creation time and cannot be changed. To use
+      different attributes, create a new key with the desired
+      attributes. The only mutable property is the enabled/disabled
+      state and tags.
+    common_false_claim: "Update the key usage attribute to allow MAC operations."
+    correct_action: "Create a new key with the correct usage attributes. Migrate operations to the new key."
+
+  - id: P5-instant-key-deletion
+    trigger_words: ["delete key immediately", "remove key now", "instant deletion"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest keys can be deleted immediately. Deletion has
+      a mandatory waiting period.
+    actual_behavior: >
+      Key deletion has a configurable waiting period of 7-30 days
+      (default 7). During this period, the key is disabled but
+      recoverable via restore-key. After the waiting period,
+      deletion is permanent and irreversible. There is no way
+      to bypass the waiting period.
+    common_false_claim: "Delete the key immediately to remove it from the account."
+    correct_action: "Schedule key deletion with delete-key. Minimum 7-day waiting period. Use restore-key to cancel if needed."
+
+  - id: P6-export-any-key
+    trigger_words: ["export key", "download key", "extract key material"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any key can be exported. Only keys created
+      with Exportable=true can be exported.
+    actual_behavior: >
+      Key exportability is set at creation time via the Exportable
+      attribute. Keys created with Exportable=false cannot be
+      exported regardless of IAM permissions. This is a security
+      feature to prevent key material extraction. The attribute
+      cannot be changed after creation.
+    common_false_claim: "Export the key material to use it in another system."
+    correct_action: "Check key Exportable attribute. If false, create a new exportable key. Use get-parameters-for-export and export-key for exportable keys."
+
+  - id: P7-cross-region-keys
+    trigger_words: ["cross-region", "use in another region", "global key"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest keys work across regions. Keys are regional
+      resources.
+    actual_behavior: >
+      Payment Cryptography keys are regional. A key created in
+      us-east-1 cannot be used for operations in eu-west-1.
+      Cross-region key usage requires exporting the key from the
+      source region and importing it in the destination region.
+      Key ARNs include the region identifier.
+    common_false_claim: "Use the same key across all regions."
+    correct_action: "Export key from source region and import in destination region. Maintain separate key inventories per region."
+
+  - id: P8-pin-with-encryption-key
+    trigger_words: ["PIN encryption", "encrypt PIN", "PIN block"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using standard encryption keys for PIN
+      operations. PIN operations require specific key types.
+    actual_behavior: >
+      PIN operations require specific key types: PIN Encryption
+      Key (PEK) for PIN block translation, PIN Verification Key
+      (PVK) for PIN verification using methods like IBM 3624 or
+      Visa PVV. Standard encryption keys cannot be used for PIN
+      operations. The key must have the correct key usage attribute.
+    common_false_claim: "Use your encryption key to encrypt the PIN block."
+    correct_action: "Create a key with PIN-specific usage attributes. Use generate-pin-data or translate-pin-data with the correct key type."
+
+remediation_hallucinations:
+
+  - id: R1-change-exportable
+    false_fix: "Use update-key to change the Exportable attribute to true."
+    why_wrong: "There is no update-key API for changing key attributes. Exportable is immutable after creation."
+    correct_fix: "Create a new key with Exportable=true. Migrate operations to the new key."
+
+  - id: R2-use-kms-key
+    false_fix: "Reference your KMS key ARN in Payment Cryptography API calls."
+    why_wrong: "KMS keys are not compatible with Payment Cryptography. They are separate services."
+    correct_fix: "Create keys in Payment Cryptography service using create-key API."

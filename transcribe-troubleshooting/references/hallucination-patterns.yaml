@@ -1,0 +1,117 @@
+# =============================================================================
+# Amazon Transcribe "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-format-detect
+    trigger_words: ["audio format", "media format", "file type"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Transcribe auto-detects audio format.
+      MediaFormat must be explicitly specified.
+    actual_behavior: >
+      MediaFormat parameter must match actual audio format.
+      Mismatch causes job failure. Supported: wav, mp3, mp4,
+      flac, ogg, amr, webm.
+    common_false_claim: "Transcribe automatically detects the audio format."
+    correct_action: "Specify correct MediaFormat matching actual file format."
+
+  - id: P2-vocabulary-instant
+    trigger_words: ["custom vocabulary", "vocabulary", "add words"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest vocabularies are ready immediately.
+      Processing takes time.
+    actual_behavior: >
+      Custom vocabularies process from PENDING to READY state.
+      Using before READY causes errors. Processing time varies.
+    common_false_claim: "Create vocabulary and use it immediately."
+    correct_action: "Create vocabulary. Wait for READY status. Then use in transcription."
+
+  - id: P3-medical-standard-api
+    trigger_words: ["medical", "healthcare", "clinical", "medical transcription"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using standard API for medical content.
+      Medical has a separate HIPAA-compliant API.
+    actual_behavior: >
+      StartMedicalTranscriptionJob is separate from standard API.
+      Has HIPAA compliance. Supports medical specialties.
+      Don't use standard API for medical content.
+    common_false_claim: "Use StartTranscriptionJob for medical audio."
+    correct_action: "Use StartMedicalTranscriptionJob for medical content."
+
+  - id: P4-call-analytics-mono
+    trigger_words: ["call analytics", "call recording", "phone call"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest call analytics works with mono audio.
+      Stereo with separate channels per speaker is required.
+    actual_behavior: >
+      Call Analytics requires stereo audio. Each speaker on
+      separate channel. ChannelDefinitions maps channels to
+      participants. Mono audio is not supported.
+    common_false_claim: "Analyze any call recording with Call Analytics."
+    correct_action: "Use stereo recording with separate channels. Configure ChannelDefinitions."
+
+  - id: P5-streaming-simple-http
+    trigger_words: ["streaming", "real-time transcription", "live audio"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest streaming works with simple HTTP requests.
+      Requires WebSocket or HTTP/2.
+    actual_behavior: >
+      Streaming transcription requires WebSocket or HTTP/2
+      bidirectional connection. Specific audio encoding (PCM
+      16-bit). Connection has idle timeout.
+    common_false_claim: "Send audio chunks via HTTP POST for real-time transcription."
+    correct_action: "Use WebSocket or HTTP/2 streaming. Send PCM 16-bit audio."
+
+  - id: P6-redaction-all-languages
+    trigger_words: ["content redaction", "PII redaction", "redact"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest content redaction works for all languages.
+      Limited language support.
+    actual_behavior: >
+      Content redaction available primarily for English. Not all
+      PII types detected in all supported languages. Redaction
+      replaces PII with [PII] tags.
+    common_false_claim: "Enable content redaction for any language."
+    correct_action: "Check language support for content redaction. Use English for best coverage."
+
+  - id: P7-unlimited-duration
+    trigger_words: ["long audio", "duration", "hours of audio"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention the 4-hour duration limit.
+    actual_behavior: >
+      Maximum audio duration is 4 hours for batch transcription.
+      Longer recordings must be split. File size limit is 2GB.
+    common_false_claim: "Transcribe any length audio file."
+    correct_action: "Split audio longer than 4 hours. Keep files under 2GB."
+
+  - id: P8-diarization-unlimited
+    trigger_words: ["speaker", "diarization", "speaker identification"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited speaker identification.
+      Limited to 2-10 speakers.
+    actual_behavior: >
+      Speaker diarization supports 2-10 speakers. Cannot use
+      with channel identification simultaneously. Setting
+      MaxSpeakerLabels affects accuracy.
+    common_false_claim: "Identify any number of speakers in audio."
+    correct_action: "Set MaxSpeakerLabels between 2-10. Use channel identification for known speaker channels."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

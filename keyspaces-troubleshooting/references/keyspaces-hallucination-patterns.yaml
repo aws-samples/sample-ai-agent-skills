@@ -1,0 +1,154 @@
+# =============================================================================
+# Amazon Keyspaces "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-keyspaces-is-cassandra
+    trigger_words: ["Keyspaces", "Cassandra", "nodetool", "cassandra.yaml", "sstable"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate Amazon Keyspaces with Apache Cassandra because
+      Keyspaces is described as "Cassandra-compatible." They suggest
+      Cassandra-native tools and configurations that do not exist
+      in the serverless Keyspaces environment.
+    actual_behavior: >
+      Amazon Keyspaces is a fully managed serverless service with a
+      CQL-compatible API. It does NOT run Cassandra under the hood.
+      Tools like nodetool, cassandra-stress, sstableloader, and
+      configurations like cassandra.yaml, commitlog settings, and
+      compaction strategies do not apply. The storage engine,
+      replication, and consistency model are entirely different.
+    common_false_claim: "Use nodetool status to check the Keyspaces cluster health."
+    correct_action: "Use AWS CLI (aws keyspaces get-table) and CloudWatch metrics for health monitoring."
+
+  - id: P2-port-9042-default
+    trigger_words: ["port 9042", "connect", "cqlsh", "connection string", "endpoint"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to Cassandra's standard port 9042 when suggesting
+      connection strings for Keyspaces. Keyspaces uses port 9142
+      with mandatory TLS.
+    actual_behavior: >
+      Amazon Keyspaces listens on port 9142 (not 9042) and requires
+      TLS for all connections. The endpoint format is
+      cassandra.<region>.amazonaws.com:9142. Clients must configure
+      SSL/TLS with the Starfield digital certificate or Amazon root
+      CA. Connections to port 9042 or without TLS are refused.
+    common_false_claim: "Connect to Keyspaces on port 9042 using cqlsh."
+    correct_action: "Connect on port 9142 with TLS: cqlsh cassandra.<region>.amazonaws.com 9142 --ssl"
+
+  - id: P3-native-cassandra-auth
+    trigger_words: ["PasswordAuthenticator", "cassandra user", "GRANT", "CREATE ROLE", "authentication"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Cassandra-native authentication methods like
+      PasswordAuthenticator or CREATE ROLE statements. Keyspaces
+      uses IAM-based authentication exclusively.
+    actual_behavior: >
+      Keyspaces supports two authentication methods: IAM SigV4
+      authentication (recommended) using the SigV4 auth plugin,
+      or service-specific credentials generated through the IAM
+      console. Native Cassandra authentication (PasswordAuthenticator,
+      CREATE ROLE, GRANT) is not supported. Service-specific
+      credentials are tied to IAM users and inherit IAM permissions.
+    common_false_claim: "Create a Cassandra user with CREATE ROLE for Keyspaces authentication."
+    correct_action: "Use SigV4 auth plugin or generate service-specific credentials via IAM console."
+
+  - id: P4-materialized-views-supported
+    trigger_words: ["materialized view", "CREATE MATERIALIZED VIEW", "MV", "query optimization"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest materialized views as a query optimization
+      strategy because they are a standard Cassandra feature.
+      Keyspaces does not support materialized views.
+    actual_behavior: >
+      Materialized views are NOT supported in Amazon Keyspaces.
+      Neither are user-defined functions (UDFs), user-defined
+      aggregates (UDAs), or triggers. For query optimization,
+      use secondary indexes (with limitations), denormalized
+      tables, or application-side query logic. Design the data
+      model around access patterns at table creation time.
+    common_false_claim: "Create a materialized view to optimize this query pattern."
+    correct_action: "Create a separate denormalized table or use secondary indexes for alternate query patterns."
+
+  - id: P5-allow-filtering-works
+    trigger_words: ["ALLOW FILTERING", "full scan", "table scan", "filter query"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest ALLOW FILTERING as a quick fix for queries
+      that don't use the partition key, as it works in open-source
+      Cassandra. Keyspaces restricts this feature.
+    actual_behavior: >
+      ALLOW FILTERING is restricted in Amazon Keyspaces. Queries
+      should be designed around partition keys for efficient access.
+      Queries without partition key predicates perform full table
+      scans, consume significant read capacity, and may time out
+      on large tables. Use pagination (TOKEN function) for large
+      result sets. Redesign the data model if ALLOW FILTERING
+      seems necessary.
+    common_false_claim: "Add ALLOW FILTERING to the query to scan all partitions."
+    correct_action: "Redesign query to use partition key. Use secondary indexes or denormalized tables for alternate access."
+
+  - id: P6-unlimited-on-demand
+    trigger_words: ["on-demand", "auto scale", "unlimited throughput", "no throttling"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest on-demand mode provides unlimited throughput
+      with no throttling. On-demand has initial limits and can
+      throttle traffic that exceeds double the previous peak.
+    actual_behavior: >
+      On-demand mode starts with a previous peak of 4,000 WCU
+      and 12,000 RCU. It scales automatically but can only
+      accommodate up to double the previous peak instantly.
+      Traffic exceeding this may be throttled until the service
+      adapts. Switching between on-demand and provisioned can
+      only be done once every 24 hours. On-demand is more
+      expensive per request than well-provisioned capacity.
+    common_false_claim: "Switch to on-demand mode to eliminate all throttling."
+    correct_action: "On-demand handles gradual scaling. For sudden spikes beyond 2x previous peak, pre-warm by gradually increasing traffic."
+
+  - id: P7-ttl-instant-deletion
+    trigger_words: ["TTL", "time to live", "expiration", "expired data", "auto delete"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest TTL-expired data is immediately invisible
+      after the TTL timestamp passes. Keyspaces deletes expired
+      data asynchronously.
+    actual_behavior: >
+      TTL expiration in Keyspaces is asynchronous. Expired rows
+      may still be returned in queries for a brief period after
+      the TTL timestamp. The maximum TTL value is 630,720,000
+      seconds (20 years). TTL deletions consume write capacity
+      units. Setting TTL to 0 on an INSERT/UPDATE removes the
+      TTL from that row. Default table-level TTL can be set but
+      row-level TTL overrides it.
+    common_false_claim: "Set TTL and the data will be instantly deleted when it expires."
+    correct_action: "TTL deletion is asynchronous. Account for brief visibility after expiration. TTL deletes consume WCU."
+
+  - id: P8-cassandra-snapshot-restore
+    trigger_words: ["snapshot", "nodetool snapshot", "backup", "restore", "sstable"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Cassandra-style snapshot and restore operations
+      using nodetool. Keyspaces uses PITR for backup and restore.
+    actual_behavior: >
+      Keyspaces does not support nodetool snapshot or sstable-based
+      backup/restore. Instead, it provides point-in-time recovery
+      (PITR) with continuous backups and 35-day retention. PITR
+      must be enabled per table. Restores create a NEW table (not
+      in-place). For data export, use CQL COPY or AWS Glue. There
+      is no equivalent to Cassandra's incremental backup feature.
+    common_false_claim: "Take a snapshot using nodetool snapshot for backup."
+    correct_action: "Enable PITR on the table. Use aws keyspaces restore-table for point-in-time restore to a new table."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,136 @@
+# =============================================================================
+# Amazon Managed Blockchain "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-fabric-ethereum-mix
+    trigger_words: ["blockchain", "smart contract", "chaincode", "Solidity"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs mix Hyperledger Fabric and Ethereum concepts. They are
+      fundamentally different blockchain frameworks.
+    actual_behavior: >
+      Fabric uses chaincode (Go, Node.js, Java), channels for
+      privacy, endorsement policies, and ordering service. Ethereum
+      uses smart contracts (Solidity), public/private networks,
+      and gas-based execution. Managed Blockchain supports both
+      but they are completely separate network types.
+    common_false_claim: "Deploy your Solidity smart contract on the Fabric network."
+    correct_action: "Use chaincode (Go/Node.js/Java) for Fabric. Use Solidity for Ethereum."
+
+  - id: P2-public-access
+    trigger_words: ["public endpoint", "internet access", "public node"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest nodes are publicly accessible. Managed Blockchain
+      nodes are accessed via VPC endpoints.
+    actual_behavior: >
+      Managed Blockchain nodes are not publicly accessible. Access
+      is through VPC endpoints (PrivateLink). You must create a
+      VPC endpoint for the Managed Blockchain service in your VPC.
+      Security groups control access to the endpoint. For Fabric,
+      the peer and CA endpoints are VPC-only.
+    common_false_claim: "Connect to the node using its public endpoint."
+    correct_action: "Create a VPC endpoint for Managed Blockchain and connect through your VPC."
+
+  - id: P3-instant-chaincode
+    trigger_words: ["deploy chaincode", "install chaincode", "instantiate"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest chaincode deployment is a single step. It
+      requires install on peers AND instantiate on channel.
+    actual_behavior: >
+      Fabric chaincode lifecycle: (1) package chaincode, (2) install
+      on each peer, (3) approve for organization, (4) commit to
+      channel. Each step must succeed. Chaincode must be installed
+      on all endorsing peers. Endorsement policy determines which
+      peers must endorse transactions.
+    common_false_claim: "Install the chaincode and it's ready to use."
+    correct_action: "Package, install on peers, approve for org, commit to channel."
+
+  - id: P4-unilateral-changes
+    trigger_words: ["add member", "change network", "update config"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest network changes can be made unilaterally.
+      Most changes require proposals and votes.
+    actual_behavior: >
+      Network governance uses proposals and votes. Adding members,
+      removing members, and changing network configuration require
+      a proposal that must be approved by existing members. The
+      voting policy (MAJORITY or GREATER_MAJORITY) determines
+      approval threshold. Only the network creator can make some
+      initial configurations.
+    common_false_claim: "Add a new member to the network directly."
+    correct_action: "Create a proposal to add the member. Existing members must vote to approve."
+
+  - id: P5-unlimited-nodes
+    trigger_words: ["add nodes", "scale nodes", "node limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited nodes per member. There are limits
+      on nodes per member and per network.
+    actual_behavior: >
+      Each member has limits on the number of peer nodes. Node
+      instance types determine capacity. Limits vary by network
+      edition (Starter vs Standard). Standard edition supports
+      more nodes and larger instance types. Request limit increases
+      via Service Quotas.
+    common_false_claim: "Add as many nodes as needed for your workload."
+    correct_action: "Check node limits per member. Use Standard edition for higher limits."
+
+  - id: P6-ethereum-mining
+    trigger_words: ["mining", "proof of work", "mine blocks"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest mining on Managed Blockchain Ethereum nodes.
+      Managed Blockchain provides access nodes, not mining nodes.
+    actual_behavior: >
+      Managed Blockchain Ethereum provides access to the Ethereum
+      mainnet or testnet via managed nodes. These are access nodes
+      for reading blockchain data and submitting transactions, not
+      mining/validator nodes. You cannot mine or validate blocks
+      through Managed Blockchain.
+    common_false_claim: "Set up mining on your Managed Blockchain Ethereum node."
+    correct_action: "Managed Blockchain provides Ethereum access nodes, not mining nodes."
+
+  - id: P7-fabric-public-data
+    trigger_words: ["Fabric data", "public ledger", "all members see"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume all Fabric data is visible to all members.
+      Channels provide data isolation.
+    actual_behavior: >
+      Hyperledger Fabric uses channels for data isolation. Only
+      members of a channel can see that channel's data. Private
+      data collections provide additional privacy within a channel.
+      The ordering service sees encrypted data but cannot read it.
+    common_false_claim: "All network members can see all transaction data."
+    correct_action: "Use channels for data isolation. Only channel members see channel data."
+
+  - id: P8-node-auto-recover
+    trigger_words: ["node recovery", "auto heal", "node restart"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest nodes automatically recover from all failures.
+      Some failures require manual intervention.
+    actual_behavior: >
+      Managed Blockchain handles infrastructure maintenance but
+      some node issues require manual intervention. Failed nodes
+      may need to be deleted and recreated. Peer nodes that fall
+      behind in block sync may need to rejoin the channel. Check
+      node status via get-node and CloudWatch metrics.
+    common_false_claim: "The node will automatically recover from any failure."
+    correct_action: "Monitor node health. Delete and recreate failed nodes if needed."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

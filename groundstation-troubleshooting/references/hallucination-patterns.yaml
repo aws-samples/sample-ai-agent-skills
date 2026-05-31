@@ -1,0 +1,137 @@
+# =============================================================================
+# AWS Ground Station "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-on-demand-contacts
+    trigger_words: ["instant contact", "connect now", "real-time satellite"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest on-demand satellite contacts. Contacts must be
+      scheduled in advance during available pass windows.
+    actual_behavior: >
+      Satellite contacts must be reserved in advance. Available
+      contact windows depend on satellite orbit, ground station
+      location, and antenna availability. Use list-contacts to
+      find available windows. Reserve contacts at least minutes
+      in advance. Contact duration depends on the satellite pass.
+    common_false_claim: "Connect to the satellite immediately."
+    correct_action: "List available contact windows and reserve a contact in advance."
+
+  - id: P2-any-satellite
+    trigger_words: ["any satellite", "connect satellite", "satellite access"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest connecting to any satellite. Only satellites
+      with configured mission profiles can be contacted.
+    actual_behavior: >
+      You can only contact satellites that have been onboarded
+      with a satellite configuration (NORAD ID, frequency bands,
+      etc.) and a mission profile. The satellite must pass over
+      an available ground station. Not all satellites are compatible
+      with AWS Ground Station antenna capabilities.
+    common_false_claim: "Connect to any satellite using AWS Ground Station."
+    correct_action: "Onboard satellite with config and mission profile. Schedule during pass windows."
+
+  - id: P3-unlimited-bandwidth
+    trigger_words: ["bandwidth", "data rate", "throughput"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited data throughput. Bandwidth depends
+      on antenna, frequency, and satellite capabilities.
+    actual_behavior: >
+      Data throughput depends on antenna size, frequency band
+      (S-band, X-band, etc.), satellite transmit power, and
+      link budget. Different ground station locations have different
+      antenna capabilities. Wideband and narrowband configurations
+      have different throughput limits.
+    common_false_claim: "Stream unlimited data from the satellite."
+    correct_action: "Check antenna capabilities and configure appropriate data flow for your frequency band."
+
+  - id: P4-data-local-storage
+    trigger_words: ["data storage", "local data", "ground station storage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest data is stored at the ground station. Data is
+      delivered to your AWS resources (EC2, S3).
+    actual_behavior: >
+      Satellite data is delivered to your AWS resources in the
+      region associated with the ground station. Data can be
+      streamed to EC2 instances (via dataflow endpoints) or
+      delivered to S3. You must configure the data delivery
+      destination in the mission profile. No data is stored at
+      the ground station itself.
+    common_false_claim: "Download the data from the ground station after the contact."
+    correct_action: "Configure dataflow endpoints to deliver data to EC2 or S3 during the contact."
+
+  - id: P5-always-available
+    trigger_words: ["always available", "24/7 contact", "continuous"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest continuous satellite contact. Contact windows
+      are limited by orbital mechanics.
+    actual_behavior: >
+      Satellite contact windows are determined by orbital mechanics.
+      LEO satellites have brief pass windows (typically 5-15 minutes)
+      several times per day over each ground station. GEO satellites
+      have longer windows but limited ground station coverage.
+      Multiple ground stations can increase total contact time.
+    common_false_claim: "Maintain continuous contact with the satellite."
+    correct_action: "Schedule contacts during available pass windows. Use multiple ground stations for more coverage."
+
+  - id: P6-mission-profile-simple
+    trigger_words: ["mission profile", "simple config", "quick setup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest mission profiles are simple configurations.
+      They require detailed RF and dataflow configuration.
+    actual_behavior: >
+      Mission profiles define the complete contact configuration:
+      tracking config (autotrack, frequency), dataflow endpoints
+      (EC2 instances for data delivery), antenna config (uplink/
+      downlink frequencies, polarization, bandwidth). Each parameter
+      must match the satellite's communication specifications.
+    common_false_claim: "Create a simple mission profile with just the satellite name."
+    correct_action: "Configure mission profile with exact RF parameters, dataflow endpoints, and tracking config."
+
+  - id: P7-free-contacts
+    trigger_words: ["free tier", "no cost", "pricing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Ground Station has a free tier. Contacts are
+      charged per minute.
+    actual_behavior: >
+      AWS Ground Station charges per minute of antenna contact
+      time. Pricing varies by antenna type (narrowband vs wideband)
+      and ground station location. Data transfer charges also
+      apply. There is no free tier. Reserved contacts that are
+      not cancelled may still be charged.
+    common_false_claim: "Try Ground Station for free with the free tier."
+    correct_action: "Ground Station charges per minute of contact. Check pricing before scheduling."
+
+  - id: P8-ground-station-region
+    trigger_words: ["any region", "ground station location", "region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest ground stations are in all AWS regions. They
+      are in specific locations worldwide.
+    actual_behavior: >
+      AWS Ground Station antennas are located at specific sites
+      worldwide, each associated with an AWS region. Not all
+      regions have ground stations. The ground station location
+      determines which satellite passes are visible. Data is
+      delivered to the associated AWS region.
+    common_false_claim: "Use a ground station in any AWS region."
+    correct_action: "Check available ground station locations. Choose based on satellite orbit coverage."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

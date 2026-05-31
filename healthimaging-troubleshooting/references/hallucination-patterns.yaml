@@ -1,0 +1,132 @@
+# =============================================================================
+# AWS HealthImaging "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-in-place-modification
+    trigger_words: ["modify image set", "update image", "edit DICOM", "change metadata"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest image sets can be modified in place. HealthImaging
+      uses immutable versioning — updates create new versions.
+    actual_behavior: >
+      Image sets are immutable. Any update (adding frames, modifying
+      metadata) creates a new version of the image set. Previous
+      versions are retained. There is no in-place edit capability.
+      The update-image-set-metadata API creates a new version, it
+      does not modify the existing version.
+    common_false_claim: "Update the image set metadata directly to fix the DICOM tags."
+    correct_action: "Use update-image-set-metadata which creates a new version. Reference the latest version ID for subsequent operations."
+
+  - id: P2-full-dicom-search
+    trigger_words: ["search DICOM tags", "query any tag", "find by tag", "search metadata"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all DICOM tags are searchable. Only indexed
+      patient, study, and series level tags support search.
+    actual_behavior: >
+      The search-image-sets API only supports queries on indexed
+      DICOM tags at patient, study, and series levels. Instance-level
+      tags, private tags, and most optional tags are NOT indexed.
+      To access all tags, retrieve the full metadata using
+      get-image-set-metadata for a specific image set.
+    common_false_claim: "Search for image sets by any DICOM tag using search-image-sets."
+    correct_action: "Use search-image-sets for indexed tags only. For other tags, retrieve metadata per image set and filter client-side."
+
+  - id: P3-raw-pixel-data
+    trigger_words: ["get pixel data", "raw DICOM", "original format", "download DICOM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest HealthImaging returns original DICOM files or
+      raw pixel data. Frames are returned in HTJ2K format.
+    actual_behavior: >
+      Image frames are returned in High-Throughput JPEG 2000 (HTJ2K)
+      format via get-image-frame. The original DICOM Part 10 files
+      are not stored or retrievable. Client applications must decode
+      HTJ2K. Metadata is stored separately from pixel data.
+    common_false_claim: "Download the original DICOM file from HealthImaging."
+    correct_action: "Use get-image-frame for HTJ2K pixel data and get-image-set-metadata for DICOM metadata. Reconstruct DICOM files client-side if needed."
+
+  - id: P4-cross-region-import
+    trigger_words: ["import from another region", "cross-region", "different region S3"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DICOM imports can use S3 buckets in any region.
+      The source bucket must be in the same region as the datastore.
+    actual_behavior: >
+      DICOM import jobs require the source S3 bucket to be in the
+      same AWS region as the target datastore. Cross-region imports
+      are not supported. Files must be copied to a same-region
+      bucket before import.
+    common_false_claim: "Import DICOM files from any S3 bucket regardless of region."
+    correct_action: "Ensure S3 bucket and datastore are in the same region. Copy files to a same-region bucket if needed."
+
+  - id: P5-change-encryption
+    trigger_words: ["change encryption", "update KMS key", "modify encryption", "re-encrypt"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest encryption keys can be changed on existing
+      datastores. Encryption is set at creation and is immutable.
+    actual_behavior: >
+      Datastore encryption configuration (AWS-managed key or
+      customer-managed KMS key) is set at creation time and cannot
+      be changed. To use a different KMS key, create a new datastore
+      with the desired key and copy image sets from the old datastore.
+    common_false_claim: "Update the datastore encryption settings to use a new KMS key."
+    correct_action: "Create a new datastore with the desired KMS key. Copy image sets from the old datastore. Delete the old datastore after verification."
+
+  - id: P6-instant-deletion
+    trigger_words: ["delete immediately", "permanent delete", "remove image set"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deletion is immediate and permanent. Deletion
+      has a retention window and purge is a separate step.
+    actual_behavior: >
+      Deleting an image set marks it for deletion but may retain
+      it for a period. Permanent removal requires explicit purge.
+      Deleted image sets may be recoverable within the retention
+      window. The delete-image-set API initiates deletion but does
+      not guarantee immediate permanent removal.
+    common_false_claim: "Delete the image set to permanently remove it immediately."
+    correct_action: "Use delete-image-set to initiate deletion. Understand the retention window. Use purge for permanent removal if available."
+
+  - id: P7-real-time-import
+    trigger_words: ["real-time import", "instant import", "streaming DICOM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DICOM import is real-time or streaming.
+      Import is a batch job that processes files from S3.
+    actual_behavior: >
+      DICOM import is a batch operation via start-dicom-import-job.
+      Files are read from S3, validated, and processed asynchronously.
+      Import jobs can take minutes to hours depending on data volume.
+      There is no real-time streaming import capability.
+    common_false_claim: "Stream DICOM files directly into HealthImaging in real-time."
+    correct_action: "Upload DICOM files to S3 first, then start an import job. Monitor job status with get-dicom-import-job."
+
+  - id: P8-unlimited-datastores
+    trigger_words: ["create datastores", "multiple datastores", "no limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not account for service quotas on datastores
+      and concurrent operations.
+    actual_behavior: >
+      HealthImaging has service quotas limiting the number of
+      datastores per account per region, concurrent import jobs,
+      and API request rates. Default quotas may be lower than
+      expected. Quota increases require a service quota request.
+    common_false_claim: "Create as many datastores as you need without limits."
+    correct_action: "Check service quotas: aws service-quotas list-service-quotas --service-code medical-imaging. Request increases if needed."
+
+remediation_hallucinations:
+
+  - id: R1-modify-datastore-encryption
+    false_fix: "Use update-datastore to change the KMS encryption key."
+    why_wrong: "There is no update-datastore API for encryption. Encryption is immutable after creation."
+    correct_fix: "Create a new datastore with the desired KMS key and copy image sets."
+
+  - id: R2-search-private-tags
+    false_fix: "Use search-image-sets with private DICOM tag filters."
+    why_wrong: "Private and instance-level DICOM tags are not indexed for search."
+    correct_fix: "Retrieve metadata per image set with get-image-set-metadata and filter client-side."

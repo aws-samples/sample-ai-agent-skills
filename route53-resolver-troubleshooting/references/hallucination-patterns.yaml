@@ -1,0 +1,166 @@
+# =============================================================================
+# Amazon Route 53 Resolver "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-inbound-outbound-reversed
+    trigger_words: ["inbound endpoint", "outbound endpoint", "direction", "on-premises DNS"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs frequently reverse inbound and outbound endpoint directions.
+      They suggest inbound endpoints for forwarding queries out, or
+      outbound endpoints for receiving queries from on-premises.
+    actual_behavior: >
+      Inbound endpoints receive DNS queries FROM on-premises or
+      external networks INTO the VPC. Outbound endpoints forward
+      DNS queries FROM the VPC TO on-premises or external DNS
+      servers. The direction is always from the VPC's perspective.
+      On-premises servers point to inbound endpoint IPs. Outbound
+      endpoints use forwarding rules to reach external DNS servers.
+    common_false_claim: "Create an outbound endpoint to receive DNS queries from your on-premises network."
+    correct_action: "Create an inbound endpoint to receive queries from on-premises. Create outbound for forwarding queries out."
+
+  - id: P2-single-az-endpoint
+    trigger_words: ["resolver endpoint", "create endpoint", "IP address", "single subnet"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating resolver endpoints with a single IP
+      address in one AZ. Endpoints require at least 2 IPs in
+      different AZs for high availability.
+    actual_behavior: >
+      Resolver endpoints require a minimum of 2 IP addresses in
+      different Availability Zones. Each IP address creates an ENI
+      in the specified subnet. Single-AZ endpoints are a single
+      point of failure and violate AWS best practices. The maximum
+      is 6 IP addresses per endpoint for scaling.
+    common_false_claim: "Create a resolver endpoint with one IP address in a single subnet."
+    correct_action: "Create endpoints with at least 2 IP addresses in different AZs. Use up to 6 for high throughput."
+
+  - id: P3-firewall-overrides-forwarding
+    trigger_words: ["DNS Firewall", "forwarding rule", "block domain", "firewall rule"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate DNS Firewall rules with forwarding rules or
+      suggest one can replace the other. They are separate features.
+    actual_behavior: >
+      DNS Firewall evaluates queries BEFORE forwarding rules. If
+      DNS Firewall blocks a domain, the query never reaches the
+      forwarding rule. Forwarding rules control WHERE queries go.
+      DNS Firewall controls WHETHER queries are allowed. They work
+      together but are configured independently.
+    common_false_claim: "Use a forwarding rule to block DNS queries to malicious domains."
+    correct_action: "Use DNS Firewall to block domains. Use forwarding rules to direct queries to specific DNS servers."
+
+  - id: P4-system-rules-overridable
+    trigger_words: ["system rule", "amazonaws.com", "override", "forward AWS domains"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating forwarding rules to override system
+      rules for AWS internal domains. System rules cannot be
+      overridden.
+    actual_behavior: >
+      System rules are auto-created for AWS internal domains
+      (amazonaws.com, compute.internal, etc.) and CANNOT be
+      overridden by custom forwarding rules. Queries for these
+      domains always resolve via the VPC DNS resolver. This
+      ensures AWS service endpoints always resolve correctly.
+    common_false_claim: "Create a forwarding rule for amazonaws.com to route AWS DNS through your on-premises servers."
+    correct_action: "System rules cannot be overridden. AWS internal domains always resolve via VPC DNS. Forward only non-AWS domains."
+
+  - id: P5-query-logging-endpoint-only
+    trigger_words: ["query logging", "resolver logs", "DNS logs", "log queries"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest query logging only captures queries going through
+      resolver endpoints. It captures ALL VPC DNS queries.
+    actual_behavior: >
+      Route 53 Resolver query logging captures ALL DNS queries
+      made in the associated VPC, including queries to
+      AmazonProvidedDNS (the default VPC resolver at .2 address).
+      It is not limited to queries through resolver endpoints.
+      This means log volume can be very high in busy VPCs with
+      many instances making DNS queries.
+    common_false_claim: "Query logging only captures DNS queries that go through resolver endpoints."
+    correct_action: "Query logging captures all VPC DNS queries. Plan for high log volume and associated storage costs."
+
+  - id: P6-dnssec-transparent
+    trigger_words: ["DNSSEC", "validation", "enable DNSSEC", "DNS security"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling DNSSEC validation is transparent and
+      has no impact on existing DNS resolution. It can break
+      resolution for misconfigured domains.
+    actual_behavior: >
+      Enabling DNSSEC validation causes the resolver to validate
+      DNSSEC signatures on responses. Queries for domains with
+      invalid, expired, or missing DNSSEC signatures return
+      SERVFAIL instead of the actual DNS response. This can break
+      resolution for domains that have misconfigured DNSSEC,
+      including some third-party services.
+    common_false_claim: "Enable DNSSEC validation — it's transparent and won't affect existing DNS resolution."
+    correct_action: "Test DNSSEC validation in a non-production VPC first. Monitor for SERVFAIL responses after enabling."
+
+  - id: P7-ram-sharing-automatic
+    trigger_words: ["share rule", "cross-account", "RAM sharing", "share firewall"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest RAM sharing of resolver resources works
+      automatically across any AWS accounts. It requires
+      Organization membership by default.
+    actual_behavior: >
+      RAM sharing of resolver rules and DNS Firewall rule groups
+      requires both accounts to be in the same AWS Organization
+      by default. External sharing (outside the organization) must
+      be explicitly enabled in RAM settings. Shared resources
+      appear in the recipient account but are managed by the
+      sharing account. The recipient must accept the share.
+    common_false_claim: "Share your resolver rule with any AWS account using RAM."
+    correct_action: "Verify both accounts are in the same Organization. Enable external sharing in RAM if needed."
+
+  - id: P8-endpoint-auto-scaling
+    trigger_words: ["endpoint scaling", "DNS throughput", "queries per second", "endpoint capacity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest resolver endpoints auto-scale based on query
+      volume. Scaling requires manually adding IP addresses.
+    actual_behavior: >
+      Each resolver endpoint IP address handles up to 10,000
+      queries per second. Endpoints do NOT auto-scale. To increase
+      capacity, you must manually add more IP addresses (up to 6
+      per endpoint). If you need more than 60,000 QPS, you need
+      multiple endpoints. Monitor query volume to plan capacity.
+    common_false_claim: "Resolver endpoints automatically scale to handle any query volume."
+    correct_action: "Each IP handles 10K QPS. Add IP addresses manually to scale. Monitor query volume for capacity planning."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-endpoint
+    trigger_words: ["delete endpoint", "recreate endpoint", "rebuild resolver"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting and recreating a resolver endpoint changes its IP
+      addresses. All on-premises DNS servers, forwarding rules,
+      and firewall configurations pointing to the old IPs will
+      break. This causes a DNS outage.
+    correct_approach: >
+      Instead of deleting, update the existing endpoint by adding
+      or removing IP addresses. If the endpoint must be recreated,
+      first update all references to the old IP addresses, create
+      the new endpoint, verify connectivity, then decommission the
+      old endpoint. Never delete first.
+
+  - id: R2-disable-firewall-to-fix-dns
+    trigger_words: ["disable firewall", "remove firewall", "DNS not resolving"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Disabling DNS Firewall to fix DNS resolution removes all
+      domain-based security controls. This exposes the VPC to
+      DNS-based threats including data exfiltration via DNS
+      tunneling and connections to malicious domains.
+    correct_approach: >
+      Instead of disabling the firewall, check the firewall rules
+      for overly broad BLOCK rules. Review the DNS Firewall logs
+      to identify which rule is blocking the query. Add specific
+      ALLOW rules for legitimate domains at a higher priority
+      (lower number) than the BLOCK rule.

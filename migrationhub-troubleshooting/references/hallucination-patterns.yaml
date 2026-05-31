@@ -1,0 +1,127 @@
+# =============================================================================
+# AWS Migration Hub "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-hub-performs-migration
+    trigger_words: ["migrate with Migration Hub", "Migration Hub migration", "start migration"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Migration Hub performs migrations. It only tracks
+      migration status from other tools.
+    actual_behavior: >
+      Migration Hub is a tracking and aggregation service. Actual
+      migrations are performed by DMS, Application Migration Service,
+      SMS, or CloudEndure. Migration Hub displays their status in
+      a single dashboard.
+    common_false_claim: "Use Migration Hub to migrate your servers to AWS."
+    correct_action: "Use Migration Hub to track migrations. Use AMS, DMS, or SMS to perform them."
+
+  - id: P2-no-home-region
+    trigger_words: ["home region", "setup Migration Hub", "first time"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs skip home region setup. Migration Hub requires a home
+      region before any operations.
+    actual_behavior: >
+      A home region must be set before using Migration Hub. All data
+      is stored in the home region. The home region cannot be changed
+      after setting. Choose carefully based on compliance and latency.
+    common_false_claim: "Start using Migration Hub in any region."
+    correct_action: "Set home region first: aws mgh create-home-region-control --home-region <region>"
+
+  - id: P3-strategy-without-data
+    trigger_words: ["strategy recommendations", "migration strategy", "rehost replatform"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest getting strategy recommendations without data
+      collection. Recommendations require server inventory data.
+    actual_behavior: >
+      Strategy Recommendations analyzes collected server data to
+      suggest migration strategies (rehost, replatform, refactor, etc.).
+      Without server data from ADS agents or manual import, the
+      service cannot generate recommendations.
+    common_false_claim: "Get strategy recommendations for your portfolio immediately."
+    correct_action: "Collect server data first (ADS agents or import), then request recommendations."
+
+  - id: P4-refactor-spaces-free
+    trigger_words: ["refactor spaces", "strangler fig", "incremental refactoring"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs present Refactor Spaces as a planning tool. It creates
+      real AWS resources that incur costs.
+    actual_behavior: >
+      Refactor Spaces creates actual AWS infrastructure: API Gateway,
+      Network Load Balancer, Lambda functions, and optionally Transit
+      Gateway. These resources have associated costs. The environment
+      manages traffic routing between legacy and new services.
+    common_false_claim: "Create a Refactor Spaces environment for planning your refactoring."
+    correct_action: "Understand that Refactor Spaces creates billable resources. Plan architecture first."
+
+  - id: P5-change-home-region
+    trigger_words: ["change home region", "move home region", "switch region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest changing the home region. It cannot be changed
+      after initial setup.
+    actual_behavior: >
+      The Migration Hub home region is set once and cannot be changed.
+      All migration tracking data is stored in this region. To use
+      a different region, you would need a new AWS account or
+      contact AWS Support for exceptional cases.
+    common_false_claim: "Change your home region to us-west-2 for better latency."
+    correct_action: "Home region cannot be changed. Choose carefully during initial setup."
+
+  - id: P6-app-grouping-affects-migration
+    trigger_words: ["application group", "group servers", "application migration"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest application grouping controls migration behavior.
+      It's purely logical organization.
+    actual_behavior: >
+      Application grouping in Migration Hub is for organizational
+      and tracking purposes only. It does not create dependencies,
+      affect migration order, or control migration tool behavior.
+      It helps visualize migration progress by application.
+    common_false_claim: "Group servers into an application to migrate them together."
+    correct_action: "Use grouping for tracking. Configure migration tools separately for coordinated migration."
+
+  - id: P7-orchestrator-vs-tracking
+    trigger_words: ["orchestrator", "workflow", "automated migration"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs confuse Migration Hub tracking with Migration Hub
+      Orchestrator. They are different features.
+    actual_behavior: >
+      Migration Hub Orchestrator provides automated workflow templates
+      for common migration patterns. Basic Migration Hub only tracks
+      status. Orchestrator has pre-built templates for SAP, SQL Server,
+      and other workloads with step-by-step automation.
+    common_false_claim: "Migration Hub automatically orchestrates your migration steps."
+    correct_action: "Use Migration Hub Orchestrator for automated workflows, basic Hub for tracking."
+
+  - id: P8-discovery-vs-strategy-collector
+    trigger_words: ["data collector", "discovery agent", "collect data"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs confuse ADS agents with Strategy Recommendations collector.
+      They are separate tools collecting different data.
+    actual_behavior: >
+      Application Discovery Service agents collect infrastructure data
+      (CPU, memory, network). Strategy Recommendations collector
+      collects application-level data (frameworks, dependencies, code
+      patterns). Both may be needed for complete assessment.
+    common_false_claim: "Install the ADS agent to get strategy recommendations."
+    correct_action: "Install ADS agent for infrastructure data AND Strategy collector for app analysis."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

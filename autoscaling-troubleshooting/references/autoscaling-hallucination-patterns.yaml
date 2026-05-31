@@ -1,0 +1,154 @@
+# =============================================================================
+# EC2 Auto Scaling "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-grace-period-vs-cooldown
+    trigger_words: ["health check grace period", "cooldown", "scaling delay", "not scaling"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate health check grace period and cooldown period because
+      both involve waiting. Grace period protects new instances from
+      premature health check termination. Cooldown prevents rapid
+      successive scaling actions.
+    actual_behavior: >
+      Health check grace period (HealthCheckGracePeriod) delays health
+      evaluation for newly launched instances. Default is 300 seconds.
+      Cooldown (DefaultCooldown) prevents additional scaling activities
+      after a scaling event. They serve completely different purposes.
+      Grace period applies per-instance; cooldown applies per-ASG.
+    common_false_claim: "Increase the cooldown period to give instances more time to start."
+    correct_action: "Increase HealthCheckGracePeriod for slow-starting apps. Adjust cooldown for scaling frequency."
+
+  - id: P2-elb-health-check-default
+    trigger_words: ["ELB health check", "target group health", "unhealthy instance", "health check type"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume ELB health checks are automatically enabled when an
+      ASG is attached to a target group. They are not — EC2 status
+      checks are the default.
+    actual_behavior: >
+      By default, ASGs use EC2 status checks (HealthCheckType=EC2).
+      ELB health checks must be explicitly enabled by setting
+      HealthCheckType=ELB. When ELB type is set, instances must pass
+      BOTH EC2 and ELB health checks. An instance can be "healthy"
+      per EC2 but "unhealthy" per ELB if the application is down.
+    common_false_claim: "Auto Scaling automatically uses ELB health checks when attached to a target group."
+    correct_action: "Explicitly set HealthCheckType to ELB: aws autoscaling update-auto-scaling-group --health-check-type ELB"
+
+  - id: P3-target-tracking-cooldown
+    trigger_words: ["target tracking", "scaling policy", "cooldown override", "scale-in protection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs apply default cooldown rules to target tracking policies.
+      Target tracking has its own independent cooldown mechanism
+      that overrides the ASG default cooldown.
+    actual_behavior: >
+      Target tracking policies manage their own cooldowns independently.
+      Scale-out cooldown defaults to 300 seconds. Scale-in cooldown
+      defaults to 300 seconds. These override the ASG DefaultCooldown.
+      Target tracking also has DisableScaleIn option. Multiple target
+      tracking policies can coexist — the one requesting the highest
+      capacity wins for scale-out.
+    common_false_claim: "Reduce the ASG default cooldown to make target tracking respond faster."
+    correct_action: "Adjust the target tracking policy's own cooldown settings, not the ASG default cooldown."
+
+  - id: P4-mixed-instances-any-type
+    trigger_words: ["mixed instances", "instance type", "spot", "on-demand", "allocation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any instance type can be used in mixed instances
+      policies. Instance types must be compatible (same family
+      characteristics) and available in the specified AZs.
+    actual_behavior: >
+      Mixed instances policies require specifying instance type
+      overrides. Instance types should have similar vCPU and memory
+      for consistent application performance. At least 2-3 instance
+      types are recommended for Spot availability. Instance weighting
+      can normalize different sizes. Not all instance types are
+      available in all AZs. capacity-optimized strategy is recommended
+      for Spot to reduce interruptions.
+    common_false_claim: "Just add any instance type to the mixed instances policy for flexibility."
+    correct_action: "Choose compatible instance types with similar specs. Use instance weighting for different sizes."
+
+  - id: P5-warm-pool-instant-scaling
+    trigger_words: ["warm pool", "pre-warm", "fast scaling", "scale-out speed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest warm pool instances are immediately available.
+      Warm pool instances still need to transition from their pool
+      state to InService, which takes time.
+    actual_behavior: >
+      Warm pool instances are pre-initialized but in Stopped,
+      Running, or Hibernated state. When scaling out, they must
+      transition to InService. Stopped instances need to start.
+      Lifecycle hooks may apply during transition. The transition
+      is faster than launching new instances but not instant.
+      Warm pool has its own max size (MaxGroupPreparedCapacity).
+    common_false_claim: "Warm pool provides instant scaling — instances are immediately available."
+    correct_action: "Warm pool reduces launch time but transition still takes time. Use Running state for fastest response."
+
+  - id: P6-predictive-scaling-immediate
+    trigger_words: ["predictive scaling", "ML forecast", "proactive scaling", "forecast"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest predictive scaling works immediately after
+      enabling. It requires historical data and time to generate
+      accurate forecasts.
+    actual_behavior: >
+      Predictive scaling needs at least 24 hours of historical
+      CloudWatch data. It works best with 14 days of data. Forecasts
+      are generated once daily and look 48 hours ahead. It works
+      best with recurring, predictable traffic patterns. Use
+      ForecastOnly mode first to evaluate accuracy. Combine with
+      dynamic scaling for unexpected spikes.
+    common_false_claim: "Enable predictive scaling and it will immediately optimize your capacity."
+    correct_action: "Enable in ForecastOnly mode first. Wait for sufficient data. Combine with dynamic scaling."
+
+  - id: P7-instance-refresh-zero-downtime
+    trigger_words: ["instance refresh", "rolling update", "zero downtime", "replace instances"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim instance refresh guarantees zero downtime. It
+      depends on MinHealthyPercentage, health check configuration,
+      and application behavior during transitions.
+    actual_behavior: >
+      Instance refresh replaces instances in batches based on
+      MinHealthyPercentage (default 90%). If health checks fail
+      during refresh, the operation can pause or fail. Connection
+      draining depends on ELB deregistration delay. Applications
+      must handle graceful shutdown. SkipMatching avoids replacing
+      instances that already match the desired configuration.
+      Rollback is available but not automatic.
+    common_false_claim: "Instance refresh provides zero-downtime rolling updates automatically."
+    correct_action: "Configure MinHealthyPercentage, health checks, and deregistration delay for safe refresh."
+
+  - id: P8-termination-policy-random
+    trigger_words: ["termination policy", "which instance terminated", "scale-in selection", "instance protection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest termination is random or based solely on the
+      configured policy. Auto Scaling first rebalances across AZs,
+      then applies the termination policy within the selected AZ.
+    actual_behavior: >
+      Scale-in first identifies the AZ with the most instances
+      (for AZ rebalancing). Then it applies the termination policy
+      within that AZ. Default order: OldestLaunchTemplate →
+      OldestLaunchConfiguration → ClosestToNextInstanceHour.
+      Scale-in protection and standby instances are excluded.
+      Instance protection must be explicitly set and does NOT
+      protect against manual termination or health check replacement.
+    common_false_claim: "Set termination policy to OldestInstance and it will always terminate the oldest."
+    correct_action: "Understand AZ rebalancing happens first. Termination policy applies within the selected AZ."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

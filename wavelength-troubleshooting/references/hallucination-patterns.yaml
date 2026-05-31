@@ -1,0 +1,125 @@
+# =============================================================================
+# AWS Wavelength "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-igw-nat-in-wavelength
+    trigger_words: ["internet gateway", "NAT gateway", "internet access", "wavelength internet"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest standard internet/NAT gateways for Wavelength Zones.
+      These are not supported — carrier gateway is the only gateway type.
+    actual_behavior: >
+      Wavelength Zones do not support internet gateways or NAT gateways.
+      For carrier network traffic, use the carrier gateway. For internet
+      access, route through the parent Region VPC where IGW/NAT are available.
+    common_false_claim: "Attach an internet gateway to your VPC for Wavelength Zone internet access."
+    correct_action: "Use carrier gateway for mobile traffic. Route internet traffic through Region subnets."
+
+  - id: P2-carrier-ip-elastic-ip-confusion
+    trigger_words: ["carrier IP", "elastic IP", "public IP", "wavelength IP"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse carrier IPs with Elastic IPs. They are different
+      address types from different pools with different routing.
+    actual_behavior: >
+      Carrier IPs are allocated from the carrier's IP pool and are
+      routable on the carrier's mobile network. Elastic IPs are from
+      AWS's pool and are internet-routable. Use carrier IPs for
+      Wavelength instances that need mobile network reachability.
+    common_false_claim: "Allocate an Elastic IP and associate it with your Wavelength instance."
+    correct_action: "Allocate a carrier IP using aws ec2 allocate-address --domain vpc --network-border-group <wl-zone>."
+
+  - id: P3-all-services-available
+    trigger_words: ["RDS wavelength", "ElastiCache wavelength", "Lambda wavelength", "service availability"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume all AWS services are available in Wavelength Zones.
+      Only a limited subset runs directly in Wavelength.
+    actual_behavior: >
+      Only EC2, EBS, ECS, EKS, IAM, CloudWatch, and CloudFormation
+      run directly in Wavelength Zones. Other services (RDS, ElastiCache,
+      Lambda, S3, etc.) must be accessed through the parent Region.
+    common_false_claim: "Deploy an RDS instance in the Wavelength Zone for low-latency database access."
+    correct_action: "Deploy the database in the Region. Access it from Wavelength via VPC routing."
+
+  - id: P4-automatic-opt-in
+    trigger_words: ["wavelength zone", "opt-in", "enable wavelength", "zone not available"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Wavelength Zones are available by default like
+      standard AZs. They require explicit opt-in.
+    actual_behavior: >
+      Wavelength Zones must be explicitly opted-in per account using
+      aws ec2 modify-availability-zone-group. Without opt-in, the zone
+      does not appear in describe-availability-zones and resources
+      cannot be created.
+    common_false_claim: "Wavelength Zones are available in all accounts by default."
+    correct_action: "Opt-in with aws ec2 modify-availability-zone-group --group-name <zone-group> --opt-in-status opted-in."
+
+  - id: P5-guaranteed-latency
+    trigger_words: ["latency", "single-digit millisecond", "ultra-low latency", "5G latency"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs quote specific latency numbers as guarantees. Actual latency
+      depends on carrier network conditions, location, and load.
+    actual_behavior: >
+      Wavelength provides single-digit millisecond latency for traffic
+      from mobile devices on the carrier network to Wavelength Zone
+      instances. However, actual latency varies by carrier, geographic
+      location, network congestion, and signal quality. No specific
+      latency is guaranteed.
+    common_false_claim: "Wavelength guarantees sub-5ms latency for all mobile users."
+    correct_action: "Wavelength enables low latency but actual values depend on carrier network conditions."
+
+  - id: P6-s3-direct-access
+    trigger_words: ["S3 wavelength", "S3 access", "object storage wavelength"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest direct S3 access from Wavelength Zones. S3 is not
+      available directly in Wavelength — traffic must route through Region.
+    actual_behavior: >
+      S3 is not deployed in Wavelength Zones. Access to S3 from
+      Wavelength instances routes through the parent Region VPC.
+      Use S3 gateway endpoints in the Region VPC for better performance.
+      This adds latency compared to Region-local S3 access.
+    common_false_claim: "Access S3 directly from your Wavelength Zone instance with low latency."
+    correct_action: "Route S3 traffic through Region VPC. Use S3 gateway endpoints for optimization."
+
+  - id: P7-all-instance-types
+    trigger_words: ["instance type", "instance family", "launch instance wavelength"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest any instance type for Wavelength Zones. Only specific
+      families are available and vary by zone.
+    actual_behavior: >
+      Wavelength Zones support limited instance families (typically t3,
+      r5, g4dn). Availability varies by Wavelength Zone and carrier.
+      Use describe-instance-type-offerings with the zone filter to check.
+    common_false_claim: "Launch an m5.xlarge instance in the Wavelength Zone."
+    correct_action: "Check available types with aws ec2 describe-instance-type-offerings --location-type availability-zone --filters Name=location,Values=<wl-zone>."
+
+  - id: P8-wavelength-subnet-separate-vpc
+    trigger_words: ["wavelength VPC", "separate VPC", "wavelength subnet"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a separate VPC for Wavelength resources.
+      Wavelength subnets must be in the same VPC as Region subnets.
+    actual_behavior: >
+      Wavelength subnets are created in the same VPC as Region subnets.
+      They share the VPC CIDR, security groups, and NACLs. The subnet
+      is differentiated by its availability zone (wavelength-zone type).
+    common_false_claim: "Create a dedicated VPC for your Wavelength Zone deployment."
+    correct_action: "Create Wavelength subnets in your existing VPC with the Wavelength Zone AZ."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

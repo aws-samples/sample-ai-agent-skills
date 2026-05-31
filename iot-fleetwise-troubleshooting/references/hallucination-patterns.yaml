@@ -1,0 +1,167 @@
+# =============================================================================
+# AWS IoT FleetWise "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-multiple-signal-catalogs
+    trigger_words: ["signal catalog", "create catalog", "new catalog"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest creating multiple signal catalogs for different
+      vehicle types. Only one signal catalog is allowed per account
+      per region.
+    actual_behavior: >
+      AWS IoT FleetWise allows exactly ONE signal catalog per
+      account per region. All vehicle models must reference signals
+      from this single catalog. To support different vehicle types,
+      add all signals to the one catalog and use different model
+      manifests to select relevant signals for each vehicle type.
+    common_false_claim: "Create a separate signal catalog for each vehicle model."
+    correct_action: "Add all signals to the single account-level signal catalog. Use model manifests to select signals per vehicle type."
+
+  - id: P2-draft-manifest-usable
+    trigger_words: ["model manifest", "create vehicle", "decoder manifest"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using manifests immediately after creation.
+      Manifests must be explicitly activated before use.
+    actual_behavior: >
+      Model manifests and decoder manifests are created in DRAFT
+      status. They must be explicitly transitioned to ACTIVE
+      status before they can be used to create vehicles or
+      campaigns. Attempting to use a DRAFT manifest results in
+      a validation error.
+    common_false_claim: "Create the model manifest and immediately create vehicles from it."
+    correct_action: "After creating a manifest, activate it: aws iotfleetwise update-model-manifest --name <name> --status ACTIVE"
+
+  - id: P3-campaign-targets-vehicle
+    trigger_words: ["campaign", "collect data", "target vehicle"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest campaigns can target individual vehicles.
+      Campaigns can only target fleets.
+    actual_behavior: >
+      Campaigns are associated with fleets, not individual
+      vehicles. The campaign's target ARN must be a fleet ARN.
+      To collect data from a specific vehicle, add it to a fleet
+      and create a campaign targeting that fleet. There is no
+      direct vehicle-level campaign targeting.
+    common_false_claim: "Create a campaign targeting vehicle-123 to collect its data."
+    correct_action: "Create a fleet, add the vehicle to it, then create a campaign targeting the fleet ARN."
+
+  - id: P4-automatic-edge-agent-config
+    trigger_words: ["edge agent", "FWE", "automatic configuration", "auto deploy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the edge agent is automatically configured
+      from the cloud. Configuration must be done on the vehicle.
+    actual_behavior: >
+      The FleetWise Edge Agent (FWE) requires manual configuration
+      on the vehicle. The configuration file includes the vehicle
+      name, IoT endpoint, credentials path, and collection schemes.
+      The cloud does not push configuration to the edge agent.
+      Campaign updates are delivered via MQTT but initial setup
+      is manual.
+    common_false_claim: "FleetWise automatically configures the edge agent on your vehicles."
+    correct_action: "Deploy and configure the edge agent on each vehicle with the correct vehicle name, endpoint, and credentials."
+
+  - id: P5-real-time-s3-data
+    trigger_words: ["S3 destination", "real-time", "immediate data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest S3 destinations provide real-time data access.
+      S3 data is batched and has delivery latency.
+    actual_behavior: >
+      S3 destinations batch collected data before writing to S3.
+      Data delivery has latency depending on the batch size and
+      collection interval. For near-real-time data access, use
+      Timestream as the destination. S3 is optimized for batch
+      analytics, not real-time queries.
+    common_false_claim: "Use S3 destination for real-time vehicle data monitoring."
+    correct_action: "Use Timestream destination for near-real-time queries. Use S3 for batch analytics and long-term storage."
+
+  - id: P6-campaign-auto-start
+    trigger_words: ["create campaign", "start collection", "campaign running"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest campaigns start collecting data immediately
+      after creation. Campaigns require explicit approval.
+    actual_behavior: >
+      Creating a campaign puts it in CREATED status. It must
+      transition through WAITING_FOR_APPROVAL to RUNNING before
+      data collection begins. Approval can be done via
+      update-campaign with action APPROVE. Without approval,
+      no data is collected.
+    common_false_claim: "Create the campaign and data collection starts automatically."
+    correct_action: "After creating the campaign, approve it: aws iotfleetwise update-campaign --name <name> --action APPROVE"
+
+  - id: P7-decoder-manifest-optional
+    trigger_words: ["decoder manifest", "optional", "skip decoder"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest decoder manifests are optional. They are
+      required for every vehicle model.
+    actual_behavior: >
+      Every model manifest requires at least one associated
+      decoder manifest. The decoder manifest defines how vehicle
+      signals are decoded from the vehicle's network protocols
+      (CAN, OBD-II, etc.) into the cloud representation. Without
+      a decoder manifest, the edge agent cannot interpret vehicle
+      data.
+    common_false_claim: "Decoder manifests are optional if you're using standard OBD-II signals."
+    correct_action: "Create a decoder manifest for every model manifest. Define decoders for all signals the edge agent needs to collect."
+
+  - id: P8-fleet-auto-membership
+    trigger_words: ["fleet membership", "automatic", "all vehicles"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest vehicles are automatically added to fleets.
+      Fleet membership is explicit.
+    actual_behavior: >
+      Vehicles must be explicitly associated with fleets using
+      associate-vehicle-fleet. There is no automatic fleet
+      membership based on vehicle model or attributes. A vehicle
+      can be a member of multiple fleets. Fleet membership
+      determines which campaigns apply to the vehicle.
+    common_false_claim: "All vehicles using the same model are automatically in the same fleet."
+    correct_action: "Explicitly associate vehicles with fleets: aws iotfleetwise associate-vehicle-fleet --vehicle-name <name> --fleet-id <id>"
+
+remediation_hallucinations:
+
+  - id: R1-delete-signal-catalog
+    trigger_words: ["delete signal catalog", "recreate catalog", "reset signals"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest deleting and recreating the signal catalog to
+      fix issues. This breaks all dependent model manifests,
+      decoder manifests, vehicles, and campaigns.
+    actual_behavior: >
+      Deleting the signal catalog removes the foundation for all
+      FleetWise resources. All model manifests, decoder manifests,
+      vehicles, fleets, and campaigns that reference signals from
+      the catalog become invalid. The entire FleetWise configuration
+      must be rebuilt from scratch.
+    correct_sequence: >
+      1. Identify the specific signal causing issues
+      2. Update the signal in the catalog: aws iotfleetwise update-signal-catalog
+      3. Update dependent manifests if signal definition changed
+      4. Never delete the entire catalog unless decommissioning FleetWise
+
+  - id: R2-force-delete-campaign
+    trigger_words: ["delete campaign", "remove campaign", "stop collection"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest deleting campaigns to stop data collection.
+      Campaigns should be suspended first to allow resumption.
+    actual_behavior: >
+      Deleting a campaign permanently removes it and all its
+      configuration. To temporarily stop data collection, suspend
+      the campaign instead. Suspended campaigns can be resumed
+      without reconfiguration. Deleted campaigns must be recreated
+      from scratch.
+    correct_sequence: >
+      1. Suspend the campaign: aws iotfleetwise update-campaign --name <name> --action SUSPEND
+      2. Investigate the issue while collection is paused
+      3. Resume when ready: aws iotfleetwise update-campaign --name <name> --action RESUME
+      4. Only delete if the campaign is no longer needed

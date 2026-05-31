@@ -1,0 +1,143 @@
+# =============================================================================
+# Edge Functions "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-cf-functions-origin-events
+    trigger_words: ["CloudFront Function", "origin request", "origin response"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using CloudFront Functions for origin events.
+      CloudFront Functions only support viewer events.
+    actual_behavior: >
+      CloudFront Functions can ONLY be associated with viewer-request
+      and viewer-response events. Origin-request and origin-response
+      events are exclusively handled by Lambda@Edge. There is no
+      configuration to enable CloudFront Functions for origin events.
+    common_false_claim: "Use a CloudFront Function on the origin-request event to modify the request before it reaches the origin."
+    correct_action: "Use Lambda@Edge for origin-request and origin-response events. CloudFront Functions are viewer-only."
+
+  - id: P2-lambda-edge-any-region
+    trigger_words: ["Lambda@Edge", "deploy", "region", "create function"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest deploying Lambda@Edge in any region.
+      Lambda@Edge must be created in us-east-1.
+    actual_behavior: >
+      Lambda@Edge functions MUST be created in the us-east-1
+      (N. Virginia) region. CloudFront automatically replicates
+      the function to edge locations worldwide. Functions created
+      in other regions cannot be associated with CloudFront
+      distributions and will produce an InvalidLambdaFunctionAssociation error.
+    common_false_claim: "Deploy your Lambda@Edge function in the region closest to your users."
+    correct_action: "Create the Lambda@Edge function in us-east-1. CloudFront handles replication to edge locations."
+
+  - id: P3-cf-function-network-calls
+    trigger_words: ["CloudFront Function", "fetch", "HTTP request", "API call", "network"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest making network calls from CloudFront Functions.
+      The runtime does not support network access.
+    actual_behavior: >
+      CloudFront Functions run in a restricted JavaScript runtime
+      that does NOT support network calls. There is no fetch(),
+      XMLHttpRequest, or any network API available. All data must
+      be derived from the request/response event object. For
+      network calls, use Lambda@Edge on origin events instead.
+    common_false_claim: "Use fetch() in your CloudFront Function to call an API for authentication."
+    correct_action: "Use Lambda@Edge for operations requiring network calls. CloudFront Functions are limited to event data manipulation."
+
+  - id: P4-lambda-edge-env-vars
+    trigger_words: ["Lambda@Edge", "environment variable", "configuration", "secrets"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using environment variables in Lambda@Edge.
+      Lambda@Edge does not support environment variables.
+    actual_behavior: >
+      Lambda@Edge functions cannot use environment variables.
+      This is a permanent restriction, not a configuration issue.
+      Configuration values must be hardcoded, stored in the
+      function code, fetched from external services (SSM, Secrets
+      Manager) at runtime, or embedded during build time.
+    common_false_claim: "Set the API key as an environment variable in your Lambda@Edge function."
+    correct_action: "Embed configuration at build time, or fetch from SSM/Secrets Manager at runtime (with caching)."
+
+  - id: P5-cf-function-modern-js
+    trigger_words: ["CloudFront Function", "async", "await", "arrow function", "ES6"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs generate modern JavaScript for CloudFront Functions.
+      The runtime uses ECMAScript 5.1.
+    actual_behavior: >
+      CloudFront Functions use a JavaScript runtime compatible
+      with ECMAScript 5.1. Modern features like async/await,
+      const/let (partially supported), template literals, and
+      some arrow function patterns may not work. The runtime
+      is intentionally limited for performance.
+    common_false_claim: "Use async/await in your CloudFront Function to handle the request."
+    correct_action: "Write ECMAScript 5.1 compatible code. Use var, function declarations, and string concatenation."
+
+  - id: P6-lambda-edge-layers
+    trigger_words: ["Lambda@Edge", "layer", "Lambda Layer", "shared code"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using Lambda Layers with Lambda@Edge.
+      Lambda@Edge does not support layers.
+    actual_behavior: >
+      Lambda@Edge functions cannot use Lambda Layers. All
+      dependencies must be bundled directly in the deployment
+      package. The package size limit is 1MB for viewer events
+      and 50MB for origin events (compressed). Use bundlers
+      like webpack or esbuild to package dependencies.
+    common_false_claim: "Add your shared utilities as a Lambda Layer for your Lambda@Edge function."
+    correct_action: "Bundle all dependencies in the deployment package. Use tree-shaking to minimize package size."
+
+  - id: P7-instant-replication
+    trigger_words: ["Lambda@Edge", "deploy", "update", "immediate", "instant"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Lambda@Edge updates take effect immediately.
+      Replication takes several minutes.
+    actual_behavior: >
+      After deploying or updating a Lambda@Edge function and
+      associating it with a distribution, replication to all
+      edge locations takes 5-15 minutes (sometimes longer).
+      During this period, different edge locations may serve
+      requests using different function versions. There is no
+      way to speed up replication.
+    common_false_claim: "Deploy the updated Lambda@Edge function and it will take effect immediately."
+    correct_action: "Deploy and wait 15+ minutes for full replication. Monitor CloudFront distribution status until 'Deployed'."
+
+  - id: P8-response-body-modification
+    trigger_words: ["modify response body", "change HTML", "inject script", "transform response"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying origin response bodies with edge
+      functions. This is severely limited.
+    actual_behavior: >
+      CloudFront Functions cannot access response bodies at all.
+      Lambda@Edge can generate new response bodies (up to 1MB
+      for viewer events, 40KB for origin events with body
+      included). Neither can modify an origin's response body
+      in-flight. To transform content, Lambda@Edge must generate
+      a completely new response or use S3 Object Lambda.
+    common_false_claim: "Use Lambda@Edge to inject a script tag into the HTML response from your origin."
+    correct_action: "Generate a complete new response in Lambda@Edge, or use S3 Object Lambda for content transformation."
+
+remediation_hallucinations:
+
+  - id: R1-increase-cf-function-timeout
+    false_fix: "Increase the CloudFront Function timeout to handle complex logic."
+    why_wrong: >
+      CloudFront Functions have a fixed 1ms execution time limit
+      that cannot be increased. This is a hard architectural limit
+      of the lightweight edge runtime.
+    correct_fix: "Simplify the function logic to fit within 1ms, or migrate to Lambda@Edge which has 5s/30s timeouts."
+
+  - id: R2-add-env-vars-lambda-edge
+    false_fix: "Add environment variables to the Lambda@Edge function for configuration."
+    why_wrong: >
+      Lambda@Edge does not support environment variables. This is
+      a permanent restriction, not a missing configuration.
+    correct_fix: "Embed configuration at build time using a bundler, or fetch from SSM Parameter Store/Secrets Manager at runtime with caching."

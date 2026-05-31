@@ -1,0 +1,144 @@
+# =============================================================================
+# AWS Elastic Disaster Recovery "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-discovery
+    trigger_words: ["DRS", "source server", "discover", "automatic"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest DRS automatically discovers source servers.
+      DRS requires manual agent installation on each source server.
+    actual_behavior: >
+      AWS DRS does NOT auto-discover source servers. The AWS
+      Replication Agent must be manually installed on each source
+      server. The agent registers the server with DRS and initiates
+      replication. Without agent installation, the server does not
+      appear in DRS console.
+    common_false_claim: "DRS will automatically discover your on-premises servers."
+    correct_action: "Install the AWS Replication Agent on each source server. Verify agent connectivity to DRS endpoints on TCP 443."
+
+  - id: P2-instant-replication
+    trigger_words: ["replication", "initial sync", "data copy", "RPO"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest replication is instant or near-instant after
+      agent installation. Initial sync can take hours to days.
+    actual_behavior: >
+      Initial replication performs a full block-level copy of all
+      source disks. Duration depends on total disk size and
+      available bandwidth. A 1TB server on 100Mbps link takes
+      approximately 24 hours for initial sync. Only after initial
+      sync completes does continuous replication begin with
+      sub-second RPO capability.
+    common_false_claim: "After installing the agent, your server is immediately protected."
+    correct_action: "Monitor initial sync progress via dataReplicationInfo.dataReplicationState. Plan for hours-to-days initial sync time."
+
+  - id: P3-drill-auto-cleanup
+    trigger_words: ["drill", "test recovery", "test instance", "cleanup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest drill instances are automatically cleaned up
+      after testing. Drill instances persist until explicitly
+      terminated.
+    actual_behavior: >
+      Drill instances launched via StartRecovery with isDrill=true
+      create real EC2 instances. These instances continue running
+      and incurring costs until explicitly terminated via
+      TerminateRecoveryInstances API or manual EC2 termination.
+      There is no automatic cleanup or time-based expiration.
+    common_false_claim: "Run a drill test — instances will be cleaned up automatically."
+    correct_action: "After drill validation, explicitly terminate drill instances: aws drs terminate-recovery-instances --recovery-instance-ids <id>."
+
+  - id: P4-failback-automatic
+    trigger_words: ["failback", "fail back", "return to source", "reverse replication"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest failback happens automatically or is a simple
+      one-click operation. Failback requires multiple steps
+      including client installation.
+    actual_behavior: >
+      Failback requires: 1) Installing the Failback Client on the
+      recovery instance, 2) Configuring failback replication to
+      the original source, 3) Waiting for failback replication to
+      complete, 4) Initiating the failback launch. Each step
+      requires explicit action and monitoring. Failback is not
+      automatic or instant.
+    common_false_claim: "Click failback to automatically return to your original infrastructure."
+    correct_action: "Follow the multi-step failback process: install Failback Client, configure replication, wait for sync, then launch failback."
+
+  - id: P5-replication-server-user-managed
+    trigger_words: ["replication server", "staging area", "replication instance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest users should manage or configure replication
+      servers directly. Replication servers are fully managed by DRS.
+    actual_behavior: >
+      DRS automatically provisions and manages replication server
+      EC2 instances in the staging area subnet. Users should NOT
+      terminate, stop, modify, or SSH into replication servers.
+      Replication server instance type and count are configured
+      through the replication configuration template, not by
+      direct EC2 management.
+    common_false_claim: "If replication is slow, upgrade the replication server instance type in EC2."
+    correct_action: "Modify replication server instance type through DRS replication configuration: aws drs update-replication-configuration."
+
+  - id: P6-template-retroactive
+    trigger_words: ["launch template", "replication template", "configuration template", "default settings"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest template changes automatically apply to all
+      existing source servers. Templates only affect new servers.
+    actual_behavior: >
+      Launch configuration templates and replication configuration
+      templates set defaults for NEW source servers only. Existing
+      source servers retain their individual configurations.
+      To update existing servers, you must modify each server's
+      configuration individually using update-launch-configuration
+      or update-replication-configuration APIs.
+    common_false_claim: "Update the template and all source servers will use the new settings."
+    correct_action: "Update each source server individually: aws drs update-launch-configuration --source-server-id <id> --launch-disposition STARTED."
+
+  - id: P7-cross-region-free
+    trigger_words: ["cross-region", "disaster recovery", "target region", "data transfer"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs omit data transfer costs when discussing cross-region
+      DRS replication. Cross-region data transfer incurs charges.
+    actual_behavior: >
+      DRS replication from source to target region incurs standard
+      AWS cross-region data transfer charges. Initial sync
+      transfers the full disk volume. Ongoing replication transfers
+      changed blocks. For large environments, data transfer costs
+      can be significant. Additionally, replication servers, EBS
+      volumes, and S3 snapshots in the target region incur costs.
+    common_false_claim: "Set up DRS for cross-region disaster recovery at minimal cost."
+    correct_action: "Calculate total DRS costs including data transfer, replication servers, EBS, and S3 before deployment."
+
+  - id: P8-all-os-supported
+    trigger_words: ["supported OS", "operating system", "Linux", "Windows"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DRS supports all operating systems. DRS has
+      specific OS version requirements for the replication agent.
+    actual_behavior: >
+      DRS supports specific versions of Windows Server and Linux
+      distributions. Not all OS versions are supported. The
+      replication agent has kernel-level requirements for Linux.
+      Some older OS versions or custom kernels may not be
+      compatible. Always check the DRS documentation for the
+      current supported OS matrix before planning migration.
+    common_false_claim: "DRS supports any Linux or Windows server."
+    correct_action: "Verify source server OS is in the DRS supported OS list before installing the replication agent."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

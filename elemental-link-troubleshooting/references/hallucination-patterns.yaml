@@ -1,0 +1,151 @@
+# =============================================================================
+# AWS Elemental Link "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-software-installation
+    trigger_words: ["install Elemental Link", "download Link", "deploy Link software"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse Elemental Link hardware with software-based
+      encoders. They suggest installation or download steps.
+    actual_behavior: >
+      AWS Elemental Link is a physical hardware encoder that must
+      be purchased and shipped. There is no software to install,
+      no AMI to launch, and no container to deploy. The device
+      arrives pre-configured and registers automatically when
+      connected to the internet.
+    common_false_claim: "Install the Elemental Link software on your server."
+    correct_action: "Order the physical Elemental Link device from AWS. Connect it to your network and video source."
+
+  - id: P2-manual-registration
+    trigger_words: ["register device", "device registration API", "register-input-device"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs invent a manual device registration API that does not
+      exist. Registration is automatic on first connection.
+    actual_behavior: >
+      Elemental Link devices register automatically when they
+      connect to the internet for the first time. The device
+      phones home to AWS and associates with the purchasing
+      account. There is no register-input-device API call.
+      If registration fails, troubleshoot network connectivity.
+    common_false_claim: "Use aws medialive register-input-device to register your Link."
+    correct_action: "Ensure the device has internet connectivity. Registration happens automatically."
+
+  - id: P3-manual-firmware
+    trigger_words: ["update firmware", "firmware download", "flash firmware", "firmware version"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manual firmware update procedures similar to
+      consumer electronics. Elemental Link firmware is AWS-managed.
+    actual_behavior: >
+      Firmware updates are managed entirely by AWS. Updates are
+      pushed to devices automatically. Operators can approve or
+      defer pending updates via the console or API but cannot
+      upload, download, or manually install firmware files.
+    common_false_claim: "Download the latest firmware from AWS and flash it to the device."
+    correct_action: "Check for pending updates: aws medialive describe-input-device. Accept updates via update-input-device."
+
+  - id: P4-sdi-on-hd-model
+    trigger_words: ["SDI input", "SDI cable", "Link HD SDI"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs do not distinguish between Link HD and Link UHD
+      hardware models and their input capabilities.
+    actual_behavior: >
+      Elemental Link HD supports HDMI input only. Elemental Link
+      UHD supports both HDMI and SDI inputs. Suggesting SDI
+      troubleshooting for a Link HD device is incorrect — the
+      hardware physically does not have an SDI port.
+    common_false_claim: "Connect your SDI cable to the Elemental Link HD device."
+    correct_action: "Verify the device model first. Only Link UHD supports SDI input."
+
+  - id: P5-cross-region-usage
+    trigger_words: ["use device in another region", "cross-region", "multi-region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using a device across regions without transfer,
+      or invent cross-region input capabilities.
+    actual_behavior: >
+      Elemental Link devices are bound to the AWS region where
+      they are registered. To use a device with MediaLive in a
+      different region, you must transfer the device using
+      transfer-input-device. This changes the device's region
+      association entirely.
+    common_false_claim: "Your Elemental Link in us-east-1 can feed a MediaLive channel in eu-west-1."
+    correct_action: "Transfer the device to the target region: aws medialive transfer-input-device."
+
+  - id: P6-real-time-quality-metrics
+    trigger_words: ["real-time video quality", "quality score", "MOS score", "VMAF"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs invent video quality scoring metrics that Elemental
+      Link does not provide natively.
+    actual_behavior: >
+      Elemental Link provides basic CloudWatch metrics like
+      InputVideoFrameRate, NetworkIn, and device connection
+      status. It does NOT provide VMAF, MOS, or perceptual
+      quality scores. Quality assessment requires external
+      monitoring tools or visual inspection via thumbnails.
+    common_false_claim: "Check the VMAF quality score in CloudWatch for your Elemental Link stream."
+    correct_action: "Use CloudWatch metrics for frame rate and bitrate. Use thumbnail API for visual spot-checks."
+
+  - id: P7-direct-rtmp-output
+    trigger_words: ["RTMP output", "stream directly", "direct to YouTube", "direct to Twitch"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Elemental Link can stream directly to social
+      media platforms. It only sends to MediaLive.
+    actual_behavior: >
+      Elemental Link sends encoded video exclusively to AWS
+      MediaLive. It cannot stream directly to YouTube, Twitch,
+      Facebook, or any other destination. To reach those
+      platforms, you must configure a MediaLive channel with
+      the appropriate output group (RTMP, HLS, etc.).
+    common_false_claim: "Configure your Elemental Link to stream directly to YouTube via RTMP."
+    correct_action: "Set up a MediaLive channel with an RTMP output group pointing to the destination platform."
+
+  - id: P8-unlimited-devices-per-channel
+    trigger_words: ["multiple devices", "redundant input", "failover devices"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate the number of Elemental Link devices that
+      can be attached to a single MediaLive channel.
+    actual_behavior: >
+      A MediaLive channel supports a limited number of inputs
+      (typically 2 for standard channels, more for multiplex).
+      Each Elemental Link device creates one input. Automatic
+      input failover is supported between two inputs but
+      requires specific channel class configuration.
+    common_false_claim: "Attach 10 Elemental Link devices to a single MediaLive channel for redundancy."
+    correct_action: "Use 2 devices with automatic input failover on a STANDARD class channel."
+
+remediation_hallucinations:
+
+  - id: R1-factory-reset
+    trigger_words: ["factory reset", "reset device", "hard reset"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest factory reset procedures that do not exist
+      for Elemental Link or could deregister the device.
+    actual_behavior: >
+      Elemental Link does not have a user-accessible factory
+      reset. Device configuration is managed via the AWS console
+      or API. Physical reset buttons (if present) only restart
+      the device — they do not clear configuration.
+    correct_action: "Reset device settings via API: aws medialive update-input-device. For hardware issues, contact AWS Support."
+
+  - id: R2-direct-ssh-access
+    trigger_words: ["SSH into device", "telnet", "console access", "device shell"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest SSH or console access to the device operating
+      system. Elemental Link is a closed appliance.
+    actual_behavior: >
+      Elemental Link is a closed hardware appliance with no
+      user-accessible shell, SSH, or console interface. All
+      management is done through the AWS console, CLI, or API.
+      There is no way to access the device operating system.
+    correct_action: "Manage the device exclusively through AWS console, CLI, or API. Contact AWS Support for hardware issues."

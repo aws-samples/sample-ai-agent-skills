@@ -1,0 +1,136 @@
+# =============================================================================
+# Amazon Polly "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-neural-all-languages
+    trigger_words: ["neural voice", "neural engine", "all languages"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest neural voices are available for all languages.
+      Neural engine support varies by language and voice.
+    actual_behavior: >
+      Neural voices are available for a subset of languages. Some
+      languages only have standard voices. The generative engine
+      is even more limited. Use describe-voices with --engine
+      neural to check availability. Requesting a neural voice for
+      an unsupported language returns an InvalidParameterException.
+    common_false_claim: "Use the neural engine for any language."
+    correct_action: "Check neural voice availability: aws polly describe-voices --engine neural --language-code <code>"
+
+  - id: P2-unlimited-text
+    trigger_words: ["long text", "book synthesis", "large document"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest synthesizing unlimited text in one call.
+      SynthesizeSpeech has a 3000 character limit.
+    actual_behavior: >
+      SynthesizeSpeech accepts up to 3000 characters (text) or
+      6000 characters (SSML including tags). For longer content,
+      use StartSpeechSynthesisTask which supports up to 200,000
+      characters and writes output to S3. Split very long content
+      into multiple async tasks.
+    common_false_claim: "Pass the entire book text to SynthesizeSpeech."
+    correct_action: "Use StartSpeechSynthesisTask for content over 3000 characters."
+
+  - id: P3-ssml-html
+    trigger_words: ["SSML", "markup", "tags", "speech markup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs write HTML-like SSML that isn't valid XML. SSML must
+      be well-formed XML.
+    actual_behavior: >
+      SSML must be wrapped in <speak> tags and be valid XML. All
+      tags must be properly closed. Attributes must be quoted.
+      Special characters (&, <, >) must be XML-escaped. Not all
+      W3C SSML tags are supported by Polly. Invalid SSML returns
+      an error, not a best-effort rendering.
+    common_false_claim: "<speak>Hello <break> world</speak>"
+    correct_action: "<speak>Hello <break time='500ms'/> world</speak>"
+
+  - id: P4-lexicon-plain-text
+    trigger_words: ["lexicon", "pronunciation", "custom word"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest plain text lexicon format. Lexicons use PLS
+      XML format.
+    actual_behavior: >
+      Lexicons must be in PLS (Pronunciation Lexicon Specification)
+      XML format with proper namespace declarations. Each entry
+      has a grapheme (written form) and phoneme (pronunciation in
+      IPA or x-sampa). Maximum 5 lexicons per synthesis request.
+      Lexicons are region-specific.
+    common_false_claim: "Create a text file with word=pronunciation pairs."
+    correct_action: "Create PLS XML lexicon with proper grapheme/phoneme entries."
+
+  - id: P5-speech-marks-audio
+    trigger_words: ["speech marks", "word timing", "viseme"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest speech marks are included in audio output.
+      Speech marks require a separate request with json format.
+    actual_behavior: >
+      Speech marks are returned as JSON metadata, not embedded in
+      audio. You must make a separate API call with output-format
+      json and speech-mark-types parameter. Speech mark types
+      include: word, sentence, ssml, viseme. The response contains
+      timing information for lip-sync and text highlighting.
+    common_false_claim: "The MP3 output includes word timing metadata."
+    correct_action: "Request speech marks separately with --output-format json --speech-mark-types word"
+
+  - id: P6-any-sample-rate
+    trigger_words: ["sample rate", "audio quality", "Hz"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any sample rate works with any format. Valid
+      rates depend on the output format.
+    actual_behavior: >
+      Valid sample rates depend on output format. MP3: 8000, 16000,
+      22050, 24000 Hz. OGG: 8000, 16000, 22050, 24000 Hz. PCM:
+      8000, 16000, 22050, 24000 Hz. Default is 22050 Hz for
+      standard, 24000 Hz for neural. Invalid combinations return
+      errors.
+    common_false_claim: "Set sample rate to 44100 Hz for high quality."
+    correct_action: "Use supported sample rates. 24000 Hz is the highest for neural voices."
+
+  - id: P7-real-time-streaming
+    trigger_words: ["streaming", "real-time", "live synthesis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Polly supports WebSocket streaming. Polly uses
+      HTTP chunked transfer for streaming.
+    actual_behavior: >
+      SynthesizeSpeech returns audio as an HTTP response stream.
+      The SDK can process the stream as chunks arrive. This is
+      HTTP chunked transfer, not WebSocket streaming. For real-time
+      applications, process chunks as they arrive rather than
+      waiting for the complete response.
+    common_false_claim: "Connect to Polly via WebSocket for real-time streaming."
+    correct_action: "Use SynthesizeSpeech and process the HTTP response stream in chunks."
+
+  - id: P8-voice-cloning
+    trigger_words: ["custom voice", "voice cloning", "train voice"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Polly supports custom voice training or cloning.
+      Polly uses pre-built voices only.
+    actual_behavior: >
+      Amazon Polly provides pre-built voices. There is no custom
+      voice training or voice cloning feature. Brand Voice is
+      available only through a special engagement with AWS. For
+      custom voice needs, consider Amazon Polly Brand Voice
+      program or third-party TTS services.
+    common_false_claim: "Train a custom voice model with your audio samples."
+    correct_action: "Use pre-built Polly voices. Contact AWS for Brand Voice program."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

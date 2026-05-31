@@ -1,0 +1,158 @@
+# =============================================================================
+# Amazon WorkSpaces Web "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-full-desktop
+    trigger_words: ["WorkSpaces Web desktop", "virtual desktop", "install application", "RDP"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse WorkSpaces Web (browser-only) with Amazon
+      WorkSpaces (full virtual desktop). They suggest desktop
+      operations like installing software or RDP access.
+    actual_behavior: >
+      WorkSpaces Web provides a managed Chrome-based browser
+      session only. There is no desktop, no file system access
+      beyond browser downloads, no application installation,
+      and no RDP/SSH access. It is designed for web application
+      access, not general-purpose computing.
+    common_false_claim: "Install the application on your WorkSpaces Web desktop."
+    correct_action: "WorkSpaces Web is browser-only. For desktop needs, use Amazon WorkSpaces or AppStream 2.0."
+
+  - id: P2-oidc-authentication
+    trigger_words: ["OIDC", "OAuth", "OpenID Connect", "basic auth"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest OIDC or OAuth authentication options that
+      WorkSpaces Web does not support. Only SAML 2.0 is available.
+    actual_behavior: >
+      WorkSpaces Web exclusively supports SAML 2.0 for end-user
+      authentication. There is no OIDC, OAuth 2.0, basic
+      authentication, or IAM-only authentication option for
+      portal access. The identity provider must support SAML 2.0.
+    common_false_claim: "Configure OIDC authentication for your WorkSpaces Web portal."
+    correct_action: "Configure SAML 2.0 with your identity provider. Supported IdPs include Okta, Azure AD, Ping Identity, and others with SAML 2.0 support."
+
+  - id: P3-ssh-into-sessions
+    trigger_words: ["SSH into browser", "access session host", "session instance", "EC2 instance"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume browser sessions run on accessible EC2
+      instances. The infrastructure is fully AWS-managed.
+    actual_behavior: >
+      Browser session infrastructure is fully managed by AWS.
+      There are no customer-accessible EC2 instances, containers,
+      or hosts. You cannot SSH, RDP, or otherwise access the
+      underlying compute. All configuration is through the
+      WorkSpaces Web API and browser settings.
+    common_false_claim: "SSH into the session host to debug the browser issue."
+    correct_action: "Use WorkSpaces Web API and browser settings for configuration. Use user access logging for session diagnostics."
+
+  - id: P4-custom-browser-extensions
+    trigger_words: ["install extension", "Chrome extension", "browser plugin", "add-on"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest installing arbitrary Chrome extensions in
+      WorkSpaces Web sessions. Extension management is controlled
+      by browser policies.
+    actual_behavior: >
+      Browser extensions in WorkSpaces Web are controlled through
+      Chrome enterprise browser policies. You cannot manually
+      install extensions during a session. Extensions must be
+      force-installed or allowed via the browser settings policy
+      JSON. Not all extensions are compatible with the managed
+      browser environment.
+    common_false_claim: "Users can install Chrome extensions from the Web Store during their session."
+    correct_action: "Configure extension policies in browser settings JSON using ExtensionInstallForcelist or ExtensionInstallAllowlist."
+
+  - id: P5-any-idp-works
+    trigger_words: ["any identity provider", "LDAP directly", "Active Directory directly"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest direct LDAP or Active Directory integration
+      without SAML. WorkSpaces Web requires a SAML 2.0 IdP.
+    actual_behavior: >
+      WorkSpaces Web requires a SAML 2.0 identity provider.
+      Direct LDAP or Active Directory integration is not
+      supported. To use AD, you must configure it through a
+      SAML-capable IdP like ADFS, Azure AD, or AWS IAM Identity
+      Center that federates with your AD.
+    common_false_claim: "Point WorkSpaces Web directly at your Active Directory for authentication."
+    correct_action: "Set up a SAML 2.0 IdP (ADFS, Azure AD, IAM Identity Center) that federates with your AD."
+
+  - id: P6-portal-is-global
+    trigger_words: ["global portal", "access from any region", "multi-region portal"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest portals are globally accessible or can be
+      shared across regions. Portals are regional resources.
+    actual_behavior: >
+      WorkSpaces Web portals are regional resources. Each portal
+      exists in a specific AWS region with a region-specific
+      endpoint URL. To serve users in multiple regions, you must
+      create separate portals in each region. There is no global
+      portal or cross-region replication.
+    common_false_claim: "Create one portal and users worldwide can access it."
+    correct_action: "Create portals in regions closest to your users. Use separate portal URLs per region."
+
+  - id: P7-unlimited-session-duration
+    trigger_words: ["unlimited session", "no timeout", "always-on browser"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest sessions can run indefinitely. Sessions have
+      configurable but enforced timeout limits.
+    actual_behavior: >
+      Browser sessions have idle timeout (default 15 minutes)
+      and total session duration limits. When either limit is
+      reached, the session is terminated. Users lose unsaved
+      work. Timeouts are configurable but cannot be disabled
+      entirely. Maximum session duration has an upper bound.
+    common_false_claim: "Set session timeout to unlimited for always-on access."
+    correct_action: "Configure appropriate idle and session timeouts in portal settings. Inform users about session limits."
+
+  - id: P8-network-settings-optional
+    trigger_words: ["no VPC needed", "public internet only", "skip network settings"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest network settings are optional. They are
+      required for portal creation and session functionality.
+    actual_behavior: >
+      Network settings (VPC, subnets, security groups) are
+      required for WorkSpaces Web portals. Browser sessions
+      route all traffic through the configured VPC. Without
+      proper network settings, sessions cannot access any
+      websites. Even for public internet access, the VPC must
+      have a NAT gateway or internet gateway path.
+    common_false_claim: "Skip network settings — sessions will use public internet directly."
+    correct_action: "Configure network settings with VPC, subnets, and security groups. Ensure NAT/IGW for internet access."
+
+remediation_hallucinations:
+
+  - id: R1-restart-session-host
+    trigger_words: ["restart session host", "reboot browser server", "restart instance"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest restarting session hosts that do not exist
+      as customer-accessible resources.
+    actual_behavior: >
+      Browser session infrastructure is fully managed by AWS.
+      There are no customer-accessible hosts to restart. If a
+      session is problematic, the user should end the session
+      and start a new one. Persistent issues require API-level
+      troubleshooting.
+    correct_action: "Have the user end the browser session and start a new one. Investigate portal and network settings if issues persist."
+
+  - id: R2-modify-session-os
+    trigger_words: ["modify OS", "change browser version", "update Chrome", "install certificate on host"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest OS-level modifications to the managed browser
+      environment that are not possible.
+    actual_behavior: >
+      The browser runtime, OS, and Chrome version are managed
+      by AWS. Customers cannot modify the OS, update Chrome,
+      or install certificates directly on session hosts. Use
+      trust stores for custom CA certificates and browser
+      policies for browser configuration.
+    correct_action: "Use trust store for CA certificates. Use browser settings for Chrome policies. AWS manages the browser runtime."

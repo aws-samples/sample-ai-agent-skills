@@ -1,0 +1,157 @@
+# =============================================================================
+# CloudWatch Internet Monitor "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-synthetic-monitoring
+    trigger_words: ["Internet Monitor", "synthetic", "probes", "health checks", "ping"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse Internet Monitor with synthetic monitoring tools.
+      Internet Monitor uses passive traffic analysis only.
+    actual_behavior: >
+      Internet Monitor analyzes existing application traffic passively.
+      It does NOT send synthetic probes, pings, or active health checks.
+      It relies on traffic flowing through monitored CloudFront
+      distributions or VPCs to calculate performance and availability
+      scores. No traffic means no data.
+    common_false_claim: "Internet Monitor sends health check probes to detect outages."
+    correct_action: "Explain that Internet Monitor passively analyzes real traffic. Use CloudWatch Synthetics for active probing."
+
+  - id: P2-predictive-capability
+    trigger_words: ["predict", "forecast", "anticipate", "early warning"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Internet Monitor can predict future outages.
+      It only reports observed degradation.
+    actual_behavior: >
+      Internet Monitor detects and reports performance and availability
+      degradation based on observed traffic patterns. Health events
+      are generated after degradation is detected, not before. It
+      does not have predictive or forecasting capabilities for
+      internet performance.
+    common_false_claim: "Internet Monitor predicts internet outages before they affect your application."
+    correct_action: "Internet Monitor reports observed degradation. Use it for detection and diagnosis, not prediction."
+
+  - id: P3-all-traffic-monitored
+    trigger_words: ["all traffic", "complete visibility", "every request"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Internet Monitor sees all traffic. Coverage
+      depends on MaxCityNetworksToMonitor setting.
+    actual_behavior: >
+      Internet Monitor tracks city-networks up to the configured
+      MaxCityNetworksToMonitor limit. With a lower limit, only
+      the top city-networks by traffic volume are monitored.
+      Less-trafficked city-networks may not be covered. The
+      default limit is 500,000 but can be reduced to lower costs.
+    common_false_claim: "Internet Monitor provides complete visibility into all your application traffic."
+    correct_action: "Check MaxCityNetworksToMonitor setting. Lower values mean less-trafficked locations may not be monitored."
+
+  - id: P4-uptime-monitoring
+    trigger_words: ["uptime", "downtime", "server status", "availability percentage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse availability score with server uptime.
+      The score measures successful traffic percentage.
+    actual_behavior: >
+      The availability score measures the percentage of traffic
+      that completed successfully through the internet path, not
+      server uptime. A 95% availability score means 5% of observed
+      traffic experienced failures in the internet path between
+      users and AWS, not that the origin server was down 5% of
+      the time.
+    common_false_claim: "Internet Monitor shows your application uptime is 99.5%."
+    correct_action: "Clarify that availability score reflects internet path success rate, not origin server uptime."
+
+  - id: P5-automatic-log-delivery
+    trigger_words: ["logs", "automatically", "default logging", "log delivery"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume log delivery is enabled by default.
+      It must be explicitly configured.
+    actual_behavior: >
+      Internet Monitor does not deliver logs to S3 or CloudWatch
+      Logs by default. Log delivery must be explicitly configured
+      on the monitor using the S3 or CloudWatch Logs configuration
+      options. Missing logs usually means delivery was never set up,
+      not that there is a delivery failure.
+    common_false_claim: "Check your Internet Monitor logs in CloudWatch — they're delivered automatically."
+    correct_action: "Verify log delivery is configured on the monitor before investigating missing logs."
+
+  - id: P6-global-internet-events-personal
+    trigger_words: ["internet event", "my outage", "affecting me", "my application"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate global internet events with application-specific
+      health events.
+    actual_behavior: >
+      Internet events (from list-internet-events) are global
+      AWS-observed internet disruptions affecting various providers
+      and regions. They are NOT specific to your application or
+      monitor. Health events (from list-health-events) are specific
+      to your monitor and application traffic. These are different
+      concepts.
+    common_false_claim: "This internet event is causing your application's performance issues."
+    correct_action: "Distinguish between global internet events and monitor-specific health events. Correlate timestamps to determine relevance."
+
+  - id: P7-real-time-scores
+    trigger_words: ["real-time", "instant", "live score", "current performance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest scores update in real-time. There is a
+      processing delay for score calculation.
+    actual_behavior: >
+      Internet Monitor scores are calculated with a processing
+      delay. Data is aggregated over 5-minute intervals and
+      scores may take additional time to compute. The
+      ProcessingStatus field indicates pipeline health. Scores
+      are not instantaneous reflections of current conditions.
+    common_false_claim: "Internet Monitor shows real-time performance scores for your application."
+    correct_action: "Scores have processing delay. Check ProcessingStatus for pipeline health. Allow time for data aggregation."
+
+  - id: P8-free-unlimited
+    trigger_words: ["free", "no cost", "unlimited", "pricing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not accurately represent Internet Monitor pricing
+      which is based on monitored city-networks.
+    actual_behavior: >
+      Internet Monitor pricing is based on the number of city-networks
+      monitored per month. The first 100 city-networks per monitor
+      are included in the free tier. Beyond that, charges apply per
+      city-network. MaxCityNetworksToMonitor directly affects cost.
+      Log delivery to S3 or CloudWatch Logs incurs additional
+      storage costs.
+    common_false_claim: "Internet Monitor is free to use with no limits."
+    correct_action: "Check pricing based on city-network count. Adjust MaxCityNetworksToMonitor to control costs."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-monitor
+    trigger_words: ["delete monitor", "recreate", "start fresh"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a monitor loses all historical data, health event
+      history, and configured thresholds. Recreation starts from
+      scratch with no historical baseline.
+    correct_approach: >
+      Update the existing monitor configuration instead of deleting.
+      Use update-monitor to change resources, thresholds, or
+      MaxCityNetworksToMonitor. Only delete if the monitor is
+      truly no longer needed.
+
+  - id: R2-increase-city-networks-blindly
+    trigger_words: ["increase city networks", "monitor everything", "maximum coverage"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Increasing MaxCityNetworksToMonitor to the maximum value
+      significantly increases costs without proportional benefit.
+      Most applications only need coverage for their primary
+      traffic locations.
+    correct_approach: >
+      Analyze traffic patterns to determine appropriate city-network
+      coverage. Start with the default and increase only if
+      specific undermonitored locations are identified. Review
+      cost implications before changing.

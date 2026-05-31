@@ -1,0 +1,154 @@
+# =============================================================================
+# Amazon EMR "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-emrfs-consistent-view
+    trigger_words: ["EMRFS", "consistent view", "S3 consistency", "eventual consistency"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs recommend enabling EMRFS consistent view for S3
+      consistency. This feature is deprecated since S3 provides
+      strong consistency natively since December 2020.
+    actual_behavior: >
+      Amazon S3 provides strong read-after-write consistency for
+      all operations since December 2020. EMRFS consistent view
+      is deprecated and adds unnecessary overhead (DynamoDB table
+      for metadata). Do NOT configure EMRFS consistent view on
+      new clusters. Existing clusters with consistent view should
+      migrate away from it.
+    common_false_claim: "Enable EMRFS consistent view to avoid S3 consistency issues."
+    correct_action: "S3 is strongly consistent natively. Do not configure EMRFS consistent view."
+
+  - id: P2-bootstrap-modifies-apps
+    trigger_words: ["bootstrap action", "modify Spark", "configure application", "bootstrap script"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using bootstrap actions to modify application
+      configurations. Bootstrap actions run BEFORE applications
+      are installed.
+    actual_behavior: >
+      Bootstrap actions execute before Hadoop, Spark, and other
+      applications are installed. They cannot modify application
+      configuration files that don't exist yet. Use EMR
+      configurations API (--configurations parameter) to set
+      application configurations at cluster creation. Bootstrap
+      actions are for OS-level setup, package installation, and
+      environment preparation.
+    common_false_claim: "Use a bootstrap action to modify spark-defaults.conf."
+    correct_action: "Use EMR --configurations parameter for application settings. Use bootstrap for OS-level setup only."
+
+  - id: P3-security-config-mutable
+    trigger_words: ["security configuration", "change encryption", "modify Kerberos", "update security"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying security configurations on running
+      clusters. Security configurations are immutable after
+      cluster creation.
+    actual_behavior: >
+      Security configurations (encryption, Kerberos, Lake
+      Formation) are set at cluster creation and CANNOT be
+      changed on a running cluster. To change security settings,
+      you must create a new cluster with the updated security
+      configuration. This includes encryption at rest, encryption
+      in transit, and authentication settings.
+    common_false_claim: "Update the security configuration to enable encryption on the running cluster."
+    correct_action: "Create a new cluster with the desired security configuration. Migrate workloads."
+
+  - id: P4-spot-core-safe
+    trigger_words: ["Spot instances", "core nodes", "Spot core", "instance fleet Spot"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using Spot instances for core nodes without
+      warning about HDFS data loss risk.
+    actual_behavior: >
+      Core nodes store HDFS data. Spot interruptions on core
+      nodes can cause HDFS data loss and cluster instability.
+      Best practice: use On-Demand for core nodes, Spot for
+      task nodes only. If using Spot for core nodes, ensure
+      HDFS replication factor accounts for potential node loss
+      and use S3 (EMRFS) as primary storage instead of HDFS.
+    common_false_claim: "Use Spot instances for core nodes to save costs."
+    correct_action: "Use On-Demand for core nodes (HDFS data). Use Spot for task nodes only. Use S3 as primary storage."
+
+  - id: P5-yarn-auto-configured
+    trigger_words: ["YARN", "resource allocation", "executor memory", "YARN configuration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume YARN is optimally configured by default.
+      Default YARN settings often need tuning for specific
+      workloads.
+    actual_behavior: >
+      EMR sets default YARN configurations based on instance
+      type, but these defaults may not be optimal for all
+      workloads. Key settings: yarn.nodemanager.resource.memory-mb,
+      yarn.scheduler.maximum-allocation-mb, and
+      yarn.scheduler.maximum-allocation-vcores. Spark settings
+      (executor memory, cores, instances) must align with YARN
+      limits. Misalignment causes container failures or
+      underutilization.
+    common_false_claim: "EMR automatically optimizes YARN settings for your workload."
+    correct_action: "Review and tune YARN settings based on workload. Align Spark executor settings with YARN limits."
+
+  - id: P6-managed-scaling-instant
+    trigger_words: ["managed scaling", "auto scaling", "scale up", "scale down"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest managed scaling responds instantly to
+      workload changes. Scaling has delays and cooldown periods.
+    actual_behavior: >
+      Managed scaling evaluates YARN metrics periodically and
+      makes scaling decisions. Instance provisioning takes
+      several minutes. There is a cooldown period between
+      scaling actions. Scaling is bounded by min/max units.
+      For bursty workloads, pre-provision capacity or use
+      pre-initialized workers. Scaling down waits for tasks
+      to complete (graceful decommission).
+    common_false_claim: "Managed scaling will instantly add capacity when your job needs it."
+    correct_action: "Configure appropriate min/max units. Account for provisioning delay. Pre-provision for bursty workloads."
+
+  - id: P7-emr-eks-standalone
+    trigger_words: ["EMR on EKS", "virtual cluster", "EMR EKS", "Spark on EKS"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat EMR on EKS as a standalone service. It
+      requires an existing EKS cluster.
+    actual_behavior: >
+      EMR on EKS runs Spark jobs on existing EKS clusters.
+      Prerequisites: (1) EKS cluster with EMR-managed namespace,
+      (2) RBAC configuration for EMR, (3) virtual cluster
+      registration, (4) execution role with EKS and S3 permissions.
+      Debugging requires checking both EMR job run logs and
+      EKS pod logs/events. Pod scheduling, resource limits,
+      and node affinity affect job execution.
+    common_false_claim: "Create an EMR on EKS cluster to run Spark jobs."
+    correct_action: "Set up EKS cluster first, configure RBAC, register virtual cluster, then submit jobs."
+
+  - id: P8-serverless-unlimited
+    trigger_words: ["EMR Serverless", "serverless capacity", "auto provision", "no limits"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest EMR Serverless has unlimited capacity.
+      Applications have configurable resource limits.
+    actual_behavior: >
+      EMR Serverless applications have maximum resource limits
+      (max CPU, max memory, max disk). Jobs that exceed these
+      limits fail. Pre-initialized capacity reduces cold start
+      but consumes resources continuously. There are also
+      account-level service quotas. Job failures often relate
+      to exceeding resource limits, IAM permissions, or S3
+      access issues.
+    common_false_claim: "EMR Serverless automatically scales to any workload size."
+    correct_action: "Configure appropriate max resource limits. Monitor resource usage. Request quota increases if needed."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,109 @@
+# =============================================================================
+# Amazon Personalize "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-instant-training
+    trigger_words: ["train model", "create solution", "solution version"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest models are ready immediately. Training takes hours.
+    actual_behavior: >
+      CreateSolutionVersion triggers training that takes 1-6+ hours.
+      Status must be ACTIVE before creating a campaign. Check with
+      DescribeSolutionVersion.
+    common_false_claim: "Create a solution and start getting recommendations."
+    correct_action: "Create solution version. Wait for ACTIVE status (hours). Then create campaign."
+
+  - id: P2-free-campaigns
+    trigger_words: ["campaign", "deploy", "real-time recommendations"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention campaign billing. Campaigns cost while active.
+    actual_behavior: >
+      Campaigns are billed per TPS provisioned, even when idle.
+      MinProvisionedTPS determines minimum cost. Delete unused campaigns.
+    common_false_claim: "Create a campaign for on-demand recommendations."
+    correct_action: "Create campaign with appropriate MinProvisionedTPS. Delete when not needed."
+
+  - id: P3-instant-events
+    trigger_words: ["real-time events", "PutEvents", "event tracking"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest events influence recommendations instantly.
+      Takes up to 15 minutes.
+    actual_behavior: >
+      Events via PutEvents influence recommendations within 2-15
+      minutes. New items/users may need model retrain. Event tracker
+      must be created first.
+    common_false_claim: "Send an event and recommendations update immediately."
+    correct_action: "Send events via PutEvents. Allow 2-15 minutes for influence. Retrain for new items."
+
+  - id: P4-any-data-volume
+    trigger_words: ["dataset", "import data", "training data"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs don't mention minimum data requirements.
+    actual_behavior: >
+      Minimum: 1000 interactions, 25 unique users, 2 interactions
+      per user. Below minimums, training fails. More data = better
+      recommendations.
+    common_false_claim: "Import your data and train a model."
+    correct_action: "Verify minimum data requirements before training. Add more data for better quality."
+
+  - id: P5-universal-recipe
+    trigger_words: ["recipe", "recommendation type", "algorithm"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest one recipe works for all use cases.
+    actual_behavior: >
+      Different recipes for different use cases: USER_PERSONALIZATION
+      for user recs, RELATED_ITEMS for similar items, PERSONALIZED_RANKING
+      for re-ranking. Wrong recipe = wrong output.
+    common_false_claim: "Use the default recipe for any recommendation type."
+    correct_action: "Select recipe matching use case. USER_PERSONALIZATION for user recs."
+
+  - id: P6-no-event-tracker
+    trigger_words: ["put events", "track events", "real-time data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs forget the event tracker requirement.
+    actual_behavior: >
+      PutEvents requires an event tracker. Create with
+      CreateEventTracker. Include trackingId in PutEvents calls.
+    common_false_claim: "Call PutEvents with your dataset group ARN."
+    correct_action: "Create event tracker first. Use trackingId in PutEvents."
+
+  - id: P7-filter-simple
+    trigger_words: ["filter", "exclude items", "include items"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs oversimplify filter syntax.
+    actual_behavior: >
+      Filters use SQL-like expressions: INCLUDE/EXCLUDE ItemID WHERE
+      condition. Specific syntax rules. Validated at creation time.
+    common_false_claim: "Pass a list of excluded items to GetRecommendations."
+    correct_action: "Create filter with proper expression syntax. Reference filter in GetRecommendations."
+
+  - id: P8-batch-direct
+    trigger_words: ["batch inference", "batch recommendations", "bulk"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest passing data directly to batch jobs.
+    actual_behavior: >
+      Batch inference reads JSON lines from S3. Format: {"userId":"<id>"}
+      per line. Output written to S3. IAM role required.
+    common_false_claim: "Pass a list of user IDs to batch inference."
+    correct_action: "Create JSON lines file in S3. Start batch inference job with S3 locations."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

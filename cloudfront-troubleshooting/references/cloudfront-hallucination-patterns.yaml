@@ -1,0 +1,126 @@
+# =============================================================================
+# CloudFront "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-ttl-override-behavior
+    trigger_words: ["TTL", "cache duration", "max-age", "cache control"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume CloudFront TTL settings directly control caching. In
+      reality, origin Cache-Control headers interact with CloudFront
+      MinTTL, DefaultTTL, and MaxTTL in a specific hierarchy.
+    actual_behavior: >
+      CloudFront uses: max(MinTTL, min(MaxTTL, origin-header-or-DefaultTTL)).
+      If the origin sends Cache-Control: max-age=0 but MinTTL is 60,
+      CloudFront caches for 60 seconds. If no origin headers, DefaultTTL applies.
+    common_false_claim: "Set the CloudFront TTL to 3600 and content will be cached for 1 hour."
+    correct_action: "Check BOTH origin Cache-Control headers AND CloudFront cache policy TTL settings."
+
+  - id: P2-invalidation-instant
+    trigger_words: ["invalidate", "invalidation", "purge cache", "clear cache"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs treat invalidation as an instant operation. It requires
+      propagation to all edge locations worldwide.
+    actual_behavior: >
+      Invalidations typically take 1-2 minutes but can take up to
+      10-15 minutes. They propagate asynchronously to all edge locations.
+      First 1,000 paths/month are free, then $0.005 per path.
+    common_false_claim: "Create an invalidation and the new content will be served immediately."
+    correct_action: "Create the invalidation and wait for completion. Use versioned filenames for frequent updates."
+
+  - id: P3-oai-vs-oac-confusion
+    trigger_words: ["OAI", "OAC", "origin access identity", "origin access control", "S3 origin"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs recommend OAI because older documentation and examples use it.
+      OAI is legacy and lacks support for SSE-KMS and newer S3 features.
+    actual_behavior: >
+      OAC (Origin Access Control) is the recommended method. It supports
+      SSE-KMS, all S3 regions, S3 Object Lambda, and dynamic origins.
+      OAI does not support SSE-KMS or opt-in regions.
+    common_false_claim: "Create an Origin Access Identity to restrict S3 access to CloudFront."
+    correct_action: "Use Origin Access Control (OAC) for new distributions. Migrate existing OAI to OAC."
+
+  - id: P4-lambda-edge-cold-starts
+    trigger_words: ["Lambda@Edge", "edge function", "viewer request", "origin request"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Lambda@Edge for lightweight tasks without mentioning
+      cold start latency or the strict requirement to deploy in us-east-1.
+    actual_behavior: >
+      Lambda@Edge functions MUST be in us-east-1. They have cold starts
+      at each edge location. Viewer functions: 5s timeout, 128 MB.
+      Origin functions: 30s timeout, up to 10 GB. No env vars, no VPC,
+      no layers. Use CloudFront Functions for simple, latency-sensitive tasks.
+    common_false_claim: "Deploy a Lambda@Edge function in your region for URL rewriting."
+    correct_action: "Deploy in us-east-1. Use CloudFront Functions for simple viewer-level tasks."
+
+  - id: P5-cache-behavior-ordering
+    trigger_words: ["cache behavior", "path pattern", "behavior order", "behavior matching"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume longest-match semantics like ALB path routing. CloudFront
+      uses first-match ordering based on the behavior list order.
+    actual_behavior: >
+      Cache behaviors are evaluated in the order they appear in the
+      configuration. The first matching path pattern wins. The default
+      behavior (*) is always last. Order matters — put specific patterns
+      before general ones.
+    common_false_claim: "CloudFront uses longest-match for path patterns like ALB."
+    correct_action: "Order behaviors from most specific to least specific. First match wins."
+
+  - id: P6-origin-failover-triggers
+    trigger_words: ["origin failover", "origin group", "secondary origin", "failover"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim origin failover handles all errors. It only triggers
+      on 5xx errors and connection failures, not 4xx errors.
+    actual_behavior: >
+      Origin failover triggers on HTTP 500, 502, 503, 504 from the
+      primary origin, or when CloudFront cannot connect. 4xx errors
+      (403, 404) are returned directly to the viewer without failover.
+    common_false_claim: "Set up origin failover to handle 404 errors from the primary origin."
+    correct_action: "Origin failover only handles 5xx and connection failures. Use custom error pages for 4xx."
+
+  - id: P7-default-root-object-scope
+    trigger_words: ["default root object", "index.html", "subdirectory", "directory index"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume the default root object works for all directory paths.
+      It only applies to the distribution root URL.
+    actual_behavior: >
+      The default root object (e.g., index.html) only applies to
+      https://d111.cloudfront.net/. Requests to /subdir/ do NOT
+      automatically append index.html. Use Lambda@Edge or CloudFront
+      Functions to handle subdirectory index documents.
+    common_false_claim: "Set default root object to index.html and all directories will serve it."
+    correct_action: "Use CloudFront Functions to append index.html to directory requests."
+
+  - id: P8-signed-url-expiry
+    trigger_words: ["signed URL", "presigned", "signed cookie", "private content"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs confuse CloudFront signed URLs with S3 presigned URLs. They
+      have different signing mechanisms and different expiry behaviors.
+    actual_behavior: >
+      CloudFront signed URLs use RSA key pairs (trusted key groups or
+      legacy CloudFront key pairs). S3 presigned URLs use IAM credentials.
+      CloudFront signed URLs can use canned or custom policies. Custom
+      policies support IP restrictions and date ranges. Signed cookies
+      are for multiple files without changing URLs.
+    common_false_claim: "Use S3 presigned URLs with CloudFront for private content."
+    correct_action: "Use CloudFront signed URLs/cookies with trusted key groups for private content behind CloudFront."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

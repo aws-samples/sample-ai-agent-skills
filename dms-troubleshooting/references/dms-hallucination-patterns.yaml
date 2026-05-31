@@ -1,0 +1,151 @@
+# =============================================================================
+# AWS DMS "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-cdc-no-config-needed
+    trigger_words: ["CDC", "change data capture", "ongoing replication", "continuous migration"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume CDC works automatically once a DMS task is created.
+      CDC requires source-specific configuration that must be done
+      at the database level before DMS can capture changes.
+    actual_behavior: >
+      CDC requires supplemental logging on the source database.
+      Oracle needs supplemental logging enabled. MySQL needs
+      binlog_format=ROW. PostgreSQL needs wal_level=logical.
+      SQL Server needs MS-CDC enabled. Without these, DMS
+      cannot capture ongoing changes and the task will fail
+      or miss data.
+    common_false_claim: "Enable CDC in the DMS task settings and it will capture all changes."
+    correct_action: "Configure supplemental logging on the source database BEFORE creating the CDC task."
+
+  - id: P2-lob-mode-doesnt-matter
+    trigger_words: ["LOB", "large object", "BLOB", "CLOB", "TEXT column", "binary data"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest full LOB mode as the safe default without
+      explaining the severe performance impact. Full LOB mode
+      reads each LOB individually, which can slow migration
+      by 10-100x for tables with many LOB columns.
+    actual_behavior: >
+      Full LOB mode is accurate but extremely slow. Limited LOB
+      mode is fast but truncates at MaxLobSize. Inline LOB mode
+      handles small LOBs inline (fast) and large LOBs separately.
+      The right choice depends on actual LOB sizes in the data.
+      Check max LOB sizes before choosing. Default is limited
+      LOB mode with 32KB max size.
+    common_false_claim: "Use full LOB mode to ensure all data is migrated correctly."
+    correct_action: "Check actual LOB sizes. Use inline LOB mode when possible. Use limited LOB with appropriate MaxLobSize."
+
+  - id: P3-instance-size-doesnt-matter
+    trigger_words: ["replication instance", "instance class", "dms.t3", "dms.r5", "instance size"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest small instance classes for cost savings without
+      considering the migration workload. Undersized instances
+      cause slow migrations and potential failures.
+    actual_behavior: >
+      The replication instance class determines CPU, memory, and
+      network throughput limits. T-class instances have burstable
+      CPU and are unsuitable for sustained workloads. R-class
+      instances provide consistent performance. Large migrations
+      (TB+ data, high CDC volume) need dms.r5.xlarge or larger.
+      Monitor CPUUtilization and FreeableMemory to right-size.
+    common_false_claim: "Use dms.t3.medium for any migration — you can always scale up later."
+    correct_action: "Size the instance based on data volume, CDC rate, and LOB usage. Use R-class for production migrations."
+
+  - id: P4-validation-always-accurate
+    trigger_words: ["data validation", "validate", "row comparison", "data integrity check"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs present validation mismatches as definitive proof of
+      data loss. During active CDC, validation can show false
+      mismatches due to timing differences.
+    actual_behavior: >
+      Data validation compares source and target rows but during
+      active CDC, the source may change between reads, causing
+      transient mismatches. Validation does NOT compare LOB
+      columns by default. Re-run validation after stopping CDC
+      for accurate results. ValidationSuspendedRecords may
+      indicate timing issues, not actual data problems.
+    common_false_claim: "Validation shows 50 mismatched rows — the migration has data loss."
+    correct_action: "Re-run validation after CDC catches up. Check if mismatches are transient. Verify LOB columns separately."
+
+  - id: P5-table-mapping-simple
+    trigger_words: ["table mapping", "selection rule", "transformation", "include table", "exclude table"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs generate table mapping JSON with incorrect syntax or
+      rule ordering. Rules are evaluated in order and wildcards
+      behave differently than expected.
+    actual_behavior: >
+      Table mapping rules are evaluated top to bottom. The percent
+      sign (%) is the wildcard, not asterisk (*). Selection rules
+      control which tables to include/exclude. Transformation rules
+      rename schemas, tables, or columns. Rule order matters —
+      an exclude rule before an include rule will exclude first.
+      Schema names are case-sensitive for some engines.
+    common_false_claim: "Use * as wildcard in table mappings to select all tables."
+    correct_action: "Use % as wildcard. Order rules carefully. Test with describe-table-statistics before full migration."
+
+  - id: P6-dms-converts-schema
+    trigger_words: ["schema conversion", "convert stored procedures", "migrate schema", "DDL conversion"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DMS can convert database schema including
+      stored procedures, triggers, and views. DMS only migrates
+      data. Schema conversion requires AWS SCT.
+    actual_behavior: >
+      DMS migrates data (DML operations). It can create basic
+      target tables if they don't exist, but it does NOT convert
+      stored procedures, triggers, views, functions, or complex
+      DDL. AWS Schema Conversion Tool (SCT) handles schema
+      conversion for heterogeneous migrations. Run SCT first,
+      then DMS for data migration.
+    common_false_claim: "DMS will automatically convert your Oracle stored procedures to PostgreSQL."
+    correct_action: "Use AWS SCT for schema conversion. Use DMS for data migration only."
+
+  - id: P7-public-endpoint-easy
+    trigger_words: ["public endpoint", "on-premises source", "internet connectivity", "public access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using public endpoints for on-premises sources
+      without explaining the security and networking requirements.
+    actual_behavior: >
+      For public endpoints, the replication instance needs a public
+      subnet with an internet gateway and a public IP. The source
+      database must be accessible over the internet (firewall rules).
+      This is NOT recommended for production. Use VPN or Direct
+      Connect for on-premises sources. Security groups on the
+      replication instance must allow outbound to the source.
+    common_false_claim: "Just use a public endpoint to connect to your on-premises database."
+    correct_action: "Use VPN or Direct Connect for on-premises sources. Only use public endpoints for testing."
+
+  - id: P8-multi-az-improves-speed
+    trigger_words: ["Multi-AZ", "high availability", "failover", "standby instance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Multi-AZ improves migration performance by
+      distributing the workload. Multi-AZ is for HA only.
+    actual_behavior: >
+      Multi-AZ creates a standby replication instance in another
+      AZ for automatic failover. The standby does NOT process
+      any migration tasks. It only activates during failover.
+      Multi-AZ doubles the cost. It does not improve throughput,
+      reduce latency, or increase parallelism. Use it only when
+      migration downtime must be minimized.
+    common_false_claim: "Enable Multi-AZ to speed up your migration."
+    correct_action: "Multi-AZ is for HA only. Scale up instance class or tune task settings for performance."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

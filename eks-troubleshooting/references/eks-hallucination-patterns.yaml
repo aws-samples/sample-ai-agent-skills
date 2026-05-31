@@ -1,0 +1,143 @@
+# =============================================================================
+# EKS "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about EKS behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-control-plane-access
+    trigger_words: ["etcd", "kube-apiserver config", "control plane SSH", "master node"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on self-managed Kubernetes suggest accessing etcd or
+      modifying kube-apiserver flags. EKS control plane is fully managed
+      by AWS — there is no SSH, no etcd access, no config file editing.
+    actual_behavior: >
+      EKS control plane is managed by AWS. You cannot access etcd,
+      modify kube-apiserver flags, or SSH into control plane nodes.
+      Troubleshoot via CloudWatch control plane logs (api, audit,
+      authenticator, controllerManager, scheduler).
+    common_false_claim: >
+      "SSH into the master node and check the kube-apiserver logs."
+    correct_action: "Enable control plane logging and check CloudWatch log group /aws/eks/<cluster>/cluster."
+
+  - id: P2-fargate-daemonsets
+    trigger_words: ["Fargate DaemonSet", "DaemonSet all nodes", "Fargate privileged"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs know DaemonSets run on every node and suggest them for
+      monitoring/logging. Fargate does not support DaemonSets, privileged
+      containers, or HostNetwork because each pod runs in its own microVM.
+    actual_behavior: >
+      Fargate pods run in isolated microVMs. DaemonSets, privileged
+      containers, HostNetwork, and HostPort are NOT supported. For
+      logging on Fargate, use the built-in Fluent Bit sidecar via
+      Fargate logging configuration.
+    common_false_claim: >
+      "Deploy a Fluent Bit DaemonSet to collect logs from Fargate pods."
+    correct_action: "Use Fargate's built-in log router (Fluent Bit sidecar) configured via ConfigMap."
+
+  - id: P3-cluster-upgrade-skip
+    trigger_words: ["upgrade", "skip version", "jump version", "1.25 to 1.28"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest upgrading multiple minor versions at once to
+      save time. EKS enforces sequential minor version upgrades.
+    actual_behavior: >
+      EKS cluster upgrades must go one minor version at a time:
+      1.27 → 1.28 → 1.29. You cannot skip versions. Each upgrade
+      requires verifying add-on compatibility, deprecated API usage,
+      and node group AMI updates.
+    common_false_claim: >
+      "Upgrade directly from 1.25 to 1.28 to catch up quickly."
+    correct_action: "Upgrade sequentially: 1.25 → 1.26 → 1.27 → 1.28, verifying each step."
+
+  - id: P4-aws-auth-vs-iam-policy
+    trigger_words: ["aws-auth", "IAM policy", "RBAC", "cluster access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse IAM policies (AWS API permissions) with aws-auth
+      ConfigMap (Kubernetes RBAC mapping). They are different layers.
+      IAM controls who can call EKS APIs. aws-auth controls what
+      Kubernetes permissions an IAM identity gets inside the cluster.
+    actual_behavior: >
+      IAM policies control AWS API access (eks:DescribeCluster, etc.).
+      aws-auth ConfigMap maps IAM roles/users to Kubernetes groups
+      (system:masters, system:nodes, custom groups). Both layers must
+      be correct. An IAM user with full EKS API access but no aws-auth
+      entry gets "Unauthorized" from kubectl.
+    common_false_claim: >
+      "Add eks:* permissions to the IAM policy to fix kubectl access."
+    correct_action: "Add the IAM role/user to aws-auth ConfigMap with appropriate Kubernetes group mapping."
+
+  - id: P5-vpc-cni-unlimited-ips
+    trigger_words: ["pod IP", "VPC CNI", "IP address", "subnet"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not account for ENI and secondary IP limits per instance
+      type. They assume pods can get unlimited IPs from the subnet.
+    actual_behavior: >
+      VPC CNI assigns IPs from VPC subnets via ENI secondary IPs.
+      Each instance type has a max number of ENIs and IPs per ENI.
+      Max pods = (ENIs × (IPs_per_ENI - 1)) + 2. A t3.medium supports
+      max 17 pods. Subnet CIDR exhaustion is common in large clusters.
+    common_false_claim: >
+      "Just add more pods — the VPC CNI will allocate IPs automatically."
+    correct_action: "Check instance type ENI limits, subnet available IPs, and consider prefix delegation for higher density."
+
+  - id: P6-coredns-managed-service
+    trigger_words: ["CoreDNS", "DNS", "service discovery", "kube-dns"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may treat CoreDNS as a managed AWS service that is always
+      available. CoreDNS runs as regular pods on worker nodes.
+    actual_behavior: >
+      CoreDNS is a Kubernetes Deployment (default 2 replicas) running
+      on worker nodes. If nodes are unhealthy or CoreDNS pods are
+      evicted/OOMKilled, DNS resolution fails cluster-wide. CoreDNS
+      health directly depends on node health and available resources.
+    common_false_claim: >
+      "CoreDNS is managed by AWS and will always be available."
+    correct_action: "Check CoreDNS pod status: kubectl get pods -n kube-system -l k8s-app=kube-dns. Ensure nodes are healthy."
+
+  - id: P7-psp-on-125
+    trigger_words: ["PodSecurityPolicy", "PSP", "pod security", "privileged pod"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs trained on older Kubernetes docs suggest creating or
+      modifying PodSecurityPolicy resources. PSP was removed in 1.25.
+    actual_behavior: >
+      PodSecurityPolicy was deprecated in 1.21 and removed in 1.25.
+      PSP resources are silently ignored in 1.25+ — no errors, no
+      enforcement. Use Pod Security Standards (PSS) with Pod Security
+      Admission (PSA) namespace labels instead.
+    common_false_claim: >
+      "Create a PodSecurityPolicy to restrict privileged containers."
+    correct_action: "Use Pod Security Admission labels: kubectl label namespace <ns> pod-security.kubernetes.io/enforce=restricted."
+
+  - id: P8-karpenter-cluster-autoscaler-coexist
+    trigger_words: ["Karpenter", "Cluster Autoscaler", "scaling", "node provisioning"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest using both Karpenter and Cluster Autoscaler
+      together for "better scaling." They are mutually exclusive.
+    actual_behavior: >
+      Cluster Autoscaler adjusts ASG desired count for node groups.
+      Karpenter provisions EC2 instances directly via fleet API,
+      bypassing ASGs. Running both causes conflicts — both try to
+      scale simultaneously, leading to over-provisioning or race
+      conditions.
+    common_false_claim: >
+      "Use Cluster Autoscaler for node groups and Karpenter for additional capacity."
+    correct_action: "Choose one: Cluster Autoscaler (with node groups) OR Karpenter (with NodePools). Do not run both."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

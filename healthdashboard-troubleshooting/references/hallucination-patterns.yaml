@@ -1,0 +1,130 @@
+# =============================================================================
+# Health Dashboard "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-api-all-plans
+    trigger_words: ["Health API", "describe-events", "health endpoint"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using the Health API regardless of support plan.
+      The API requires Business or Enterprise Support.
+    actual_behavior: >
+      The AWS Health API requires Business or Enterprise Support plan.
+      Basic and Developer plans can only view health events through
+      the AWS Health Dashboard console. API calls from unsupported
+      plans return SubscriptionRequiredException.
+    common_false_claim: "Use the Health API to check for service events affecting your account."
+    correct_action: "Verify support plan first. For Basic/Developer, use the Health Dashboard console."
+
+  - id: P2-api-any-region
+    trigger_words: ["health region", "health endpoint", "describe-events region"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using the Health API in the affected region.
+      The API is only available in us-east-1.
+    actual_behavior: >
+      The Health API is only available in us-east-1 (and us-gov-west-1
+      for GovCloud). All API calls must specify --region us-east-1,
+      regardless of which region the health event affects. The API
+      returns events for all regions.
+    common_false_claim: "Check health events in the affected region's API endpoint."
+    correct_action: "Always use --region us-east-1 for all Health API calls. Filter by region in the request."
+
+  - id: P3-public-events-list-resources
+    trigger_words: ["affected resources", "impacted instances", "which resources affected"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest querying affected entities for all event types.
+      Public events do not list specific resources.
+    actual_behavior: >
+      Public health events (service-wide issues) do not list specific
+      affected entities. They affect all customers using the service
+      in the affected region. Only account-specific events
+      (accountNotification) list specific affected resources via
+      describe-affected-entities.
+    common_false_claim: "Check which of your EC2 instances are affected by this service event."
+    correct_action: "For public events, assume all resources in the affected region/service may be impacted. Only account-specific events list entities."
+
+  - id: P4-events-older-than-90-days
+    trigger_words: ["historical events", "past events", "event history"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest querying historical events without noting the
+      90-day retention limit.
+    actual_behavior: >
+      Health events are retained and accessible via API for 90 days
+      from the event's last update. Events older than 90 days are
+      permanently inaccessible. For long-term history, events must
+      be archived via EventBridge to S3 or a database.
+    common_false_claim: "Query health events from last year to identify patterns."
+    correct_action: "Events only available for 90 days. Set up EventBridge archival for long-term history."
+
+  - id: P5-real-time-alerting
+    trigger_words: ["real-time health", "instant notification", "immediate alert"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs imply Health Dashboard provides real-time alerting.
+      There is a delay between issue start and event publication.
+    actual_behavior: >
+      Health events are published as AWS identifies and confirms
+      issues. There can be a significant delay between the actual
+      start of an issue and the publication of the health event.
+      Health Dashboard is an informational tool, not a real-time
+      monitoring system.
+    common_false_claim: "You'll be immediately notified when a service issue starts."
+    correct_action: "Use CloudWatch for real-time monitoring. Use Health Dashboard for AWS-side issue awareness."
+
+  - id: P6-affected-entities-immediate
+    trigger_words: ["affected entities", "impacted resources list", "entity list"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs expect affected entities to be immediately available when
+      an event is published. Entity lists are populated over time.
+    actual_behavior: >
+      When a health event is first published, the affected entities
+      list may be empty or incomplete. AWS populates the list as it
+      identifies impacted resources. The list may be updated multiple
+      times as the event progresses.
+    common_false_claim: "Check the affected entities immediately when the event appears."
+    correct_action: "Check affected entities but expect the list to be incomplete initially. Re-check periodically."
+
+  - id: P7-eventbridge-us-east-1-only
+    trigger_words: ["EventBridge health", "health event rule", "health notification"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest creating EventBridge rules only in us-east-1 for
+      all health events. Regional events publish in the affected region.
+    actual_behavior: >
+      Global health events publish to EventBridge in us-east-1.
+      Regional health events publish in the affected region. To
+      capture all events, rules must be created in us-east-1 AND
+      in each region you want to monitor.
+    common_false_claim: "Create an EventBridge rule in us-east-1 to catch all health events."
+    correct_action: "Create rules in us-east-1 for global events AND in each monitored region for regional events."
+
+  - id: P8-org-health-consolidated-billing
+    trigger_words: ["organizational health", "org health view", "multi-account health"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest organizational health works with consolidated
+      billing only. It requires all features enabled.
+    actual_behavior: >
+      Organizational health view requires AWS Organizations with all
+      features enabled, not just consolidated billing. Health must
+      be enabled as a trusted service. Access is from the management
+      account or a delegated administrator.
+    common_false_claim: "View organizational health since you have consolidated billing."
+    correct_action: "Enable all features in Organizations. Enable Health as trusted service. Access from management account."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,148 @@
+# =============================================================================
+# Aurora "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-storage-shrinks-after-delete
+    trigger_words: ["storage shrink", "reclaim storage", "free space", "reduce volume", "delete data to save"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on general database documentation suggest that deleting
+      data frees storage. Aurora storage auto-scales up but never shrinks.
+      Freed space is reused internally but the billed volume size does not
+      decrease.
+    actual_behavior: >
+      Aurora storage grows automatically in 10 GiB increments up to 128 TiB.
+      When data is deleted, the space is marked as reusable by the storage
+      engine but the volume size does not decrease. To reclaim storage, you
+      must create a new cluster from a snapshot or perform a logical dump
+      and restore.
+    common_false_claim: "Delete unused tables to reduce your Aurora storage costs."
+    correct_action: "Create a new cluster from a snapshot to reclaim storage. Deleting data only frees space for internal reuse."
+
+  - id: P2-reader-endpoint-is-load-balancer
+    trigger_words: ["reader endpoint load balancing", "reader endpoint distributes queries", "automatic load balancing"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume the reader endpoint provides intelligent load balancing
+      like an ALB or NLB. It is actually DNS round-robin which only
+      distributes at the DNS resolution level, not per-connection or
+      per-query.
+    actual_behavior: >
+      The Aurora reader endpoint uses DNS round-robin to return different
+      reader instance IPs on successive lookups. It does not balance
+      connections or queries. Applications with long-lived connections
+      may all land on the same reader. Connection poolers that cache DNS
+      will not benefit from round-robin.
+    common_false_claim: "The reader endpoint automatically load balances queries across all readers."
+    correct_action: "Use RDS Proxy for connection-level load balancing, or use individual reader instance endpoints with application-level routing."
+
+  - id: P3-instant-failover
+    trigger_words: ["instant failover", "zero downtime failover", "seamless failover", "no application impact"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate Aurora failover speed. While faster than traditional
+      RDS, Aurora failover still takes approximately 30 seconds and
+      requires DNS propagation and application reconnection.
+    actual_behavior: >
+      Aurora writer failover typically takes ~30 seconds when a reader
+      exists to be promoted. The cluster endpoint DNS TTL is 5 seconds.
+      Applications experience brief unavailability and must implement
+      retry logic. If no reader exists, failover takes longer as a new
+      instance must be created.
+    common_false_claim: "Aurora provides instant, zero-downtime failover."
+    correct_action: "Expect ~30s failover. Implement connection retry logic. Disable DNS caching. Use RDS Proxy for faster failover routing."
+
+  - id: P4-backtrack-on-postgresql
+    trigger_words: ["backtrack PostgreSQL", "rewind PostgreSQL", "backtrack Aurora PostgreSQL"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs generalize Aurora features across both engines. Backtrack is
+      an Aurora MySQL-only feature and is not available on Aurora
+      PostgreSQL.
+    actual_behavior: >
+      Aurora backtrack is available only on Aurora MySQL. It allows
+      rewinding the cluster to a specific point in time (up to 72 hours)
+      without creating a new cluster. Aurora PostgreSQL does not support
+      backtrack — the only option is point-in-time restore which creates
+      a new cluster.
+    common_false_claim: "Use Aurora backtrack to rewind your PostgreSQL cluster."
+    correct_action: "For Aurora PostgreSQL, use point-in-time restore (creates a new cluster). Backtrack is MySQL only."
+
+  - id: P5-serverless-v2-instant-scaling
+    trigger_words: ["instant scaling", "immediate scale", "Serverless scales instantly", "no scaling delay"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate Serverless v2 scaling speed. While faster than
+      Serverless v1, v2 scaling still has latency, especially when
+      scaling up from very low ACU values.
+    actual_behavior: >
+      Aurora Serverless v2 scales in 0.5 ACU increments between
+      configured min and max ACU. Scaling up takes time and is not
+      instantaneous. Cold start latency occurs when scaling from near-zero
+      activity. Each ACU provides approximately 2 GiB of memory.
+      Setting minimum ACU too low causes performance issues during
+      scale-up.
+    common_false_claim: "Serverless v2 scales instantly to handle any traffic spike."
+    correct_action: "Set minimum ACU high enough for baseline traffic. Expect scaling latency during rapid scale-up events."
+
+  - id: P6-global-database-zero-rpo
+    trigger_words: ["zero RPO", "no data loss guaranteed", "Global Database zero data loss"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate managed planned failover (RPO=0) with unplanned
+      failover (RPO < 1s but data loss possible). The RPO guarantee
+      depends on the failover type.
+    actual_behavior: >
+      Managed planned failover has RPO = 0 (no data loss) because it
+      waits for replication to catch up before switching. Unplanned
+      failover (detach and promote) has typical RPO < 1 second but
+      data loss is possible because cross-region replication is
+      asynchronous. These are fundamentally different operations.
+    common_false_claim: "Aurora Global Database guarantees zero data loss in all failover scenarios."
+    correct_action: "Distinguish between planned failover (RPO=0) and unplanned failover (RPO < 1s, data loss possible). Use managed planned failover when possible."
+
+  - id: P7-clone-is-full-copy
+    trigger_words: ["full copy", "clone copies all data", "clone duplicates storage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs describe cloning as creating a full copy of the database.
+      Aurora cloning uses copy-on-write and initially shares storage
+      pages with the source.
+    actual_behavior: >
+      Aurora cloning uses a copy-on-write protocol. The clone is created
+      near-instantly regardless of database size because it shares storage
+      pages with the source cluster. New pages are allocated only when
+      data is modified on either the source or clone. Storage costs
+      increase as the clone diverges from the source.
+    common_false_claim: "Aurora clone creates a full copy of your database, doubling storage costs."
+    correct_action: "Clone uses copy-on-write. Initial storage cost is minimal. Costs grow as source and clone diverge."
+
+  - id: P8-aurora-is-just-rds-better-storage
+    trigger_words: ["Aurora is just RDS", "same as RDS", "RDS with better storage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs oversimplify Aurora as RDS with better storage. Aurora has
+      a fundamentally different architecture with shared distributed
+      storage, different replication model, and unique features.
+    actual_behavior: >
+      Aurora has a purpose-built distributed storage layer with 6 copies
+      across 3 AZs, separated compute and storage, up to 15 read replicas
+      with sub-10ms lag, cluster endpoints, Global Database, backtrack
+      (MySQL), cloning, Serverless v2, and parallel query (MySQL). The
+      I/O model, failover behavior, and replication architecture are
+      fundamentally different from standard RDS.
+    common_false_claim: "Aurora is basically RDS with faster storage."
+    correct_action: "Treat Aurora as a distinct service with its own architecture, features, limitations, and troubleshooting approaches."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

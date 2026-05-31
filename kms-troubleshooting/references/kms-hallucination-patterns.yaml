@@ -1,0 +1,146 @@
+# =============================================================================
+# AWS KMS "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-iam-policy-sufficient
+    trigger_words: ["IAM policy", "iam:Allow", "kms permission", "policy grant"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest adding IAM policies to grant KMS access without
+      checking if the key policy allows IAM-based access. The key
+      policy is the primary access control for KMS.
+    actual_behavior: >
+      IAM policies for KMS only work if the key policy includes a
+      statement allowing the account root principal. Without this
+      statement, IAM policies are completely ignored. The key policy
+      is the mandatory, primary access control mechanism. Always check
+      the key policy first before troubleshooting IAM policies.
+    common_false_claim: "Add kms:Decrypt to the IAM role policy to grant decryption access."
+    correct_action: "Check the key policy first. Ensure it allows the account root or the specific principal."
+
+  - id: P2-aws-managed-key-modification
+    trigger_words: ["aws/s3", "aws/ebs", "aws/rds", "aws managed key", "default key"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying AWS-managed key policies, rotation, or
+      configuration. AWS-managed keys cannot be modified by customers.
+    actual_behavior: >
+      AWS-managed keys (alias prefix aws/) are fully managed by AWS.
+      Customers cannot view or modify key policies, manually rotate,
+      disable, delete, or create grants on these keys. They rotate
+      automatically every year. To customize key management, create
+      a customer-managed key (CMK) instead.
+    common_false_claim: "Modify the aws/s3 key policy to add cross-account access."
+    correct_action: "Create a customer-managed key with the desired policy. Configure the service to use it."
+
+  - id: P3-deleted-key-recovery
+    trigger_words: ["recover deleted key", "restore key", "undelete key", "key deleted"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest contacting AWS Support to recover a deleted KMS key.
+      Once the waiting period expires and the key is deleted, it is
+      permanently gone with no recovery option.
+    actual_behavior: >
+      Key deletion is permanent after the 7-30 day waiting period.
+      During the waiting period, deletion can be cancelled with
+      cancel-key-deletion. After deletion completes, the key material
+      is destroyed and ALL data encrypted with it is permanently
+      unrecoverable. No AWS Support intervention can recover it.
+    common_false_claim: "Contact AWS Support to recover the deleted KMS key."
+    correct_action: "If in PendingDeletion state, cancel immediately. If deleted, data is permanently lost."
+
+  - id: P4-encryption-context-optional-decrypt
+    trigger_words: ["encryption context", "decrypt without context", "context mismatch"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest encryption context is optional during decryption
+      or that it can be partially provided. It must exactly match
+      what was used during encryption.
+    actual_behavior: >
+      If encryption context was provided during encryption, the EXACT
+      same key-value pairs must be provided during decryption. Missing
+      or mismatched encryption context causes InvalidCiphertextException.
+      Encryption context is not secret — it is stored in plaintext and
+      logged in CloudTrail. It serves as additional authenticated data (AAD).
+    common_false_claim: "Encryption context is optional — just call decrypt without it."
+    correct_action: "Provide the exact same encryption context used during encryption. Check CloudTrail for the original context."
+
+  - id: P5-multi-region-global
+    trigger_words: ["multi-region key", "global key", "replicate key", "cross-region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs describe multi-region keys as automatically available in
+      all regions. They are separate keys that must be explicitly
+      replicated to each region.
+    actual_behavior: >
+      Multi-region keys share key material and key ID but are separate
+      KMS keys in each region. Each has its own ARN, key policy, grants,
+      and aliases. You must explicitly create replicas in each desired
+      region. Each replica's key policy must be configured independently.
+      Deleting the primary does not delete replicas (but they become
+      standalone and cannot be replicated further).
+    common_false_claim: "Create a multi-region key and it will be available in all regions automatically."
+    correct_action: "Create the primary key, then explicitly replicate to each needed region. Configure policies per region."
+
+  - id: P6-grant-immediate-effect
+    trigger_words: ["grant", "create-grant", "grant token", "grant propagation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest grants take effect immediately in all cases. Grants
+      may take up to 5 minutes to propagate. Grant tokens are needed
+      for immediate use.
+    actual_behavior: >
+      Grants typically take effect within a few minutes but may take
+      up to 5 minutes to propagate through the KMS infrastructure.
+      For immediate use after creation, the create-grant API returns
+      a grant token that can be passed to subsequent KMS operations
+      to use the grant immediately. AWS services that create grants
+      (EBS, RDS) handle grant tokens automatically.
+    common_false_claim: "Create a grant and immediately use the key — grants take effect instantly."
+    correct_action: "Use the grant token from create-grant for immediate access, or wait up to 5 minutes."
+
+  - id: P7-symmetric-key-export
+    trigger_words: ["export key", "download key material", "get key material", "extract key"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest exporting or downloading KMS key material. KMS keys
+      with AWS_KMS origin cannot have their key material exported.
+    actual_behavior: >
+      KMS keys created with AWS_KMS origin have key material that never
+      leaves the KMS HSMs unencrypted. You cannot export, download, or
+      view the raw key material. For keys with EXTERNAL origin, you
+      imported the material yourself but KMS does not provide an export
+      mechanism. Only the public key of asymmetric keys can be downloaded
+      via get-public-key.
+    common_false_claim: "Export the KMS key material to use it in your on-premises application."
+    correct_action: "Use envelope encryption with GenerateDataKey. Only asymmetric public keys can be downloaded."
+
+  - id: P8-key-rotation-all-types
+    trigger_words: ["key rotation", "rotate key", "automatic rotation", "rotation period"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest automatic key rotation works for all key types.
+      It only works for symmetric encryption keys with AWS_KMS origin.
+    actual_behavior: >
+      Automatic key rotation is only supported for symmetric encryption
+      keys (SYMMETRIC_DEFAULT) with AWS_KMS key material origin. It
+      does NOT work for: asymmetric keys, HMAC keys, keys with imported
+      material (EXTERNAL origin), or keys in custom key stores. For
+      unsupported key types, you must manually rotate by creating a
+      new key and re-encrypting data. Rotation period is configurable
+      (90-2560 days, default 365).
+    common_false_claim: "Enable automatic rotation on your RSA asymmetric key."
+    correct_action: "For asymmetric or imported keys, manually rotate by creating a new key and updating references."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

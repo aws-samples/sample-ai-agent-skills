@@ -1,0 +1,123 @@
+# =============================================================================
+# Direct Connect & Site-to-Site VPN "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-dx-encrypted-by-default
+    trigger_words: ["DX encryption", "Direct Connect secure", "encrypted connection"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume dedicated connections are encrypted. Direct Connect
+      provides a private dedicated line but does NOT encrypt traffic.
+    actual_behavior: >
+      DX traffic is unencrypted by default. For encryption, use MACsec
+      (Layer 2, 10/100 Gbps only) or establish a VPN tunnel over the
+      DX connection using a Public VIF.
+    common_false_claim: "Direct Connect encrypts traffic because it's a dedicated connection."
+    correct_action: "Enable MACsec on supported connections or configure VPN over DX for IPsec encryption."
+
+  - id: P2-vpn-tunnel-unlimited-throughput
+    trigger_words: ["VPN throughput", "VPN bandwidth", "VPN speed limit"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest increasing VPN tunnel throughput beyond the hard limit.
+      Each tunnel is capped at 1.25 Gbps by AWS.
+    actual_behavior: >
+      Each VPN tunnel has a hard limit of 1.25 Gbps and 140,000 packets
+      per second. This cannot be increased. Use multiple VPN connections
+      with ECMP on Transit Gateway for higher aggregate throughput.
+    common_false_claim: "Increase the VPN tunnel bandwidth by changing the connection settings."
+    correct_action: "Use multiple VPN connections with ECMP on Transit Gateway, or use Direct Connect for higher throughput."
+
+  - id: P3-single-vpn-tunnel-sufficient
+    trigger_words: ["one tunnel", "single tunnel", "tunnel down maintenance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs dismiss a single-tunnel-down state as non-critical. AWS
+      performs maintenance on individual tunnels, causing outages if
+      only one tunnel is configured.
+    actual_behavior: >
+      Each VPN connection has two tunnels. AWS performs maintenance on
+      one tunnel at a time. Both tunnels must be configured and UP on
+      the customer gateway for uninterrupted connectivity.
+    common_false_claim: "One active tunnel is sufficient for a VPN connection."
+    correct_action: "Configure both tunnels on the customer gateway. Monitor TunnelState metric for both tunnels."
+
+  - id: P4-lag-mixed-speeds
+    trigger_words: ["LAG", "link aggregation", "bundle connections"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest adding connections of different speeds to a LAG.
+      All LAG members must have identical bandwidth and location.
+    actual_behavior: >
+      LAG requires all member connections to have the same bandwidth
+      (e.g., all 1 Gbps or all 10 Gbps) and terminate at the same
+      AWS Direct Connect location. Mixing is not supported.
+    common_false_claim: "Add your 1 Gbps and 10 Gbps connections to the same LAG for more bandwidth."
+    correct_action: "Ensure all LAG member connections have the same speed and terminate at the same DX location."
+
+  - id: P5-private-vif-for-vpn-over-dx
+    trigger_words: ["VPN over DX", "IPsec over Direct Connect", "encrypt DX traffic"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using a Private VIF for VPN over DX. The VPN
+      endpoint has a public IP, so a Public VIF is required.
+    actual_behavior: >
+      Site-to-Site VPN endpoints use public IP addresses. To reach
+      them over DX, you must use a Public VIF. A Private VIF only
+      provides access to private VPC IP space.
+    common_false_claim: "Create a Private VIF and configure VPN over the DX connection."
+    correct_action: "Use a Public VIF to reach AWS VPN public endpoints over the DX connection."
+
+  - id: P6-dx-failover-automatic
+    trigger_words: ["DX failover", "automatic failover", "DX backup VPN"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim DX-to-VPN failover is automatic without BGP tuning.
+      Without proper AS path or local preference configuration, failover
+      may not work correctly.
+    actual_behavior: >
+      DX-to-VPN failover requires BGP configuration to prefer DX over
+      VPN. Use AS path prepending on VPN routes or set lower local
+      preference. Without tuning, traffic may not fail over or may
+      prefer the wrong path.
+    common_false_claim: "AWS automatically fails over from DX to VPN when DX goes down."
+    correct_action: "Configure BGP attributes (AS path prepending, local preference) to ensure correct DX/VPN path preference."
+
+  - id: P7-dx-gateway-same-region-only
+    trigger_words: ["DX gateway", "multi-region DX", "cross-region Direct Connect"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs sometimes claim DX connections can reach multiple regions
+      without a DX Gateway, or confuse DX Gateway with Transit Gateway.
+    actual_behavior: >
+      A DX Gateway is a global resource that enables a DX connection
+      to reach VPCs in multiple regions. Without it, a VIF can only
+      connect to a VGW in the same region as the DX location.
+    common_false_claim: "A Private VIF can connect to VPCs in any region without a DX Gateway."
+    correct_action: "Use a DX Gateway to associate VIFs with VGWs or TGWs in multiple regions."
+
+  - id: P8-macsec-all-connections
+    trigger_words: ["MACsec", "Layer 2 encryption", "802.1AE"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling MACsec on any DX connection. MACsec is
+      only available on dedicated 10 Gbps and 100 Gbps connections.
+    actual_behavior: >
+      MACsec is supported only on dedicated Direct Connect connections
+      at 10 Gbps and 100 Gbps speeds. Hosted connections, sub-1 Gbps,
+      and 1 Gbps connections do not support MACsec.
+    common_false_claim: "Enable MACsec on your 1 Gbps Direct Connect connection."
+    correct_action: "MACsec requires a dedicated 10 Gbps or 100 Gbps connection. For lower speeds, use VPN over DX for encryption."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

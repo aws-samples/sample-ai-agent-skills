@@ -1,0 +1,127 @@
+# =============================================================================
+# AWS ParallelCluster "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-sge-torque-support
+    trigger_words: ["SGE", "Torque", "Sun Grid Engine", "PBS", "scheduler"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on older documentation suggest SGE or Torque.
+      ParallelCluster 3.x only supports Slurm.
+    actual_behavior: >
+      ParallelCluster 3.x exclusively uses Slurm as the job scheduler.
+      SGE and Torque support was removed after ParallelCluster 2.x.
+      All job submission uses sbatch, squeue, sinfo, scontrol commands.
+    common_false_claim: "Configure SGE as the scheduler in your ParallelCluster config."
+    correct_action: "Use Slurm scheduler. All ParallelCluster 3.x clusters use Slurm."
+
+  - id: P2-fsx-scratch-persistent
+    trigger_words: ["FSx scratch", "Lustre scratch", "scratch filesystem", "temporary storage"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume FSx scratch filesystems persist data like EFS.
+      Scratch filesystems are temporary and data is lost on deletion.
+    actual_behavior: >
+      FSx for Lustre SCRATCH_1 and SCRATCH_2 deployment types are
+      temporary. Data is NOT replicated and is lost when the filesystem
+      is deleted. Only PERSISTENT_1 and PERSISTENT_2 retain data.
+      Cluster deletion deletes the scratch filesystem.
+    common_false_claim: "Your data is safe on the FSx scratch filesystem after cluster deletion."
+    correct_action: "Use PERSISTENT deployment type or back up data to S3 before cluster deletion."
+
+  - id: P3-preprovisioned-compute
+    trigger_words: ["compute nodes", "worker nodes", "compute fleet", "node count"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume compute nodes are always running like traditional
+      clusters. ParallelCluster uses dynamic, on-demand nodes.
+    actual_behavior: >
+      Compute nodes are launched on demand when jobs are submitted.
+      They are terminated after the ScaledownIdletime (default 10 min).
+      Nodes show as "idle~" (powered down) in sinfo when not running.
+      This is normal behavior, not an error.
+    common_false_claim: "Your compute nodes should always be running and showing as idle."
+    correct_action: "Nodes in idle~ state are normal. They launch when jobs are submitted."
+
+  - id: P4-arbitrary-ami
+    trigger_words: ["custom AMI", "AMI", "image", "operating system"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using standard AMIs for ParallelCluster. Custom
+      AMIs must be built with pcluster build-image.
+    actual_behavior: >
+      ParallelCluster requires specific software, Slurm installation,
+      and configurations baked into the AMI. Using pcluster build-image
+      creates a compatible AMI from a base. Arbitrary AMIs will cause
+      cluster creation failures.
+    common_false_claim: "Use the latest Amazon Linux 2 AMI for your ParallelCluster."
+    correct_action: "Build custom AMIs with pcluster build-image. Use official ParallelCluster AMIs."
+
+  - id: P5-ec2-autoscaling
+    trigger_words: ["auto scaling group", "ASG", "scaling policy", "target tracking"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest EC2 Auto Scaling for ParallelCluster compute nodes.
+      Scaling is managed by Slurm's power-saving plugin, not ASG.
+    actual_behavior: >
+      ParallelCluster uses Slurm's power-saving plugin and clustermgtd
+      for scaling. It does NOT use EC2 Auto Scaling groups. Scaling
+      parameters are configured in the cluster config (MinCount,
+      MaxCount, ScaledownIdletime).
+    common_false_claim: "Modify the Auto Scaling group to increase compute capacity."
+    correct_action: "Update cluster config MinCount/MaxCount. Scaling is managed by Slurm/clustermgtd."
+
+  - id: P6-head-node-ha
+    trigger_words: ["head node", "high availability", "failover", "controller"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest head node HA or failover. ParallelCluster head
+      node is a single instance with no built-in HA.
+    actual_behavior: >
+      The head node is a single EC2 instance. There is no built-in
+      HA, failover, or multi-head-node support. If the head node
+      fails, the cluster is unavailable. Use instance recovery,
+      EBS snapshots, and monitoring for resilience.
+    common_false_claim: "Configure head node failover for high availability."
+    correct_action: "Use EC2 instance recovery and EBS snapshots. No built-in head node HA."
+
+  - id: P7-instant-scaling
+    trigger_words: ["scale immediately", "instant nodes", "fast scaling"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest scaling is instant. Node launch involves EC2
+      provisioning, boot, and Slurm registration.
+    actual_behavior: >
+      Compute node scaling takes 2-5 minutes including EC2 launch,
+      instance boot, software initialization, and Slurm node
+      registration. Scale-down has an idle timeout (default 10 min).
+      This is expected behavior.
+    common_false_claim: "Compute nodes will be available immediately when a job is submitted."
+    correct_action: "Expect 2-5 minute scaling delay. Set MinCount > 0 for always-on nodes."
+
+  - id: P8-update-all-settings
+    trigger_words: ["update cluster", "modify config", "change settings"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest all settings can be updated in place. Many
+      settings require cluster recreation.
+    actual_behavior: >
+      Some settings (VPC, subnet, scheduler type, some storage configs)
+      are immutable after creation. Updating them requires cluster
+      deletion and recreation. Use pcluster update-cluster --dryrun
+      to check what can be updated.
+    common_false_claim: "Update the VPC configuration with pcluster update-cluster."
+    correct_action: "Check update compatibility with --dryrun. Recreate cluster for immutable settings."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

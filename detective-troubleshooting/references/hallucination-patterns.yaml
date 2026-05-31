@@ -1,0 +1,119 @@
+# =============================================================================
+# Detective "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-detective-without-guardduty
+    trigger_words: ["enable detective", "create behavior graph", "detective setup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling Detective independently. Detective requires
+      GuardDuty to be enabled for at least 48 hours first.
+    actual_behavior: >
+      Detective uses GuardDuty findings as a primary data source. The
+      CreateGraph API fails if GuardDuty is not enabled. GuardDuty must
+      be active for at least 48 hours before Detective can be enabled.
+    common_false_claim: "Just enable Detective in the console to start investigating."
+    correct_action: "Enable GuardDuty first, wait 48 hours, then enable Detective."
+
+  - id: P2-instant-data
+    trigger_words: ["detective data", "behavior graph data", "investigation data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim data is immediately available after enabling Detective.
+      Data ingestion takes up to 24 hours.
+    actual_behavior: >
+      After enabling Detective or adding a member account, data takes
+      up to 24 hours to appear in the behavior graph. Historical data
+      backfill for up to 12 months takes additional time.
+    common_false_claim: "Data will be available immediately after enabling Detective."
+    correct_action: "Wait 24 hours after enablement before investigating. Historical backfill takes longer."
+
+  - id: P3-cross-region-graph
+    trigger_words: ["cross-region detective", "multi-region investigation", "global behavior graph"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Detective can aggregate data across regions.
+      Each region has an independent behavior graph.
+    actual_behavior: >
+      Detective behavior graphs are regional. There is no cross-region
+      aggregation or global view. Findings must be investigated in the
+      region where they occurred.
+    common_false_claim: "Detective aggregates findings from all regions into one graph."
+    correct_action: "Enable Detective in each region. Investigate findings in their source region."
+
+  - id: P4-unlimited-members
+    trigger_words: ["detective members", "add accounts", "member limit"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not mention the 1200-account limit for behavior graphs.
+    actual_behavior: >
+      A single behavior graph supports up to 1200 member accounts.
+      Exceeding this limit requires multiple graphs or account
+      prioritization based on risk.
+    common_false_claim: "Add all your organization accounts to the behavior graph."
+    correct_action: "Check member count against 1200 limit. Prioritize high-risk accounts."
+
+  - id: P5-change-admin-easy
+    trigger_words: ["change admin", "delegated administrator", "switch admin account"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest changing the admin account is a simple operation.
+      It requires disabling and re-enabling the service.
+    actual_behavior: >
+      Changing the delegated administrator requires disabling Detective
+      in the organization, which deletes the behavior graph and all
+      data. Re-enabling with a new admin starts fresh.
+    common_false_claim: "Change the delegated administrator in the Detective settings."
+    correct_action: "Plan admin account carefully. Changing requires service reset and data loss."
+
+  - id: P6-auto-accept-invitations
+    trigger_words: ["member invitation", "invite account", "add member"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume invitations are auto-accepted. Members must explicitly
+      accept unless using Organizations auto-enable.
+    actual_behavior: >
+      Without Organizations integration, member accounts must explicitly
+      accept Detective invitations. Pending invitations do not contribute
+      data. Use Organizations auto-enable for automatic enrollment.
+    common_false_claim: "Invite the account and it will automatically join the graph."
+    correct_action: "Use Organizations auto-enable, or ensure members accept invitations."
+
+  - id: P7-detective-free
+    trigger_words: ["detective cost", "detective pricing", "detective free"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may claim Detective is free or included with GuardDuty.
+      It has its own pricing based on data volume.
+    actual_behavior: >
+      Detective has a 30-day free trial. After that, pricing is based
+      on data volume ingested (GuardDuty findings, CloudTrail events,
+      VPC Flow Logs). High-volume accounts can incur significant costs.
+    common_false_claim: "Detective is included free with GuardDuty."
+    correct_action: "Monitor data volume during free trial. Budget for ongoing costs based on volume."
+
+  - id: P8-eks-logs-direct
+    trigger_words: ["eks detective", "eks audit logs", "kubernetes detective"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest Detective can directly ingest EKS logs. It requires
+      GuardDuty EKS Protection to be enabled first.
+    actual_behavior: >
+      Detective ingests EKS audit logs through GuardDuty's EKS
+      Protection feature. EKS Protection must be enabled in GuardDuty
+      before Detective can use EKS data for investigations.
+    common_false_claim: "Enable EKS audit logs directly in Detective."
+    correct_action: "Enable EKS Protection in GuardDuty first, then Detective can use EKS data."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,151 @@
+# =============================================================================
+# Bottlerocket "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-package-installation
+    trigger_words: ["install package", "yum install", "apt-get", "dnf install"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to standard Linux troubleshooting patterns and
+      suggest installing packages. Bottlerocket has no package manager.
+    actual_behavior: >
+      Bottlerocket is an immutable OS with no package manager. All
+      software is included in the AMI. Additional functionality
+      requires building a custom AMI or running software in
+      containers. The only way to add system-level components is
+      through custom Bottlerocket builds.
+    common_false_claim: "Install the missing package with yum install <package>."
+    correct_action: "Run required software in containers or build a custom Bottlerocket AMI with the needed components."
+
+  - id: P2-edit-config-files
+    trigger_words: ["edit config", "modify /etc", "vi /etc", "nano", "sed -i"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest editing configuration files directly. Bottlerocket
+      uses an API-driven settings model with a read-only root filesystem.
+    actual_behavior: >
+      The root filesystem is read-only and dm-verity protected.
+      Configuration is managed through the settings API using
+      `apiclient set`. Direct file edits are either impossible
+      (read-only paths) or will be overwritten on reboot. All
+      persistent configuration must go through the API.
+    common_false_claim: "Edit /etc/kubernetes/kubelet-config.json to change kubelet settings."
+    correct_action: "Use apiclient set kubernetes.node-labels.key=value or configure via user data TOML."
+
+  - id: P3-ssh-access
+    trigger_words: ["SSH into", "ssh root@", "ssh ec2-user@", "remote access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume standard Linux SSH access patterns. Bottlerocket
+      has no SSH daemon by default.
+    actual_behavior: >
+      Bottlerocket does not run an SSH daemon by default. Access
+      is through the control container (SSM Session Manager) or
+      the admin container (if enabled). The admin container
+      provides `sheltie` to enter the host namespace. SSH can
+      only be used if the admin container is enabled and an SSH
+      key is configured via user data.
+    common_false_claim: "SSH into the Bottlerocket instance to check logs."
+    correct_action: "Use SSM Session Manager via the control container, or enable the admin container first."
+
+  - id: P4-systemctl-journalctl
+    trigger_words: ["systemctl", "journalctl", "service restart", "systemd"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest standard systemd commands. While Bottlerocket
+      uses systemd, direct access requires the admin container.
+    actual_behavior: >
+      Bottlerocket uses systemd internally but direct systemctl
+      and journalctl access requires the admin container with
+      `sheltie`. From the control container, use `logdog` to
+      collect logs. Restarting services should be done through
+      the settings API or by rebooting the instance.
+    common_false_claim: "Run systemctl restart kubelet to fix the kubelet issue."
+    correct_action: "Use apiclient reboot to restart services, or enter admin container with sheltie for systemctl access."
+
+  - id: P5-bash-user-data
+    trigger_words: ["user data script", "#!/bin/bash", "cloud-init", "user-data.sh"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest bash user data scripts. Bottlerocket uses
+      TOML-formatted settings, not shell scripts.
+    actual_behavior: >
+      Bottlerocket user data must be in TOML format specifying
+      settings values. Shell scripts are silently ignored. There
+      is no cloud-init. Settings like cluster name, API endpoint,
+      and certificate authority are passed as TOML key-value pairs.
+    common_false_claim: "Add a bash script to user data to configure the instance."
+    correct_action: "Use TOML-formatted user data: [settings.kubernetes] cluster-name = 'my-cluster'."
+
+  - id: P6-wrong-ami-variant
+    trigger_words: ["Bottlerocket AMI", "launch instance", "AMI ID"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not distinguish between ECS and EKS AMI variants
+      or may suggest outdated AMI IDs.
+    actual_behavior: >
+      Bottlerocket has separate AMI variants: aws-k8s-1.x for
+      EKS (with Kubernetes version suffix), aws-ecs-1 and
+      aws-ecs-2 for ECS. GPU variants add -nvidia suffix.
+      AMI IDs are region-specific and change with each release.
+      Using SSM parameters is the correct way to find current AMIs.
+    common_false_claim: "Use AMI ID ami-0abc123 for Bottlerocket."
+    correct_action: "Query SSM parameter: aws ssm get-parameter --name /aws/service/bottlerocket/aws-k8s-1.30/x86_64/latest/image_id."
+
+  - id: P7-update-in-place
+    trigger_words: ["update OS", "upgrade", "patch", "update Bottlerocket"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest traditional OS update commands. Bottlerocket
+      uses its own update API with A/B partitions.
+    actual_behavior: >
+      Bottlerocket updates use the update API: `apiclient update
+      check`, `apiclient update apply`, then `apiclient reboot`.
+      Updates write to the inactive partition and reboot into it.
+      There is no yum update or apt upgrade. For managed node
+      groups, EKS handles updates through the node group update
+      process.
+    common_false_claim: "Run yum update to patch the Bottlerocket instance."
+    correct_action: "Use apiclient update check && apiclient update apply && apiclient reboot."
+
+  - id: P8-container-runtime-docker
+    trigger_words: ["docker", "docker ps", "docker logs", "docker restart"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Docker commands. Bottlerocket uses containerd
+      as its container runtime, not Docker.
+    actual_behavior: >
+      Bottlerocket uses containerd as the container runtime.
+      Docker CLI is not available. For container inspection,
+      use `ctr` (containerd CLI) from the admin container via
+      sheltie, or use the orchestrator's tools (kubectl, ecs-cli).
+    common_false_claim: "Run docker ps to see running containers."
+    correct_action: "Use ctr -n k8s.io containers list from admin container, or kubectl get pods for EKS workloads."
+
+remediation_hallucinations:
+
+  - id: R1-direct-filesystem-fix
+    trigger_words: ["fix filesystem", "mount -o remount", "chmod", "chown"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Suggesting direct filesystem modifications on Bottlerocket
+      can break dm-verity integrity checks and cause boot failures.
+    correct_approach: >
+      Use the settings API for configuration changes. For data
+      partition issues, use the admin container with sheltie.
+      For root filesystem corruption, replace the instance with
+      a new one from the correct AMI.
+
+  - id: R2-disable-selinux
+    trigger_words: ["disable SELinux", "setenforce 0", "SELINUX=permissive"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Disabling SELinux on Bottlerocket removes a critical security
+      layer and is not supported through normal means.
+    correct_approach: >
+      Investigate SELinux denials in audit logs. Adjust container
+      security contexts or use appropriate SELinux labels. If a
+      workload truly requires permissive mode, consider using a
+      different host OS.

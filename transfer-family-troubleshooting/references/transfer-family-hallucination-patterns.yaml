@@ -1,0 +1,143 @@
+# =============================================================================
+# Transfer Family "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-endpoint-type-confusion
+    trigger_words: ["endpoint type", "PUBLIC", "VPC", "VPC_ENDPOINT", "security group", "elastic IP"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate PUBLIC and VPC endpoint capabilities. PUBLIC endpoints
+      do not support security groups or Elastic IPs directly. VPC endpoints
+      have ENIs that support both.
+    actual_behavior: >
+      PUBLIC endpoints get an AWS-managed hostname with dynamic IPs. No
+      security groups, no Elastic IPs. VPC endpoints create ENIs in your
+      subnets — attach security groups to ENIs for IP whitelisting, attach
+      Elastic IPs for static public IPs. VPC_ENDPOINT (legacy) uses
+      PrivateLink and is only accessible from within the VPC.
+    common_false_claim: "Add a security group to your PUBLIC Transfer Family server to restrict access."
+    correct_action: "Use VPC endpoint type for security group support. For PUBLIC, use S3 bucket policies or session policies for IP restriction."
+
+  - id: P2-custom-idp-response-format
+    trigger_words: ["custom identity provider", "custom IdP", "Lambda authorizer", "API Gateway auth", "authentication Lambda"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs generate incorrect custom IdP response formats, omitting required
+      fields or using wrong field names. The response format is strict and
+      underdocumented in some guides.
+    actual_behavior: >
+      Custom IdP Lambda must return a JSON object with Role (IAM role ARN)
+      and HomeDirectory (S3 path or EFS path) as required fields. Optional
+      fields include Policy (session policy JSON string), PublicKeys (array
+      of SSH public keys for SFTP), HomeDirectoryType (LOGICAL or PATH),
+      and HomeDirectoryDetails (JSON string of logical mappings). Missing
+      Role or HomeDirectory causes authentication failure.
+    common_false_claim: "Return just the IAM role from your Lambda and Transfer Family will handle the rest."
+    correct_action: "Return Role, HomeDirectory, and optionally Policy, PublicKeys, HomeDirectoryType, and HomeDirectoryDetails."
+
+  - id: P3-efs-logical-mapping-support
+    trigger_words: ["EFS", "logical directory", "directory mapping", "EFS home directory"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs recommend logical directory mappings for EFS backends because
+      they work with S3. EFS does not support logical directory mappings.
+    actual_behavior: >
+      EFS backends only support physical home directories (HomeDirectoryType=PATH).
+      Logical directory mappings (HomeDirectoryType=LOGICAL) are only supported
+      with S3 backends. EFS uses POSIX file permissions and requires a
+      PosixProfile (Uid/Gid) on each user for access control.
+    common_false_claim: "Configure logical directory mappings to restrict EFS user access to specific paths."
+    correct_action: "Use physical home directories with POSIX permissions for EFS. Use logical mappings only with S3."
+
+  - id: P4-passive-ftp-ip-config
+    trigger_words: ["passive FTP", "PASV", "FTP data channel", "FTP behind NAT", "PassiveIp"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume passive FTP works automatically in all network topologies.
+      Behind NAT or NLB, the PASV response contains a private IP that
+      external clients cannot reach.
+    actual_behavior: >
+      Transfer Family FTP/FTPS uses passive mode. The PASV response includes
+      the server's IP for the data channel. Behind NAT/NLB, this is a private
+      IP. You must set PassiveIp in ProtocolDetails to the public-facing IP
+      (NLB or Elastic IP). Without this, the control connection works but
+      file transfers fail with timeout or connection refused on the data channel.
+    common_false_claim: "FTP passive mode works automatically with Transfer Family VPC endpoints."
+    correct_action: "Set PassiveIp in ProtocolDetails to the public-facing IP when using FTP/FTPS behind NAT or NLB."
+
+  - id: P5-auth-mode-mixing
+    trigger_words: ["authentication", "service managed", "custom IdP", "mixed auth", "SSH key and password"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest combining service-managed SSH keys with custom IdP
+      password authentication on the same server. Authentication modes
+      are mutually exclusive per server.
+    actual_behavior: >
+      A server uses either SERVICE_MANAGED (SSH keys stored in Transfer
+      Family) or a custom identity provider (Lambda/API Gateway). You
+      cannot have some users with service-managed keys and others with
+      custom IdP on the same server. To support both SSH keys and passwords,
+      use a custom IdP that returns PublicKeys in its response.
+    common_false_claim: "Use service-managed auth for SFTP users and custom IdP for FTPS users on the same server."
+    correct_action: "Choose one authentication mode per server. Use custom IdP with PublicKeys field to support both SSH keys and passwords."
+
+  - id: P6-host-key-migration
+    trigger_words: ["host key", "server migration", "host key mismatch", "fingerprint", "man-in-the-middle"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a new server without mentioning host key
+      migration. Clients cache the host key fingerprint and will reject
+      connections to a server with a different key.
+    actual_behavior: >
+      SFTP clients store the server's host key fingerprint in known_hosts.
+      A new server generates a new host key with a different fingerprint.
+      Clients will display a warning and may refuse to connect. You must
+      export the private host key from the old server (or use the original
+      key material) and import it to the new server using import-host-key.
+    common_false_claim: "Create a new Transfer Family server and update the DNS record to migrate."
+    correct_action: "Export the host key from the old server and import it to the new server before switching DNS."
+
+  - id: P7-session-policy-grants
+    trigger_words: ["session policy", "scope down", "ScopeDownPolicy", "restrict access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs describe session policies as granting permissions. They only
+      restrict — effective permissions are the intersection of the IAM
+      role and the session policy.
+    actual_behavior: >
+      Session policies (ScopeDownPolicy) act as a permissions boundary.
+      They cannot grant permissions beyond what the IAM role allows. The
+      effective permissions are the intersection of the IAM role policy
+      and the session policy. If the role allows s3:* but the session
+      policy only allows s3:GetObject, the user can only download.
+    common_false_claim: "Add s3:PutObject to the session policy to allow uploads."
+    correct_action: "Ensure BOTH the IAM role policy AND the session policy allow the required actions."
+
+  - id: P8-ftp-port-requirements
+    trigger_words: ["FTP port", "FTPS port", "port 21", "port 8192", "data channel port"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs only mention port 21 for FTP/FTPS and forget the passive data
+      channel ports 8192-8200. Without data ports, control connects but
+      file operations fail.
+    actual_behavior: >
+      SFTP uses only port 22. FTP and FTPS use port 21 for the control
+      channel and ports 8192-8200 for passive data channels. All required
+      ports must be open in security groups and NACLs. Opening only port 21
+      allows the FTP control connection but all file transfers (LIST, GET,
+      PUT) will fail because the data channel cannot be established.
+    common_false_claim: "Open port 21 in the security group for FTP access."
+    correct_action: "Open port 21 AND ports 8192-8200 for FTP/FTPS. Open only port 22 for SFTP."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,151 @@
+# =============================================================================
+# AWS IoT Core "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-iot-policy-vs-iam
+    trigger_words: ["IoT policy", "IAM policy", "device permission", "MQTT permission"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate IoT policies with IAM policies because both
+      control access. IoT policies are a completely separate system
+      attached to certificates, not IAM principals.
+    actual_behavior: >
+      IoT policies are attached to X.509 certificates or Cognito
+      identities. They use IoT-specific actions (iot:Connect,
+      iot:Publish, iot:Subscribe, iot:Receive) and IoT resource
+      ARNs (arn:aws:iot:region:account:topic/my-topic). IAM policies
+      control access to IoT management plane APIs only. A device
+      needs an IoT policy on its certificate, not an IAM policy.
+    common_false_claim: "Attach an IAM policy to the device to allow MQTT publishing."
+    correct_action: "Create an IoT policy and attach it to the device's certificate."
+
+  - id: P2-certificate-auto-active
+    trigger_words: ["certificate", "X.509", "device certificate", "TLS"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume certificates are automatically active and attached
+      after creation. Certificates must be explicitly activated and
+      attached to both a thing and a policy.
+    actual_behavior: >
+      New certificates can be created in ACTIVE or INACTIVE state.
+      A certificate must be: (1) in ACTIVE state, (2) attached to
+      a thing, and (3) attached to an IoT policy. Missing any of
+      these three requirements causes connection or authorization
+      failures. Use describe-certificate to check status and
+      list-thing-principals / list-attached-policies to check
+      attachments.
+    common_false_claim: "Create a certificate and the device can connect immediately."
+    correct_action: "Create certificate, activate it, attach to thing, and attach IoT policy."
+
+  - id: P3-mqtt-qos2
+    trigger_words: ["QoS", "quality of service", "exactly once", "message delivery"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest QoS 2 (exactly once delivery) is available in
+      AWS IoT Core. Only QoS 0 and QoS 1 are supported.
+    actual_behavior: >
+      AWS IoT Core supports QoS 0 (at most once, fire and forget)
+      and QoS 1 (at least once, acknowledged). QoS 2 (exactly once)
+      is NOT supported. Attempting QoS 2 will result in a connection
+      error or downgrade. For exactly-once semantics, implement
+      deduplication in the application layer using message IDs.
+    common_false_claim: "Use QoS 2 for guaranteed exactly-once delivery."
+    correct_action: "Use QoS 1 for reliable delivery. Implement application-level deduplication if needed."
+
+  - id: P4-rule-sql-standard
+    trigger_words: ["rule SQL", "topic rule", "SELECT FROM", "rule query"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs write standard SQL for IoT rules. IoT rule SQL has
+      specific syntax and functions that differ from standard SQL.
+    actual_behavior: >
+      IoT rule SQL uses SELECT/FROM/WHERE but FROM specifies an
+      MQTT topic filter (not a table). Functions like topic(),
+      topic(n), timestamp(), encode(), decode() are IoT-specific.
+      Nested JSON is accessed with dot notation. The * in SELECT *
+      returns the entire message payload. Errors in SQL cause
+      silent failures — the rule simply doesn't trigger.
+    common_false_claim: "SELECT * FROM sensor_data WHERE temperature > 30"
+    correct_action: "SELECT * FROM 'sensor/+/data' WHERE temperature > 30 (note: topic in quotes)"
+
+  - id: P5-shadow-unlimited-size
+    trigger_words: ["device shadow", "shadow document", "shadow state", "desired reported"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest storing large amounts of data in device shadows.
+      Classic shadows have an 8 KB size limit.
+    actual_behavior: >
+      Classic (unnamed) device shadows have a maximum document size
+      of 8 KB. Named shadows also have an 8 KB limit per shadow
+      but allow multiple shadows per thing. Shadow updates are
+      charged per update. Shadows are designed for device state
+      synchronization, not bulk data storage. Use S3 or DynamoDB
+      for large data. Shadow metadata (timestamps, versions) counts
+      toward the size limit.
+    common_false_claim: "Store the device configuration in the shadow document."
+    correct_action: "Use shadows for small state data only (8 KB limit). Use S3/DynamoDB for larger data."
+
+  - id: P6-fleet-indexing-default
+    trigger_words: ["fleet indexing", "search things", "query devices", "dynamic group"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume fleet indexing is enabled by default and queries
+      work immediately. Fleet indexing must be explicitly enabled
+      and has eventual consistency.
+    actual_behavior: >
+      Fleet indexing is disabled by default. It must be enabled
+      via update-indexing-configuration. Options include thing
+      indexing, thing group indexing, and thing connectivity
+      indexing. Dynamic thing groups require fleet indexing.
+      Index updates are eventually consistent — changes may take
+      seconds to minutes to appear in queries. Indexing has
+      additional costs based on the number of things indexed.
+    common_false_claim: "Query your devices using fleet indexing to find offline things."
+    correct_action: "Enable fleet indexing first, then query. Allow for eventual consistency in results."
+
+  - id: P7-custom-auth-unlimited-timeout
+    trigger_words: ["custom authorizer", "Lambda authorizer", "token auth", "device auth"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest complex authorization logic in custom authorizers
+      without considering the 5-second Lambda timeout limit.
+    actual_behavior: >
+      Custom authorizer Lambda functions have a strict 5-second
+      timeout. The function must return a valid response within
+      this time. The response must include isAuthenticated,
+      principalId, and policyDocuments. Caching (up to 24 hours)
+      reduces Lambda invocations. Token signing is optional but
+      recommended for security. Invalid or timeout responses
+      reject the connection.
+    common_false_claim: "Implement complex database lookups in the custom authorizer."
+    correct_action: "Keep authorizer logic fast (<5s). Use caching. Pre-compute authorization decisions."
+
+  - id: P8-persistent-session-unlimited
+    trigger_words: ["persistent session", "offline messages", "clean session", "stored messages"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest persistent sessions store messages indefinitely.
+      Messages are stored for a limited time (default 1 hour).
+    actual_behavior: >
+      Persistent sessions (cleanSession=false) store QoS 1
+      subscriptions and queue messages while the device is offline.
+      Default message storage is 1 hour (configurable up to 24
+      hours). There are per-account limits on stored messages.
+      The client ID must be consistent across connections. If the
+      storage limit is exceeded, oldest messages are dropped.
+      Persistent sessions consume additional resources.
+    common_false_claim: "Use persistent sessions to store messages for days while the device is offline."
+    correct_action: "Persistent sessions store messages for up to 24 hours. Use SQS/DynamoDB for longer retention."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

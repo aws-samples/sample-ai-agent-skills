@@ -1,0 +1,169 @@
+# =============================================================================
+# OpenSearch Service "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-cluster-health-color-meaning
+    trigger_words: ["RED cluster", "cluster down", "cluster health", "YELLOW cluster", "cluster unavailable"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs equate RED cluster health with a complete outage. RED only
+      means at least one primary shard is unassigned — the rest of the
+      cluster continues to function normally for indices with assigned
+      primaries.
+    actual_behavior: >
+      RED means at least one primary shard is unassigned, making that
+      specific index partially or fully unavailable. Other indices
+      continue to serve reads and writes normally. YELLOW means all
+      primaries are assigned but at least one replica is not. Single-node
+      clusters are always YELLOW because replicas cannot be on the same
+      node as the primary. GREEN means all primary and replica shards
+      are assigned.
+    common_false_claim: "Your cluster is RED so it's completely down and no queries will work."
+    correct_action: "Check _cat/shards to identify which index has unassigned primaries. Other indices remain functional."
+
+  - id: P2-jvm-heap-sizing
+    trigger_words: ["JVM heap", "heap size", "JVM memory", "heap memory", "32 GB heap"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest increasing JVM heap beyond 32 GB or manually
+      configuring heap size. In managed OpenSearch Service, heap is
+      automatically set and cannot be changed directly.
+    actual_behavior: >
+      OpenSearch Service automatically sets JVM heap to half the instance
+      RAM, capped at approximately 32 GB due to the compressed ordinary
+      object pointers (compressed oops) threshold. Exceeding 32 GB heap
+      disables compressed oops, actually reducing effective memory. You
+      cannot manually set heap size in managed OpenSearch — you must
+      choose an appropriate instance type. To get more heap, scale to a
+      larger instance type or add more nodes.
+    common_false_claim: "Set your JVM heap to 64 GB for better performance on large clusters."
+    correct_action: "Choose an instance type with appropriate RAM. Heap is auto-configured. Never exceed 32 GB effective heap."
+
+  - id: P3-shard-count-recommendations
+    trigger_words: ["shard count", "number of shards", "primary shards", "shard size", "too many shards"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs often recommend arbitrary shard counts without considering
+      data volume, node count, or the per-shard overhead. They may
+      suggest very high shard counts for small datasets or too few
+      for large ones.
+    actual_behavior: >
+      AWS recommends 10-50 GB per shard for optimal performance. Each
+      shard consumes approximately 25 MB of heap memory plus file
+      handles and cluster state overhead. Max recommended shards per
+      node is 1000. Total shards = primary_shards × (1 + replicas).
+      For a 100 GB index with 1 replica, 4-10 primary shards is
+      appropriate (giving 10-25 GB per shard, 8-20 total shards).
+      The default of 1 primary shard (OpenSearch 2.x+) is fine for
+      small indices.
+    common_false_claim: "Always set 5 primary shards for every index regardless of size."
+    correct_action: "Calculate shard count based on expected index size. Aim for 10-50 GB per shard."
+
+  - id: P4-dedicated-master-requirements
+    trigger_words: ["dedicated master", "master node", "master eligible", "split brain", "cluster stability"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest even numbers of master nodes, recommend skipping
+      dedicated masters for production, or confuse master-eligible data
+      nodes with dedicated master nodes.
+    actual_behavior: >
+      Dedicated master nodes manage cluster state and do not hold data
+      or serve search requests. AWS strongly recommends 3 dedicated
+      master nodes for production (5 for very large clusters). The
+      number must be odd to prevent split brain during network
+      partitions. Dedicated masters should be sized based on cluster
+      state (number of nodes, indices, shards) not data volume.
+      c6g.large.search or m6g.large.search is sufficient for most
+      clusters. Without dedicated masters, data nodes handle master
+      duties and can become unstable under load.
+    common_false_claim: "Use 2 dedicated master nodes to save costs on smaller clusters."
+    correct_action: "Always use 3 (or 5) dedicated master nodes for production. Never use even numbers."
+
+  - id: P5-storage-watermark-behavior
+    trigger_words: ["disk watermark", "storage full", "read only", "flood stage", "write blocked"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may get the watermark percentages wrong, claim writes
+      resume automatically after freeing space, or confuse the
+      watermark levels and their effects.
+    actual_behavior: >
+      OpenSearch has three disk watermarks: low (85%) prevents new
+      shard allocation, high (90%) relocates shards away, flood stage
+      (95%) sets indices to read-only with index.blocks.read_only_allow_delete.
+      After freeing disk space below the flood stage threshold, you
+      must MANUALLY remove the read-only block using:
+      PUT _all/_settings {"index.blocks.read_only_allow_delete": null}.
+      Writes do NOT resume automatically. These percentages are defaults
+      and can be viewed in _cluster/settings.
+    common_false_claim: "Once you free disk space, writes will automatically resume."
+    correct_action: "Free disk space AND manually remove the read_only_allow_delete block to restore writes."
+
+  - id: P6-ultrawarm-write-capability
+    trigger_words: ["UltraWarm", "warm storage", "cold storage", "warm tier", "write to warm"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest indexing data directly into UltraWarm or cold
+      storage to save costs. These tiers are strictly read-only and
+      do not accept writes.
+    actual_behavior: >
+      UltraWarm and cold storage are read-only tiers for historical
+      data. Data must first be indexed into hot storage, then migrated
+      to warm using ISM policies or the _ultrawarm/migration API.
+      Warm indices support searches but not writes (no indexing,
+      updates, or deletes). Cold indices must be migrated back to
+      warm before they can be searched. Cold storage is the cheapest
+      tier but has the highest access latency.
+    common_false_claim: "Index directly into UltraWarm to reduce storage costs."
+    correct_action: "Index into hot storage first, then migrate to warm/cold using ISM or migration API."
+
+  - id: P7-vpc-domain-public-access
+    trigger_words: ["VPC domain", "public endpoint", "public access", "VPC OpenSearch", "internet access"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest accessing VPC domains from the public internet
+      or claim VPC domains have both public and private endpoints.
+      VPC domains have no public endpoint whatsoever.
+    actual_behavior: >
+      OpenSearch domains deployed in a VPC have NO public endpoint.
+      They are only accessible from within the VPC or via VPN, VPC
+      peering, Transit Gateway, or a reverse proxy (e.g., Nginx on
+      EC2). The access type (VPC or public) cannot be changed after
+      domain creation — you must create a new domain and migrate.
+      Security groups control inbound access to VPC domains. IP-based
+      conditions in access policies do not work for VPC domains.
+    common_false_claim: "Access your VPC domain using its public endpoint with IP restrictions."
+    correct_action: "Use VPN, VPC peering, bastion host, or reverse proxy to access VPC domains. No public endpoint exists."
+
+  - id: P8-serverless-vs-managed-differences
+    trigger_words: ["OpenSearch Serverless", "serverless collection", "OCU", "serverless scaling", "serverless vs managed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate managed OpenSearch domains with Serverless
+      collections, applying domain concepts (shards, JVM, nodes,
+      instance types) to Serverless which has a completely different
+      architecture.
+    actual_behavior: >
+      OpenSearch Serverless uses collections (not domains), OCUs
+      (OpenSearch Compute Units) for capacity, and manages
+      infrastructure automatically. There are no instance types,
+      no JVM settings, no shard management, and no node counts to
+      configure. Serverless has three collection types: search,
+      time series, and vector search. Security uses data access
+      policies, network policies, and encryption policies instead
+      of domain access policies. ISM, UltraWarm, cross-cluster
+      search, custom plugins, and SQL are not available in Serverless.
+    common_false_claim: "Increase the number of shards in your Serverless collection for better performance."
+    correct_action: "Serverless manages shards automatically. Adjust OCU limits or collection type for performance tuning."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

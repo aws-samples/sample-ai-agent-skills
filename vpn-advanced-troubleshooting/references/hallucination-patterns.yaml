@@ -1,0 +1,161 @@
+# =============================================================================
+# AWS Site-to-Site VPN Advanced "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-accelerated-vpn-vgw
+    trigger_words: ["accelerated VPN", "Global Accelerator VPN", "VPN acceleration"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling accelerated VPN on any VPN connection.
+      Accelerated VPN is only supported with transit gateway-based
+      VPN connections, not virtual private gateway connections.
+    actual_behavior: >
+      Accelerated VPN uses AWS Global Accelerator to route VPN
+      traffic through the AWS global network for improved
+      performance. It can ONLY be enabled on VPN connections
+      attached to a transit gateway. VGW-based VPN connections
+      do not support acceleration. Acceleration must be enabled
+      at VPN connection creation time — it cannot be added later.
+    common_false_claim: "Enable acceleration on your existing VGW-based VPN connection."
+    correct_action: "Create a new TGW-based VPN connection with acceleration enabled. Migrate from VGW to TGW if needed."
+
+  - id: P2-ecmp-single-connection
+    trigger_words: ["ECMP", "equal-cost multi-path", "load balance VPN"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest ECMP works with a single VPN connection's two
+      tunnels. ECMP requires multiple VPN connections to a TGW.
+    actual_behavior: >
+      ECMP distributes traffic across multiple VPN connections
+      attached to a transit gateway. A single VPN connection has
+      two tunnels for redundancy (active/passive or active/active
+      depending on routing), but this is NOT ECMP. True ECMP
+      requires multiple VPN connections and must be enabled on
+      the transit gateway.
+    common_false_claim: "Enable ECMP on your VPN connection to use both tunnels for load balancing."
+    correct_action: "Create multiple VPN connections to the TGW and enable ECMP on the TGW. Verify BGP is used for dynamic routing."
+
+  - id: P3-public-cert-vpn-auth
+    trigger_words: ["certificate VPN", "VPN certificate auth", "ACM VPN"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using public ACM certificates for VPN
+      authentication. Only ACM Private CA certificates work.
+    actual_behavior: >
+      VPN certificate-based authentication requires certificates
+      issued by AWS Certificate Manager Private Certificate
+      Authority (ACM PCA). Public ACM certificates (used for
+      HTTPS) CANNOT be used for VPN authentication. The PCA
+      must be in the same region as the VPN connection.
+    common_false_claim: "Request a public ACM certificate for your VPN authentication."
+    correct_action: "Create an ACM Private CA, issue a certificate from it, and use that for VPN authentication."
+
+  - id: P4-private-ip-vpn-internet
+    trigger_words: ["private IP VPN", "private VPN", "VPN over DX"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest private IP VPN works over the public internet.
+      Private IP VPN requires AWS Direct Connect.
+    actual_behavior: >
+      Private IP VPN connections use private IP addresses and
+      run exclusively over AWS Direct Connect. They require a
+      transit gateway with a Direct Connect gateway association.
+      Private IP VPN does NOT work over the public internet.
+      The DX connection must be active and the DX gateway must
+      be associated with the TGW.
+    common_false_claim: "Create a private IP VPN connection over the internet for better security."
+    correct_action: "Ensure Direct Connect is active with a DX gateway associated to the TGW, then create a private IP VPN."
+
+  - id: P5-vpn-logs-all-events
+    trigger_words: ["VPN logs", "VPN logging", "tunnel logs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest VPN logs capture all tunnel events including
+      data plane issues. Logs only capture control plane events.
+    actual_behavior: >
+      VPN connection logs capture IKE negotiation events, DPD
+      events, and tunnel state changes. They do NOT capture
+      data plane events like packet loss, latency, or throughput
+      issues. Log delivery has a delay of up to 5 minutes.
+      For data plane monitoring, use CloudWatch VPN metrics.
+    common_false_claim: "Check VPN logs to diagnose packet loss or latency issues."
+    correct_action: "Use CloudWatch VPN metrics (TunnelDataIn/Out, TunnelState) for data plane issues. Use VPN logs for IKE/DPD issues."
+
+  - id: P6-tunnel-throughput-unlimited
+    trigger_words: ["VPN throughput", "VPN bandwidth", "VPN speed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention the per-tunnel throughput limit or
+      suggest VPN can handle unlimited bandwidth.
+    actual_behavior: >
+      Each VPN tunnel has a maximum throughput of 1.25 Gbps.
+      This is per-tunnel, not per-connection. A single VPN
+      connection with two active tunnels can achieve up to
+      2.5 Gbps with ECMP. Exceeding the limit causes packet
+      drops, not throttling errors. For higher throughput,
+      use multiple VPN connections with ECMP.
+    common_false_claim: "A VPN connection can handle up to 10 Gbps of traffic."
+    correct_action: "Plan for 1.25 Gbps per tunnel. Use multiple VPN connections with ECMP for higher aggregate throughput."
+
+  - id: P7-bgp-instant-convergence
+    trigger_words: ["BGP convergence", "route propagation", "BGP failover"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest BGP route changes propagate instantly.
+      BGP convergence takes time and dampening adds delay.
+    actual_behavior: >
+      BGP route propagation from on-premises to AWS can take
+      up to 60 seconds under normal conditions. Route flapping
+      triggers BGP dampening on the AWS side, which suppresses
+      routes for increasing periods (up to 60 minutes). Frequent
+      tunnel flapping causes dampening that delays convergence
+      even after the tunnel stabilizes.
+    common_false_claim: "BGP will instantly failover to the backup tunnel when the primary goes down."
+    correct_action: "Allow up to 60 seconds for BGP convergence. Check for dampened routes if convergence is slow."
+
+  - id: P8-dpd-universal-settings
+    trigger_words: ["DPD", "dead peer detection", "keepalive"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest universal DPD settings that work for all
+      customer gateways. DPD settings must match both sides.
+    actual_behavior: >
+      Dead Peer Detection (DPD) settings must be compatible
+      between AWS and the customer gateway. AWS sends DPD
+      probes and expects responses within the timeout period.
+      If the customer gateway has a shorter DPD timeout than
+      AWS, it may declare the tunnel dead prematurely. DPD
+      action (restart, clear, none) also varies by vendor.
+    common_false_claim: "Set DPD timeout to 30 seconds on both sides for optimal performance."
+    correct_action: "Match DPD settings to the customer gateway vendor recommendations. Ensure AWS DPD timeout is compatible."
+
+remediation_hallucinations:
+
+  - id: R1-modify-vpn-acceleration
+    trigger_words: ["enable acceleration", "add acceleration", "modify VPN acceleration"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Acceleration cannot be added to an existing VPN connection.
+      Suggesting modification wastes time and may lead to
+      unnecessary VPN recreation causing outage.
+    correct_approach: >
+      Acceleration must be specified at VPN connection creation
+      time. To add acceleration, create a new VPN connection
+      with EnableAcceleration=true, configure the customer
+      gateway, verify connectivity, then decommission the old
+      connection during a maintenance window.
+
+  - id: R2-restart-both-tunnels
+    trigger_words: ["restart tunnels", "reset VPN", "bounce tunnels"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Restarting both tunnels simultaneously causes a complete
+      VPN outage. AWS may perform maintenance on one tunnel
+      at a time, but both should never be restarted together.
+    correct_approach: >
+      If tunnel restart is needed, restart one tunnel at a time.
+      Verify the other tunnel is UP and carrying traffic before
+      restarting the second. Use the customer gateway to initiate
+      tunnel restart, not AWS-side changes.

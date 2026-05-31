@@ -1,0 +1,144 @@
+# =============================================================================
+# AWS Network Firewall "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-intercept
+    trigger_words: ["firewall intercept", "automatic inspection", "traffic capture", "inline firewall"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume Network Firewall automatically intercepts VPC traffic
+      like a traditional inline firewall. It requires explicit routing.
+    actual_behavior: >
+      Network Firewall creates endpoints (GWLBe) in specified subnets.
+      Traffic must be EXPLICITLY routed to these endpoints via VPC
+      route tables. Without route table entries pointing to the firewall
+      endpoint, traffic bypasses the firewall entirely. This is the
+      most common misconfiguration. Check route tables for routes
+      with target type "Gateway Load Balancer Endpoint."
+    common_false_claim: "Deploy the firewall and it will automatically inspect all VPC traffic."
+    correct_action: "Configure route tables to send traffic to firewall endpoints. Routing is required."
+
+  - id: P2-stateful-before-stateless
+    trigger_words: ["rule evaluation", "rule order", "stateless stateful", "processing order"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs sometimes reverse the evaluation order, claiming stateful
+      rules run before stateless. The actual order is stateless first.
+    actual_behavior: >
+      Evaluation order: (1) Stateless rules evaluate each packet
+      individually. (2) Packets with "forward to stateful" action
+      go to the stateful engine. (3) Stateful rules evaluate flows
+      with connection tracking. If a stateless rule drops or passes
+      a packet, stateful rules NEVER see it. This order cannot be
+      changed.
+    common_false_claim: "Stateful rules are evaluated first for connection tracking."
+    correct_action: "Stateless rules evaluate first. Use 'forward to stateful' action to send packets to stateful engine."
+
+  - id: P3-workloads-in-firewall-subnet
+    trigger_words: ["firewall subnet", "subnet placement", "firewall deployment", "endpoint subnet"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest placing workloads in the same subnet as firewall
+      endpoints for simplicity. This creates routing loops.
+    actual_behavior: >
+      Firewall subnets must be DEDICATED — containing only firewall
+      endpoints. Placing workloads in firewall subnets creates routing
+      loops because the subnet's route table sends traffic to the
+      firewall endpoint in the same subnet. Use separate subnets:
+      firewall subnets for endpoints, workload subnets for instances.
+      Route workload subnet traffic to firewall endpoints.
+    common_false_claim: "Deploy your instances in the firewall subnet for direct inspection."
+    correct_action: "Use dedicated firewall subnets. Place workloads in separate subnets with routes to firewall endpoints."
+
+  - id: P4-asymmetric-routing-ok
+    trigger_words: ["asymmetric routing", "multi-AZ", "cross-AZ", "return traffic"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overlook asymmetric routing issues, especially in multi-AZ
+      designs. Asymmetric routing breaks stateful inspection.
+    actual_behavior: >
+      Stateful rules track connections bidirectionally. If request
+      traffic goes through firewall endpoint in AZ-a but response
+      traffic goes through AZ-b (or bypasses the firewall), the
+      stateful engine drops the traffic as it cannot match the
+      connection state. Design route tables to ensure BOTH directions
+      of every flow traverse the SAME firewall endpoint.
+    common_false_claim: "Route all traffic to a single firewall endpoint for simplicity."
+    correct_action: "Create per-AZ firewall endpoints and route tables. Ensure symmetric routing through the same endpoint."
+
+  - id: P5-rule-capacity-expandable
+    trigger_words: ["rule capacity", "add more rules", "capacity limit", "rule group size"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest increasing rule group capacity after creation.
+      Capacity is fixed at creation time.
+    actual_behavior: >
+      Rule group capacity (measured in rule units) is set when
+      creating the rule group and CANNOT be increased afterward.
+      If you need more capacity, create a new rule group with
+      larger capacity and migrate rules. Plan capacity with room
+      for growth. A single Suricata rule typically uses 1 capacity
+      unit. Domain list rules use 1 unit per domain.
+    common_false_claim: "Increase the rule group capacity to add more rules."
+    correct_action: "Create a new rule group with larger capacity. Migrate rules. Capacity cannot be changed after creation."
+
+  - id: P6-tls-transparent
+    trigger_words: ["TLS inspection", "HTTPS inspection", "decrypt traffic", "SSL inspection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest TLS inspection works transparently without
+      client-side changes. Clients must trust the CA certificate.
+    actual_behavior: >
+      TLS inspection uses a CA certificate to generate new server
+      certificates on-the-fly. Clients see certificates signed by
+      YOUR CA, not the original server's CA. Clients must trust
+      your CA certificate in their trust store. Without this,
+      browsers show certificate warnings and applications may fail.
+      TLS inspection also adds latency and reduces throughput.
+    common_false_claim: "Enable TLS inspection for transparent HTTPS traffic analysis."
+    correct_action: "Deploy CA certificate to client trust stores. Plan for latency impact. Not all TLS versions supported."
+
+  - id: P7-logging-default-on
+    trigger_words: ["firewall logs", "alert logs", "flow logs", "traffic logs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume logging is enabled by default because it's
+      essential for security monitoring.
+    actual_behavior: >
+      Network Firewall does NOT log by default. Both alert logs
+      and flow logs must be explicitly enabled via the logging
+      configuration API. Alert logs capture stateful rule matches
+      (alert/drop). Flow logs capture all traffic flows. Without
+      logging, you cannot see what the firewall is doing. Enable
+      logging immediately after firewall creation.
+    common_false_claim: "Check the firewall logs for dropped packets."
+    correct_action: "Enable logging first: aws network-firewall update-logging-configuration. Then check logs."
+
+  - id: P8-shared-rule-group-impact
+    trigger_words: ["rule group", "shared rules", "modify rules", "update rule group"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying rule groups without considering that
+      changes affect all firewalls referencing the rule group.
+    actual_behavior: >
+      Rule groups can be referenced by multiple firewall policies,
+      and policies can be used by multiple firewalls. Modifying a
+      rule group immediately affects ALL firewalls that reference
+      it through their policies. There is no versioning or staged
+      rollout. Test rule changes carefully. Consider creating a
+      new rule group for testing before modifying shared ones.
+    common_false_claim: "Update the rule group — it only affects this firewall."
+    correct_action: "Check which policies/firewalls reference the rule group before modifying. Changes affect all references."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

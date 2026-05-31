@@ -1,0 +1,132 @@
+# =============================================================================
+# AWS SSM Change Manager "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-majority-approval
+    trigger_words: ["approval", "approve", "approver", "approval workflow"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest majority approval is sufficient. ALL approvers
+      at each level must approve.
+    actual_behavior: >
+      Change Manager requires ALL approvers at each approval level
+      to approve before advancing. There is no majority-vote
+      mechanism. A single rejection at any level rejects the
+      entire change request. This is by design for change control.
+    common_false_claim: "A majority of approvers can approve the change request."
+    correct_action: "Ensure all designated approvers at each level approve. A single rejection blocks the change."
+
+  - id: P2-auto-rollback
+    trigger_words: ["rollback", "automatic rollback", "undo change", "revert"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Change Manager automatically rolls back failed
+      changes. Rollback must be built into the runbook.
+    actual_behavior: >
+      Change Manager does NOT automatically roll back changes when
+      runbook execution fails. The automation runbook must include
+      explicit rollback steps and error handling. If the runbook
+      fails without rollback logic, the partial change remains.
+    common_false_claim: "If the change fails, Change Manager automatically rolls it back."
+    correct_action: "Include rollback steps in the automation runbook. Use try/catch patterns in SSM documents."
+
+  - id: P3-scheduled-auto-execute
+    trigger_words: ["schedule", "scheduled change", "maintenance window", "auto-execute"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest scheduled changes execute automatically at the
+      scheduled time. They only execute if fully approved.
+    actual_behavior: >
+      Scheduled changes execute at the specified time ONLY if all
+      required approvals are complete. Unapproved scheduled changes
+      do not execute. Additionally, Change Calendar restrictions
+      can block execution even for approved changes.
+    common_false_claim: "Schedule the change and it will run automatically at the specified time."
+    correct_action: "Ensure all approvals are complete before the scheduled time. Check Change Calendar for restrictions."
+
+  - id: P4-template-instant-use
+    trigger_words: ["change template", "create template", "use template"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest templates can be used immediately after creation.
+      Templates must be approved first.
+    actual_behavior: >
+      Change templates go through their own approval process.
+      A newly created template is in PENDING status and cannot
+      be used to create change requests until approved. Template
+      approval is separate from change request approval.
+    common_false_claim: "Create a change template and start using it immediately."
+    correct_action: "Create the template, wait for template approval, then use it for change requests."
+
+  - id: P5-standalone-service
+    trigger_words: ["Change Manager setup", "enable Change Manager", "configure"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat Change Manager as standalone. It depends on
+      OpsCenter, SNS, and optionally Organizations.
+    actual_behavior: >
+      Change Manager requires OpsCenter to be enabled (change
+      requests are OpsItems). It needs SNS topics for approval
+      notifications. For multi-account use, it requires
+      Organizations. Change Calendar integration is optional
+      but recommended.
+    common_false_claim: "Just enable Change Manager and start creating changes."
+    correct_action: "Enable OpsCenter, configure SNS topics, set up approver IAM, then configure Change Manager."
+
+  - id: P6-emergency-bypass
+    trigger_words: ["emergency change", "bypass approval", "skip approval", "urgent"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest emergency changes bypass all controls. Emergency
+      changes still require specific permissions and are audited.
+    actual_behavior: >
+      Emergency change templates can be configured with reduced
+      approval requirements, but they still go through the
+      defined workflow. They can bypass Change Calendar
+      restrictions if configured. All emergency changes are
+      logged in CloudTrail for audit purposes.
+    common_false_claim: "Use emergency change to bypass all approvals and calendars."
+    correct_action: "Configure emergency templates with appropriate (reduced) approval requirements. All actions are audited."
+
+  - id: P7-cross-account-automatic
+    trigger_words: ["multi-account", "cross-account", "organization-wide"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cross-account changes work automatically.
+      They require Organizations setup and delegated admin.
+    actual_behavior: >
+      Multi-account Change Manager requires AWS Organizations
+      with all features enabled. The management account or
+      delegated administrator must configure organization-wide
+      settings. Cross-account runbook execution requires
+      appropriate IAM roles in target accounts.
+    common_false_claim: "Change Manager automatically works across all accounts in your organization."
+    correct_action: "Configure Organizations integration, set up delegated admin, and create cross-account IAM roles."
+
+  - id: P8-change-calendar-optional
+    trigger_words: ["change calendar", "change freeze", "maintenance window"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not explain that Change Calendar blocks ALL changes
+      during restricted periods, not just specific types.
+    actual_behavior: >
+      Change Calendar, when configured, blocks ALL change request
+      executions during restricted (closed) periods. There is no
+      per-template or per-type calendar restriction. Only emergency
+      changes configured to bypass the calendar can execute during
+      restricted periods.
+    common_false_claim: "Change Calendar only blocks non-critical changes."
+    correct_action: "Change Calendar blocks all changes during closed periods. Configure emergency templates for critical changes."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

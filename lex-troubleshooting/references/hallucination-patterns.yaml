@@ -1,0 +1,123 @@
+# =============================================================================
+# Amazon Lex "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-changes-live-immediately
+    trigger_words: ["add intent", "add utterance", "update bot", "modify slot"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume changes to intents/slots/utterances take effect immediately.
+      A bot build is required after every change.
+    actual_behavior: >
+      Changes to intents, slots, utterances, or slot types only take effect
+      after a successful bot locale build. The build trains the NLU model.
+      Without building, the bot continues using the previous model.
+    common_false_claim: "Add the utterance and the bot will recognize it immediately."
+    correct_action: "Make changes, then build the bot locale. Wait for build to complete before testing."
+
+  - id: P2-v1-v2-interchangeable
+    trigger_words: ["lex bot", "bot name", "lex API", "lex migration"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs mix V1 and V2 API concepts. They use bot names (V1) with
+      V2 APIs or vice versa.
+    actual_behavior: >
+      V2 uses bot-id (UUID) and bot-alias-id (UUID). V1 uses bot-name
+      (string) and alias-name (string). APIs are completely separate.
+      V2 is recommended. V1 is maintenance mode only.
+    common_false_claim: "Use aws lex-models get-bot --name MyBot to check your V2 bot."
+    correct_action: "Use lexv2-models for V2 bots, lex-models for V1 bots. Don't mix."
+
+  - id: P3-unlimited-lambda-timeout
+    trigger_words: ["Lambda fulfillment", "fulfillment function", "code hook"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Lambda functions can run as long as needed for fulfillment.
+      Lex enforces a 30-second timeout.
+    actual_behavior: >
+      Lex enforces a 30-second timeout for Lambda fulfillment and code hooks,
+      regardless of the Lambda function's own timeout setting. Operations
+      exceeding 30 seconds must be handled asynchronously.
+    common_false_claim: "Set your Lambda timeout to 5 minutes for complex fulfillment."
+    correct_action: "Keep fulfillment under 30 seconds. Use async patterns for longer operations."
+
+  - id: P4-all-slot-types-universal
+    trigger_words: ["slot type", "built-in slot", "AMAZON.Date", "AMAZON.Number"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume all built-in slot types work in all locales.
+      Slot type availability varies by locale.
+    actual_behavior: >
+      Built-in slot types vary by locale. Not all AMAZON.* types are
+      available in all languages. Custom slot types must be created
+      per locale. Slot values are language-specific.
+    common_false_claim: "Use AMAZON.PhoneNumber in any locale."
+    correct_action: "Check built-in slot type availability for your specific locale."
+
+  - id: P5-draft-for-production
+    trigger_words: ["bot alias", "deploy bot", "production bot"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using DRAFT version for production traffic.
+      DRAFT is mutable and for testing only.
+    actual_behavior: >
+      DRAFT version is mutable and changes with every edit. Production
+      should use numbered versions via aliases. TestBotAlias always
+      points to DRAFT. Create a version and alias for production.
+    common_false_claim: "Point your application to the DRAFT version."
+    correct_action: "Build locale, create version, create/update alias pointing to version."
+
+  - id: P6-no-fallback-needed
+    trigger_words: ["unrecognized", "fallback", "no match", "unknown intent"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention FallbackIntent as a requirement.
+      Without it, unrecognized utterances cause errors.
+    actual_behavior: >
+      FallbackIntent catches utterances that don't match any intent
+      above the confidence threshold. Without it, unrecognized input
+      returns errors. FallbackIntent can trigger Lambda for custom
+      handling or return a closing message.
+    common_false_claim: "Lex automatically handles unrecognized utterances gracefully."
+    correct_action: "Configure FallbackIntent with appropriate response or fulfillment."
+
+  - id: P7-logs-automatic
+    trigger_words: ["conversation logs", "lex logs", "bot logging"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest conversation logs are enabled by default.
+      Logs require explicit IAM role configuration.
+    actual_behavior: >
+      Conversation logs must be explicitly enabled on the bot alias.
+      Text logs go to CloudWatch Logs, audio logs go to S3. An IAM
+      role with appropriate permissions is required. Missing permissions
+      cause silent log loss.
+    common_false_claim: "Check CloudWatch Logs for your bot conversations."
+    correct_action: "Enable conversation logs on alias. Configure IAM role with CW Logs/S3 permissions."
+
+  - id: P8-session-stateless
+    trigger_words: ["session", "conversation state", "slot values", "context"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat each Lex turn as stateless. Sessions maintain
+      state across turns.
+    actual_behavior: >
+      Lex sessions persist slot values, session attributes, and dialog
+      state across turns. Session TTL defaults to 5 minutes idle.
+      Stale sessions can carry over unexpected state. Sessions must
+      be explicitly managed for complex flows.
+    common_false_claim: "Each API call to Lex is independent."
+    correct_action: "Use consistent session IDs. Manage session attributes. Clear state when needed."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

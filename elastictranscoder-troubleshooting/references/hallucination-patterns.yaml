@@ -1,0 +1,146 @@
+# =============================================================================
+# Amazon Elastic Transcoder "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-mediaconvert-confusion
+    trigger_words: ["Elastic Transcoder", "MediaConvert", "transcode", "encoding"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse Elastic Transcoder with AWS Elemental MediaConvert.
+      They suggest MediaConvert APIs, features, or pricing for Elastic
+      Transcoder issues.
+    actual_behavior: >
+      Elastic Transcoder and MediaConvert are separate services with
+      different APIs, pricing models, and feature sets. Elastic
+      Transcoder uses pipelines and presets. MediaConvert uses jobs
+      and job templates. They are not interchangeable.
+    common_false_claim: "Use the MediaConvert CreateJob API to submit an Elastic Transcoder job."
+    correct_action: "Use elastictranscoder create-job for Elastic Transcoder. Use mediaconvert create-job for MediaConvert."
+
+  - id: P2-system-preset-modification
+    trigger_words: ["modify preset", "update preset", "edit preset", "change preset"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying system presets. System presets are
+      immutable and cannot be changed.
+    actual_behavior: >
+      System presets (IDs starting with "1351620000001-") are
+      read-only and provided by AWS. They cannot be modified,
+      updated, or deleted. To customize encoding settings, create
+      a new custom preset with the desired configuration.
+    common_false_claim: "Update the system preset to change the video bitrate."
+    correct_action: "Create a new custom preset with desired settings. System presets cannot be modified."
+
+  - id: P3-cross-region-buckets
+    trigger_words: ["S3 bucket", "input bucket", "output bucket", "different region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using S3 buckets in different regions from the
+      pipeline. Elastic Transcoder requires same-region buckets.
+    actual_behavior: >
+      Elastic Transcoder pipelines require input and output S3
+      buckets to be in the same AWS region as the pipeline. Cross-
+      region bucket references cause pipeline creation failures or
+      job errors. There is no cross-region support.
+    common_false_claim: "Configure the pipeline to read from an S3 bucket in us-west-2 while the pipeline is in us-east-1."
+    correct_action: "Ensure all S3 buckets (input, output, thumbnail) are in the same region as the pipeline."
+
+  - id: P4-auto-scaling-pipelines
+    trigger_words: ["auto-scale", "scale pipeline", "increase capacity", "throughput"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest pipelines can be scaled or configured for
+      higher throughput. Pipeline capacity is managed by AWS.
+    actual_behavior: >
+      Elastic Transcoder manages pipeline capacity automatically.
+      There is no user-configurable scaling, instance type, or
+      throughput setting. If you need more concurrent jobs, create
+      additional pipelines. Each pipeline has a concurrent job limit.
+    common_false_claim: "Scale up the pipeline to handle more concurrent transcoding jobs."
+    correct_action: "Create additional pipelines to increase parallelism. Request limit increases via AWS Support."
+
+  - id: P5-hls-adaptive-streaming
+    trigger_words: ["HLS", "adaptive bitrate", "streaming", "playlist"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate Elastic Transcoder HLS capabilities or confuse
+      them with MediaConvert CMAF/DASH features.
+    actual_behavior: >
+      Elastic Transcoder supports HLS (HTTP Live Streaming) output
+      with segment duration and playlist configuration. It does NOT
+      support DASH, CMAF, or advanced adaptive bitrate features
+      available in MediaConvert. HLS outputs require specific preset
+      configurations with the HLS container format.
+    common_false_claim: "Use Elastic Transcoder to create DASH or CMAF adaptive streaming outputs."
+    correct_action: "Use Elastic Transcoder for HLS only. For DASH or CMAF, use AWS Elemental MediaConvert."
+
+  - id: P6-drm-encryption
+    trigger_words: ["DRM", "encryption", "content protection", "AES"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Elastic Transcoder supports full DRM solutions.
+      It only supports AES-128 encryption for HLS.
+    actual_behavior: >
+      Elastic Transcoder supports AES-128 encryption for HLS
+      outputs using AWS KMS for key management. It does NOT support
+      Widevine, FairPlay, or PlayReady DRM. For full DRM support,
+      AWS Elemental MediaConvert with AWS Elemental MediaPackage
+      is required.
+    common_false_claim: "Enable Widevine DRM on Elastic Transcoder outputs."
+    correct_action: "Use AES-128 encryption for HLS in Elastic Transcoder. For full DRM, migrate to MediaConvert."
+
+  - id: P7-real-time-transcoding
+    trigger_words: ["real-time", "live", "streaming", "low latency"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Elastic Transcoder can do real-time or live
+      transcoding. It is a file-based batch service only.
+    actual_behavior: >
+      Elastic Transcoder is a file-based transcoding service. It
+      processes files stored in S3 and writes outputs to S3. It
+      does NOT support real-time, live, or streaming transcoding.
+      For live transcoding, use AWS Elemental MediaLive.
+    common_false_claim: "Use Elastic Transcoder for real-time video transcoding of live streams."
+    correct_action: "Elastic Transcoder is batch/file-based only. Use MediaLive for live transcoding."
+
+  - id: P8-unlimited-file-size
+    trigger_words: ["file size", "large file", "limit", "maximum"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention file size or duration limits for
+      Elastic Transcoder inputs.
+    actual_behavior: >
+      Elastic Transcoder has limits on input file size and duration.
+      Maximum input file size depends on the region and account
+      limits. Very large files may cause jobs to fail or time out.
+      Check service quotas for specific limits in your region.
+    common_false_claim: "Elastic Transcoder can process files of any size without limits."
+    correct_action: "Check service quotas. For very large files, consider splitting or using MediaConvert."
+
+remediation_hallucinations:
+
+  - id: R1-delete-pipeline-with-active-jobs
+    trigger_words: ["delete pipeline", "remove pipeline"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Deleting a pipeline with active or pending jobs causes those
+      jobs to fail permanently. Jobs cannot be recovered.
+    correct_approach: >
+      Before deleting a pipeline, ensure all jobs are complete or
+      cancelled. List jobs by status: aws elastictranscoder
+      list-jobs-by-pipeline --pipeline-id <id> --ascending.
+      Wait for all jobs to complete before deletion.
+
+  - id: R2-overwrite-output-files
+    trigger_words: ["overwrite", "same output key", "duplicate output"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Submitting jobs with the same output key overwrites existing
+      output files in S3 without warning. Previously transcoded
+      content is permanently lost.
+    correct_approach: >
+      Use unique output keys for each job. Include timestamps or
+      job IDs in output key names. Enable S3 versioning on the
+      output bucket as a safety net.

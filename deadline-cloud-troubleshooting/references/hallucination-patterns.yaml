@@ -1,0 +1,164 @@
+# =============================================================================
+# AWS Deadline Cloud "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-shared-filesystem
+    trigger_words: ["Deadline Cloud", "shared storage", "NFS", "shared file system"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume render farms use shared file systems by default.
+      Deadline Cloud uses S3-based job attachments for file transfer.
+    actual_behavior: >
+      Deadline Cloud uses S3 for job attachments — files are uploaded
+      from the submitter to S3 and downloaded to workers. This is NOT
+      a shared file system. Workers do not have direct access to the
+      submitter's file system. Storage profiles map S3 paths to local
+      paths on workers. For shared storage, you must separately
+      configure EFS, FSx, or other shared file systems and mount them
+      on workers.
+    common_false_claim: "Deadline Cloud automatically provides shared storage between submitter and workers."
+    correct_action: "Use job attachments for file transfer. Configure EFS/FSx separately if shared storage is needed."
+
+  - id: P2-budget-stops-jobs
+    trigger_words: ["budget", "cost control", "spending limit", "stop jobs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume budgets stop all work when exhausted, like AWS
+      Budgets actions. Deadline Cloud budgets only block new submissions.
+    actual_behavior: >
+      Deadline Cloud budgets prevent new job submissions when the
+      budget limit is reached. Running jobs are NOT stopped, paused,
+      or terminated. They continue to completion and may exceed the
+      budget. Budget monitoring provides visibility but does not
+      enforce hard spending caps on active workloads.
+    common_false_claim: "Set a budget to ensure you never exceed your rendering cost limit."
+    correct_action: "Use budgets for submission gating. Monitor running job costs separately. Implement manual controls for hard limits."
+
+  - id: P3-instant-scaling
+    trigger_words: ["auto scale", "instant workers", "immediate capacity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest service-managed fleets scale instantly.
+      Instance provisioning and agent startup take several minutes.
+    actual_behavior: >
+      Service-managed fleet scaling involves: EC2 instance launch
+      (1-3 minutes), OS boot and configuration (1-2 minutes),
+      worker agent installation and registration (1-2 minutes).
+      Total warm-up is typically 3-7 minutes. During this time,
+      jobs remain in PENDING state. Customer-managed fleets have
+      similar warm-up for new instances.
+    common_false_claim: "Deadline Cloud instantly scales to handle any job queue depth."
+    correct_action: "Plan for 3-7 minute scaling warm-up. Use minimum worker count for latency-sensitive workloads."
+
+  - id: P4-any-software-supported
+    trigger_words: ["software", "application", "DCC", "render engine"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any rendering software works out of the box.
+      Software must be installed on workers and licensed separately.
+    actual_behavior: >
+      Deadline Cloud provides job scheduling and worker management.
+      It does NOT include rendering software. Applications like
+      Maya, Houdini, Blender, Nuke, etc. must be installed on
+      worker instances separately. Commercial software requires
+      valid licenses accessible via license endpoints. Custom AMIs
+      or fleet configuration scripts handle software installation.
+    common_false_claim: "Deadline Cloud includes Maya/Houdini for rendering."
+    correct_action: "Install DCC software on worker AMIs. Configure license endpoints for commercial software."
+
+  - id: P5-free-service
+    trigger_words: ["Deadline Cloud", "free", "cost", "pricing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not accurately represent Deadline Cloud pricing
+      which includes both service fees and compute costs.
+    actual_behavior: >
+      Deadline Cloud charges for: worker usage (per worker-hour
+      for service-managed fleets), job attachments (S3 storage
+      and transfer), and standard EC2/S3 costs for customer-managed
+      fleets. There is no charge for the Deadline Cloud service
+      itself for customer-managed fleets, but worker agent
+      registration and job scheduling are metered for service-managed.
+    common_false_claim: "Deadline Cloud is free — you only pay for EC2 instances."
+    correct_action: "Review Deadline Cloud pricing page. Factor in service fees, compute, storage, and license costs."
+
+  - id: P6-windows-linux-same
+    trigger_words: ["worker OS", "Windows", "Linux", "cross-platform"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Windows and Linux workers are interchangeable.
+      Storage profiles, paths, and software differ by OS.
+    actual_behavior: >
+      Windows and Linux workers have different file path formats
+      (backslash vs forward slash), different storage profile
+      configurations, different software installations, and
+      potentially different AMIs. Storage profiles must map paths
+      correctly for each OS. Job templates may need OS-specific
+      command syntax.
+    common_false_claim: "Submit jobs and they'll run on any available worker regardless of OS."
+    correct_action: "Configure OS-specific storage profiles. Use fleet capabilities to match jobs to compatible workers."
+
+  - id: P7-queue-fleet-auto-association
+    trigger_words: ["queue", "fleet", "automatic", "job routing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest queues automatically use available fleets.
+      Queue-fleet associations must be explicitly created.
+    actual_behavior: >
+      Queues and fleets must be explicitly associated using
+      create-queue-fleet-association. Without an association,
+      jobs submitted to a queue have no workers to run on and
+      remain in PENDING state indefinitely. Multiple fleets can
+      be associated with one queue, and one fleet can be associated
+      with multiple queues.
+    common_false_claim: "Jobs automatically run on any available fleet in the farm."
+    correct_action: "Create explicit queue-fleet associations. Verify associations when jobs are stuck pending."
+
+  - id: P8-monitor-iam-users
+    trigger_words: ["monitor", "web portal", "IAM user", "console access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the Deadline Cloud monitor works with IAM users.
+      It requires IAM Identity Center (SSO).
+    actual_behavior: >
+      The Deadline Cloud monitor (web portal for artists and
+      supervisors) requires AWS IAM Identity Center for user
+      authentication. IAM users and roles cannot directly access
+      the monitor portal. Users must be provisioned in Identity
+      Center and assigned to the monitor. API access uses standard
+      IAM roles and credentials.
+    common_false_claim: "Artists can access the Deadline Cloud monitor with their IAM credentials."
+    correct_action: "Configure IAM Identity Center. Create users in Identity Center and assign to monitor."
+
+remediation_hallucinations:
+
+  - id: R1-delete-farm-to-fix
+    trigger_words: ["delete farm", "recreate farm", "start over"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a farm removes all fleets, queues, jobs, and
+      associated resources. This is irreversible and destroys
+      all job history and configuration.
+    correct_approach: >
+      Troubleshoot the specific component (fleet, queue, worker)
+      rather than deleting the entire farm. Farms can be updated.
+      Fleets and queues can be individually recreated. Only delete
+      a farm as a last resort after backing up all job data and
+      configuration.
+
+  - id: R2-terminate-all-workers
+    trigger_words: ["terminate workers", "kill all workers", "restart fleet"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Terminating all workers in a fleet immediately kills all
+      running sessions and jobs. In-progress renders are lost.
+      For service-managed fleets, workers will respawn but
+      running work is not recoverable.
+    correct_approach: >
+      For worker issues, drain workers gracefully by updating
+      fleet status. For service-managed fleets, adjust scaling
+      configuration. For customer-managed fleets, stop the worker
+      agent service before terminating instances. Allow running
+      sessions to complete when possible.

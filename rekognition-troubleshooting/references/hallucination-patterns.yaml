@@ -1,0 +1,122 @@
+# =============================================================================
+# Amazon Rekognition "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-video-sync
+    trigger_words: ["video analysis", "analyze video", "detect faces in video"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest video analysis returns results synchronously.
+      Video analysis is always asynchronous.
+    actual_behavior: >
+      Video analysis uses Start* APIs returning a JobId. Results
+      retrieved with Get* APIs after job completes. Use SNS topic
+      for completion notification. Jobs can take minutes to hours.
+    common_false_claim: "Call DetectFaces with a video file to analyze faces."
+    correct_action: "Use StartFaceDetection for video. Poll GetFaceDetection or use SNS notification."
+
+  - id: P2-custom-labels-instant
+    trigger_words: ["custom labels", "custom model", "train model"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Custom Labels models are ready immediately after training.
+      Models must be explicitly started before inference.
+    actual_behavior: >
+      After training completes, the model must be started with
+      StartProjectVersion. Starting takes several minutes. Models
+      are billed per inference hour while running. Must be stopped
+      when not in use.
+    common_false_claim: "Train the model and immediately call DetectCustomLabels."
+    correct_action: "Train model, start model version, wait for RUNNING status, then call DetectCustomLabels."
+
+  - id: P3-unlimited-image-size
+    trigger_words: ["image size", "large image", "image format"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention image size limits. Limits are strict.
+    actual_behavior: >
+      S3 images: up to 15MB. Base64 bytes: up to 5MB. Only JPEG
+      and PNG supported. Exceeding limits returns error. Resize
+      before processing.
+    common_false_claim: "Pass any image to Rekognition for analysis."
+    correct_action: "Check image size and format. Resize if needed. Use S3 for larger images."
+
+  - id: P4-collections-global
+    trigger_words: ["face collection", "search faces", "index faces"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest face collections are globally accessible.
+      Collections are region-specific.
+    actual_behavior: >
+      Face collections exist in a single region. Cannot search
+      across regions. Collection IDs unique per region. Must
+      create separate collections per region if needed.
+    common_false_claim: "Search your face collection from any region."
+    correct_action: "Use collection in the same region. Create per-region collections if needed."
+
+  - id: P5-moderation-perfect
+    trigger_words: ["content moderation", "detect moderation", "unsafe content"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest content moderation is 100% accurate.
+      Confidence thresholds need tuning.
+    actual_behavior: >
+      Content moderation returns confidence scores. Default returns
+      all detections including low confidence. Set MinConfidence
+      to filter. False positives and negatives occur. Human review
+      recommended for edge cases.
+    common_false_claim: "Rekognition content moderation catches all unsafe content."
+    correct_action: "Set appropriate MinConfidence. Implement human review for borderline cases."
+
+  - id: P6-detect-text-documents
+    trigger_words: ["detect text", "OCR", "text in image", "read text"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DetectText works for documents.
+      It's designed for scene text, not documents.
+    actual_behavior: >
+      DetectText detects up to 100 words in natural scenes (signs,
+      labels). For documents, use Amazon Textract. DetectText is
+      not optimized for dense document text.
+    common_false_claim: "Use DetectText to extract text from PDF documents."
+    correct_action: "Use DetectText for scene text. Use Textract for documents."
+
+  - id: P7-streaming-simple
+    trigger_words: ["streaming video", "real-time", "stream processor"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs oversimplify streaming setup. It requires Kinesis
+      Video Streams and Kinesis Data Streams integration.
+    actual_behavior: >
+      Stream processors require Kinesis Video Streams (input) and
+      Kinesis Data Streams (output). Both must be pre-created.
+      IAM role needs permissions for both. Near-real-time, not
+      instant processing.
+    common_false_claim: "Point a camera URL at Rekognition for real-time analysis."
+    correct_action: "Set up KVS, KDS, IAM role, then create stream processor."
+
+  - id: P8-face-compare-vs-search
+    trigger_words: ["compare faces", "face match", "face search", "find face"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse CompareFaces and SearchFacesByImage.
+      They serve different purposes.
+    actual_behavior: >
+      CompareFaces compares two specific images (1:1). SearchFacesByImage
+      searches a face against a collection (1:N). CompareFaces needs
+      no collection. SearchFacesByImage requires a pre-populated collection.
+    common_false_claim: "Use CompareFaces to search your face database."
+    correct_action: "Use CompareFaces for 1:1 comparison. Use SearchFacesByImage for 1:N search against collection."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

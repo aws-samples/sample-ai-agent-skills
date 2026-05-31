@@ -1,0 +1,157 @@
+# =============================================================================
+# Control Tower "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about Control Tower behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-scp-management-account
+    trigger_words: ["SCP", "management account", "service control policy", "root account"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs know SCPs restrict accounts and assume they apply universally.
+      The management account is explicitly exempt from all SCPs.
+    actual_behavior: >
+      SCPs never restrict the management account, even if attached to the
+      root OU. The management account can always perform any action.
+      This is by design to prevent lockout.
+    common_false_claim: >
+      "The SCP will prevent anyone in the management account from deleting CloudTrail."
+    correct_action: "Use IAM policies (not SCPs) to restrict actions in the management account."
+
+  - id: P2-control-inheritance
+    trigger_words: ["inherit", "child OU", "nested OU", "parent OU", "propagate"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume Control Tower controls inherit like SCPs do in Organizations.
+      CT controls must be enabled individually on each OU.
+    actual_behavior: >
+      Controls enabled on a parent OU do NOT apply to child OUs.
+      You must enable each control on each OU individually.
+      SCPs in Organizations DO inherit, but CT control enablement does not.
+    common_false_claim: >
+      "Enable the control on the root OU and it will apply to all child OUs."
+    correct_action: "Enable the control on each OU individually where you want it applied."
+
+  - id: P3-detective-vs-preventive
+    trigger_words: ["guardrail", "control", "prevent", "block", "detective"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate detective and preventive controls because both are
+      called "guardrails" and both relate to compliance.
+    actual_behavior: >
+      Preventive controls (SCPs) block API calls before they execute.
+      Detective controls (Config rules) evaluate compliance after the fact.
+      Proactive controls (CF hooks) validate CloudFormation templates before deployment.
+    common_false_claim: >
+      "Enable the detective guardrail to prevent users from creating unencrypted volumes."
+    correct_action: "Use a preventive control (SCP) to block, or a proactive control (CF hook) for CF deployments. Detective controls only detect."
+
+  - id: P4-drift-safe-to-ignore
+    trigger_words: ["drift", "ignore", "minor", "cosmetic"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may downplay drift because the landing zone still appears
+      functional. Drift blocks updates and can cause cascading failures.
+    actual_behavior: >
+      Drift must be resolved before landing zone updates, control changes,
+      or OU registration. Unresolved drift can cause account provisioning
+      failures and compliance gaps. There is no "safe" drift.
+    common_false_claim: >
+      "The drift is minor, you can ignore it and update the landing zone."
+    correct_action: "Resolve all drift before making any Control Tower changes."
+
+  - id: P5-direct-stack-modification
+    trigger_words: ["CloudFormation", "stack", "modify", "update stack", "AWSControlTower"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs see CloudFormation stacks and suggest standard CF operations.
+      CT-managed stacks must only be modified through CT APIs.
+    actual_behavior: >
+      Control Tower manages stacks prefixed with AWSControlTower*.
+      Directly modifying, deleting, or updating these stacks causes drift
+      and can break CT operations. Use CT console or APIs instead.
+    common_false_claim: >
+      "Update the AWSControlTowerBP stack to fix the configuration."
+    correct_action: "Use Control Tower re-register OU or update landing zone. Never modify CT stacks directly."
+
+  - id: P6-account-email-reuse
+    trigger_words: ["email", "account", "provision", "create account"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not emphasize that AWS account emails are globally unique
+      and cannot be reused, even after account closure.
+    actual_behavior: >
+      Each AWS account requires a globally unique email address. Closed
+      accounts retain their email for 90 days. Email aliases (+tag) can
+      help create unique addresses from a single mailbox.
+    common_false_claim: >
+      "Reuse the email from the closed account for the new account."
+    correct_action: "Use a unique email. Consider email aliases like admin+project@example.com."
+
+  - id: P7-ou-creation-equals-governance
+    trigger_words: ["create OU", "organizational unit", "governance", "register"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume creating an OU in Organizations automatically brings
+      it under CT governance. Registration is a separate step.
+    actual_behavior: >
+      Creating an OU in Organizations does NOT register it with Control Tower.
+      Unregistered OUs have no CT controls, no Config rules, and no
+      StackSet deployments. You must explicitly register the OU.
+    common_false_claim: >
+      "Create the OU and Control Tower will automatically govern it."
+    correct_action: "Create the OU, then register it with Control Tower separately."
+
+  - id: P8-landing-zone-update-safe
+    trigger_words: ["update", "landing zone", "version", "upgrade"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat landing zone updates like simple version upgrades.
+      Updates can be disruptive and have prerequisites.
+    actual_behavior: >
+      Landing zone updates may require: drift resolution first, OU
+      re-registration after, and can change SCP behavior. Some updates
+      are not backward compatible. Always check release notes.
+    common_false_claim: >
+      "Just update the landing zone to the latest version, it's seamless."
+    correct_action: "Check release notes, resolve drift, plan for OU re-registration, and test in a non-production environment if possible."
+
+  - id: P9-scp-vs-iam-policy
+    trigger_words: ["SCP", "IAM policy", "permission boundary", "deny"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs sometimes confuse SCPs with IAM policies. SCPs set the
+      maximum permissions boundary for an account, not grant permissions.
+    actual_behavior: >
+      SCPs define the maximum available permissions. They don't grant
+      permissions — IAM policies do that. An action must be allowed by
+      BOTH the SCP and the IAM policy. SCPs are a ceiling, not a floor.
+    common_false_claim: >
+      "Add an Allow statement to the SCP to grant the user access."
+    correct_action: "SCPs restrict, they don't grant. Add permissions via IAM policies."
+
+  - id: P10-config-rule-auto-remediation
+    trigger_words: ["Config rule", "auto-remediate", "automatic fix", "compliance"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume CT detective controls automatically remediate non-compliance.
+      CT detective controls only detect — remediation is separate.
+    actual_behavior: >
+      CT detective controls (Config rules) evaluate and report compliance.
+      They do NOT automatically remediate. Auto-remediation requires
+      separate Config remediation actions, which CT does not set up by default.
+    common_false_claim: >
+      "The detective control will automatically fix non-compliant resources."
+    correct_action: "Set up Config remediation actions separately, or use preventive controls to block non-compliant actions."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

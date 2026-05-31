@@ -1,0 +1,159 @@
+# =============================================================================
+# AWS Service Catalog "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-launch-constraint-optional
+    trigger_words: ["Service Catalog", "provision product", "launch constraint"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest end users can provision products without launch
+      constraints using their own permissions. While technically
+      possible, it almost always fails.
+    actual_behavior: >
+      Without a launch constraint, Service Catalog uses the end
+      user's IAM permissions to create the CloudFormation stack.
+      End users rarely have cloudformation:CreateStack, ec2:*,
+      s3:*, or other resource permissions. Launch constraints
+      specify an IAM role with the necessary permissions, allowing
+      end users to provision without direct resource permissions.
+    common_false_claim: "End users can provision products directly with their IAM permissions."
+    correct_action: "Always create a launch constraint with an IAM role that has permissions to create the product's resources."
+
+  - id: P2-modify-imported-portfolio
+    trigger_words: ["imported portfolio", "shared portfolio", "modify portfolio"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying products or constraints in imported
+      portfolios. Imported portfolios are read-only.
+    actual_behavior: >
+      When a portfolio is shared to another account, the recipient
+      gets an imported (read-only) copy. Products, constraints,
+      and tag options cannot be modified in the imported portfolio.
+      The source account must make all changes. Recipients can
+      only add the imported portfolio to local principals.
+    common_false_claim: "Add a launch constraint to the imported portfolio in your account."
+    correct_action: "Request changes from the portfolio owner account. Or create a local portfolio with a copy of the product."
+
+  - id: P3-template-constraint-iam-syntax
+    trigger_words: ["template constraint", "parameter restriction", "constraint rules"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs use IAM policy syntax for template constraints.
+      Template constraints use CloudFormation rules syntax.
+    actual_behavior: >
+      Template constraints use JSON rules with "Rule", "Assertions",
+      "Assert", and "AssertDescription" fields. They reference
+      CloudFormation parameters using Fn::ValueOf, Ref, and
+      condition functions. This is NOT IAM policy syntax with
+      Effect, Action, Resource.
+    common_false_claim: "Create a template constraint with Effect: Deny to restrict parameter values."
+    correct_action: "Use CloudFormation rules syntax: {\"Rules\":{\"Rule1\":{\"Assertions\":[{\"Assert\":{...},\"AssertDescription\":\"...\"}]}}}."
+
+  - id: P4-update-product-version
+    trigger_words: ["update template", "modify version", "change product version"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying existing product versions. Product
+      versions are immutable once created.
+    actual_behavior: >
+      Product versions (provisioning artifacts) are immutable.
+      The CloudFormation template associated with a version
+      cannot be changed after creation. To update a template,
+      create a new product version. Old versions can be
+      deactivated but not deleted if referenced by provisioned
+      products.
+    common_false_claim: "Update the template in the existing product version."
+    correct_action: "Create a new product version with the updated template. Deactivate the old version if no longer needed."
+
+  - id: P5-terraform-local-engine
+    trigger_words: ["Terraform product", "Terraform engine", "local Terraform"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Service Catalog runs Terraform locally or
+      uses open-source Terraform directly.
+    actual_behavior: >
+      Service Catalog Terraform products use Terraform Cloud
+      or Terraform Enterprise as the execution engine. They
+      require a Terraform Cloud workspace connection with an
+      API token. Open-source Terraform and local Terraform
+      installations are not supported.
+    common_false_claim: "Service Catalog runs your Terraform configuration using a local Terraform binary."
+    correct_action: "Configure Terraform Cloud workspace connection. Provide API token and workspace details."
+
+  - id: P6-stackset-auto-deploy
+    trigger_words: ["StackSet constraint", "multi-account", "auto deploy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest StackSet constraints automatically deploy to
+      all accounts without configuration.
+    actual_behavior: >
+      StackSet constraints require explicit configuration of
+      target accounts and regions. They need specific IAM roles
+      (AWSCloudFormationStackSetAdministrationRole and
+      AWSCloudFormationStackSetExecutionRole) in both admin
+      and target accounts. Deployment targets must be specified.
+    common_false_claim: "Add a StackSet constraint and it automatically deploys to all organization accounts."
+    correct_action: "Configure StackSet constraint with specific accounts/OUs and regions. Set up required IAM roles in all accounts."
+
+  - id: P7-tag-options-same-as-tags
+    trigger_words: ["tag option", "resource tag", "tagging"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate Service Catalog tag options with standard
+      AWS resource tags.
+    actual_behavior: >
+      Tag options are a Service Catalog governance feature that
+      presents predefined tag key-value pairs to users during
+      provisioning. They are NOT the same as CloudFormation
+      resource tags. Tag options are associated with portfolios
+      or products and enforce tagging compliance at provisioning
+      time.
+    common_false_claim: "Add tags to the CloudFormation template to enforce tagging in Service Catalog."
+    correct_action: "Create tag options and associate them with portfolios or products for governance enforcement."
+
+  - id: P8-provisioned-product-direct-update
+    trigger_words: ["update provisioned product", "modify stack", "change resources"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest directly modifying the CloudFormation stack
+      of a provisioned product.
+    actual_behavior: >
+      Provisioned products should be updated through Service
+      Catalog, not by directly modifying the underlying
+      CloudFormation stack. Direct stack modifications cause
+      drift between Service Catalog's state and the actual
+      stack, leading to update and termination failures.
+    common_false_claim: "Update the CloudFormation stack directly to change the provisioned product."
+    correct_action: "Use aws servicecatalog update-provisioned-product to update through Service Catalog."
+
+remediation_hallucinations:
+
+  - id: R1-terminate-and-reprovision
+    trigger_words: ["terminate product", "delete and recreate", "reprovision"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Terminating a provisioned product deletes the underlying
+      CloudFormation stack and all its resources. This causes
+      data loss for stateful resources (databases, S3 buckets
+      without retention policies).
+    correct_approach: >
+      First check if the issue can be resolved with an update.
+      If termination is necessary, ensure stateful resources
+      have deletion protection or retention policies. Back up
+      data before terminating.
+
+  - id: R2-delete-portfolio-with-products
+    trigger_words: ["delete portfolio", "remove portfolio", "clean up portfolio"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a portfolio requires removing all products,
+      constraints, and principal associations first. Attempting
+      to delete a portfolio with active provisioned products
+      can orphan those products.
+    correct_approach: >
+      First terminate all provisioned products. Then remove
+      constraints, tag options, and principal associations.
+      Finally remove products from the portfolio before
+      deleting it.

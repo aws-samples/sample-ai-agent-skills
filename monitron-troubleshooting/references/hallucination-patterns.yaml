@@ -1,0 +1,158 @@
+# =============================================================================
+# Amazon Monitron "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-cli-device-setup
+    trigger_words: ["setup gateway", "pair sensor", "commission", "CLI setup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest gateways and sensors can be set up via CLI or API.
+      Physical device setup requires the Monitron mobile app.
+    actual_behavior: >
+      Gateway commissioning and sensor pairing MUST be performed
+      through the Amazon Monitron mobile app. The app uses Bluetooth
+      to communicate with the gateway during setup and to pair
+      sensors. There are no AWS CLI commands or API calls that can
+      replace the physical device setup process.
+    common_false_claim: "Use aws monitron create-gateway to set up a new gateway."
+    correct_action: "Use the Monitron mobile app to commission gateways and pair sensors. CLI is for project management only."
+
+  - id: P2-instant-anomaly-detection
+    trigger_words: ["immediate detection", "instant alerts", "real-time anomaly"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest anomaly detection works immediately after sensor
+      installation. A 14-day learning period is required.
+    actual_behavior: >
+      Monitron's ML model requires a minimum 14-day learning period
+      after sensor installation to establish baseline vibration and
+      temperature patterns. During this period, the system collects
+      data but anomaly detection is unreliable. Alerts generated
+      during the learning period should not be treated as confirmed
+      anomalies.
+    common_false_claim: "Monitron detects equipment anomalies immediately after sensor installation."
+    correct_action: "Allow 14+ days for the learning period. Inform users that early alerts may be unreliable."
+
+  - id: P3-any-wifi-works
+    trigger_words: ["WiFi", "wireless", "network", "connect gateway"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any WiFi network works with Monitron gateways.
+      Specific WiFi requirements must be met.
+    actual_behavior: >
+      Monitron gateways require 2.4 GHz WiFi band (not 5 GHz),
+      WPA2 security protocol, and outbound internet access to
+      AWS endpoints. Enterprise WiFi with 802.1X authentication,
+      captive portals, or certificate-based auth may not work.
+      Hidden SSIDs require manual configuration through the app.
+    common_false_claim: "Connect the gateway to any available WiFi network."
+    correct_action: "Verify WiFi meets requirements: 2.4 GHz, WPA2, internet access. Test with a simple WPA2 network first."
+
+  - id: P4-unlimited-sensor-range
+    trigger_words: ["sensor range", "distance", "coverage", "how far"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overestimate BLE range or suggest sensors work at
+      any distance from the gateway.
+    actual_behavior: >
+      Sensors communicate with gateways via Bluetooth Low Energy
+      (BLE) with approximately 20-30 meter range in line of sight.
+      Walls, metal structures, machinery, and other obstacles
+      significantly reduce effective range. In industrial
+      environments, effective range may be as low as 10 meters.
+    common_false_claim: "Sensors can communicate with gateways up to 100 meters away."
+    correct_action: "Plan gateway placement for 10-20 meter effective range in industrial settings. Test signal before permanent installation."
+
+  - id: P5-api-firmware-update
+    trigger_words: ["firmware", "update gateway", "upgrade", "patch"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manual firmware updates via CLI or API.
+      Firmware updates are automatic and AWS-managed.
+    actual_behavior: >
+      Monitron gateway firmware is managed entirely by AWS.
+      Updates are applied automatically when the gateway is
+      connected to the internet. There is no manual firmware
+      update mechanism, no CLI command, and no API call to
+      trigger or schedule firmware updates.
+    common_false_claim: "Update the gateway firmware using aws monitron update-gateway-firmware."
+    correct_action: "Ensure gateway has internet connectivity. Firmware updates happen automatically. Check gateway status in the app."
+
+  - id: P6-standard-data-format
+    trigger_words: ["export data", "CSV export", "JSON export", "data format"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Monitron exports data in standard formats.
+      The export format is Monitron-specific.
+    actual_behavior: >
+      Monitron data export produces files in a Monitron-specific
+      format, not standard CSV or JSON. The export includes
+      vibration measurements, temperature readings, and inference
+      results in a structured but proprietary format. Custom
+      parsing logic is required to integrate with external systems.
+    common_false_claim: "Export Monitron data as CSV for analysis in Excel."
+    correct_action: "Use Monitron data export API. Build custom parsers for the Monitron-specific format. Check AWS documentation for schema."
+
+  - id: P7-iam-user-access
+    trigger_words: ["IAM user", "create user", "user permissions", "direct access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest standard IAM users can access Monitron.
+      Monitron requires AWS IAM Identity Center.
+    actual_behavior: >
+      Monitron user access is managed through AWS IAM Identity
+      Center (formerly AWS SSO). Users must be provisioned in
+      IAM Identity Center and then added to Monitron projects.
+      Standard IAM users cannot directly access Monitron projects
+      or the mobile app. Admin users are managed separately.
+    common_false_claim: "Create an IAM user with monitron:* permissions to access the project."
+    correct_action: "Provision users in IAM Identity Center. Add them to Monitron projects as admin or technician users."
+
+  - id: P8-sensor-battery-replacement
+    trigger_words: ["battery", "replace battery", "recharge", "power"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest sensors are rechargeable or have
+      replaceable batteries with simple swap procedures.
+    actual_behavior: >
+      Monitron sensors have sealed, non-rechargeable batteries
+      with approximately 3-year life under normal measurement
+      frequency. When the battery is depleted, the entire sensor
+      must be replaced. There is no battery replacement procedure.
+      The new sensor must be paired through the mobile app.
+    common_false_claim: "Replace the sensor battery to restore data collection."
+    correct_action: "Replace the entire sensor unit. Pair the new sensor using the Monitron mobile app. Allow 14 days for new learning period."
+
+remediation_hallucinations:
+
+  - id: R1-factory-reset-gateway
+    trigger_words: ["factory reset", "reset gateway", "hard reset"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Factory resetting a gateway removes all sensor pairings
+      and configuration. All sensors must be re-paired through
+      the mobile app, and each sensor restarts its 14-day
+      learning period. This causes significant data loss and
+      operational disruption.
+    correct_approach: >
+      Try power cycling the gateway first (unplug for 30 seconds).
+      Check WiFi connectivity. Verify the gateway LED status.
+      Factory reset only as a last resort after exhausting all
+      other options and with explicit approval.
+
+  - id: R2-increase-measurement-frequency
+    trigger_words: ["more frequent", "increase frequency", "measure more often"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Increasing measurement frequency significantly reduces
+      sensor battery life. Default frequency is optimized for
+      3-year battery life. Doubling frequency roughly halves
+      battery life. This creates a maintenance burden and
+      potential data gaps when batteries die prematurely.
+    correct_approach: >
+      Evaluate whether increased frequency is truly needed.
+      Consider the battery life impact. If higher frequency
+      is required, plan for more frequent sensor replacements
+      and budget accordingly.

@@ -1,0 +1,139 @@
+# =============================================================================
+# AWS IoT SiteWise "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-transform-vs-metric
+    trigger_words: ["transform", "metric", "aggregation", "formula", "computation"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse transforms and metrics. Transforms compute in
+      near real-time from current values. Metrics aggregate over
+      time windows.
+    actual_behavior: >
+      Transforms evaluate immediately when input properties change
+      and produce a single output value. Metrics aggregate multiple
+      data points over a time window (1m, 5m, 1h, 1d) using
+      functions like avg, sum, min, max, count. Transforms cannot
+      use time-based aggregation. Metrics cannot reference other
+      metrics in the same model at the same hierarchy level.
+    common_false_claim: "Use a transform to calculate the hourly average temperature."
+    correct_action: "Use a metric with avg() function and 1h time window for hourly averages."
+
+  - id: P2-portal-iam-access
+    trigger_words: ["portal access", "SiteWise Monitor", "dashboard login", "portal user"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest IAM users can access SiteWise Monitor portals.
+      Portals require IAM Identity Center authentication.
+    actual_behavior: >
+      SiteWise Monitor portals authenticate exclusively through
+      IAM Identity Center (formerly AWS SSO). IAM users, roles,
+      or federated identities cannot directly access portals.
+      Portal administrators must add IAM Identity Center users
+      to projects. Users see only assets in their assigned projects.
+    common_false_claim: "Create an IAM user with SiteWise permissions to access the portal."
+    correct_action: "Enable IAM Identity Center, create users there, and assign them to portal projects."
+
+  - id: P3-gateway-standalone
+    trigger_words: ["gateway", "edge", "OPC-UA", "data collection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SiteWise gateways are standalone appliances.
+      They run as Greengrass V2 components.
+    actual_behavior: >
+      SiteWise gateways are Greengrass V2 components deployed on
+      a Greengrass core device. The device needs Greengrass V2
+      nucleus, the SiteWise connector component, and network access
+      to OPC-UA/Modbus/Ethernet-IP servers. Gateway configuration
+      is done via capability namespaces in the Greengrass deployment.
+    common_false_claim: "Install the SiteWise gateway software on the edge server."
+    correct_action: "Install Greengrass V2, then deploy the SiteWise gateway component."
+
+  - id: P4-real-time-metrics
+    trigger_words: ["real-time metric", "instant aggregation", "live metric"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest metrics provide real-time aggregation. Metrics
+      compute after the time window closes.
+    actual_behavior: >
+      Metrics are computed after the time window closes. A 1-hour
+      metric for 2:00-3:00 PM is computed after 3:00 PM. There is
+      additional processing delay. Late-arriving data within the
+      late data ingestion window triggers recomputation. For
+      real-time computed values, use transforms instead.
+    common_false_claim: "The metric shows the current running average in real-time."
+    correct_action: "Metrics are computed after window closes. Use transforms for real-time computation."
+
+  - id: P5-unlimited-properties
+    trigger_words: ["asset properties", "model properties", "property limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited properties per asset model. There
+      are limits on properties per model and per asset.
+    actual_behavior: >
+      Asset models have limits on the number of properties (200
+      per model by default). Each property type (measurement,
+      transform, metric) counts toward this limit. Complex models
+      with many transforms and metrics can hit limits quickly.
+      Request limit increases through Service Quotas if needed.
+    common_false_claim: "Add all sensor readings as individual properties on the asset model."
+    correct_action: "Design models within property limits. Use hierarchies to distribute properties."
+
+  - id: P6-ingestion-any-timestamp
+    trigger_words: ["historical data", "backfill", "past data", "timestamp"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any historical timestamp can be ingested.
+      There is a late data ingestion window limit.
+    actual_behavior: >
+      Data ingestion has a late data ingestion window (default 7
+      days). Data with timestamps older than this window is rejected.
+      Future timestamps more than a few minutes ahead are also
+      rejected. The late data window can be configured per asset
+      model. Backfilling very old data requires special handling.
+    common_false_claim: "Ingest the last year of historical data using BatchPutAssetPropertyValue."
+    correct_action: "Check late data ingestion window. For data older than the window, contact AWS support."
+
+  - id: P7-model-instant-update
+    trigger_words: ["update model", "change property", "modify model"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest model updates are instant. Updates propagate
+      asynchronously to all assets.
+    actual_behavior: >
+      Asset model updates trigger asynchronous propagation to all
+      assets of that model. During propagation, the model is in
+      UPDATING state. New assets cannot be created until propagation
+      completes. Large numbers of assets increase propagation time.
+      Check model status with describe-asset-model.
+    common_false_claim: "Update the model and immediately create new assets with the changes."
+    correct_action: "Update model, wait for ACTIVE status, then create or update assets."
+
+  - id: P8-hierarchy-any-depth
+    trigger_words: ["asset hierarchy", "nested assets", "parent child"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited hierarchy nesting. There are depth
+      limits on asset hierarchies.
+    actual_behavior: >
+      Asset hierarchies have a maximum depth limit (10 levels by
+      default). Each hierarchy definition in a model creates a
+      parent-child relationship type. An asset can be a child in
+      one hierarchy and a parent in another. Metrics can aggregate
+      across hierarchy levels. Deep hierarchies impact query
+      performance and metric computation time.
+    common_false_claim: "Create a 20-level deep hierarchy for the factory floor layout."
+    correct_action: "Design hierarchies within depth limits. Flatten where possible for performance."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,127 @@
+# =============================================================================
+# Amazon SNS Advanced "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-delivery-logging-default
+    trigger_words: ["delivery status", "delivery logs", "failed delivery", "notification log"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume delivery status logging is enabled by default.
+      It must be explicitly configured per protocol.
+    actual_behavior: >
+      Delivery status logging is disabled by default. You must set
+      SuccessFeedbackRoleArn and FailureFeedbackRoleArn topic attributes
+      for each protocol (HTTP, Lambda, SQS, SMS, Application). Without
+      this, there are no delivery logs in CloudWatch.
+    common_false_claim: "Check the SNS delivery logs in CloudWatch for the failure reason."
+    correct_action: "First verify delivery status logging is enabled. Enable it if not configured."
+
+  - id: P2-sms-production-access
+    trigger_words: ["SMS", "text message", "send SMS", "phone number"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume SMS sending works for any number. New accounts
+      are in SMS sandbox with restricted sending.
+    actual_behavior: >
+      New AWS accounts are in the SMS sandbox. In sandbox, you can
+      only send to verified phone numbers (up to 10). Production
+      access requires a request through AWS Support. The default
+      spending limit is $1.00/month.
+    common_false_claim: "Use aws sns publish to send SMS to any phone number."
+    correct_action: "Check sandbox status. Request production access for unrestricted sending."
+
+  - id: P3-filter-policy-body
+    trigger_words: ["filter policy", "message filter", "subscription filter", "message body filter"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest filter policies work on message body by default.
+      The default scope is MessageAttributes, not MessageBody.
+    actual_behavior: >
+      Filter policies default to matching against message attributes
+      (FilterPolicyScope: MessageAttributes). To filter on message
+      body content, you must explicitly set FilterPolicyScope to
+      MessageBody on the subscription.
+    common_false_claim: "Set a filter policy to match content in the message body."
+    correct_action: "Set FilterPolicyScope to MessageBody if filtering on body content."
+
+  - id: P4-fifo-all-protocols
+    trigger_words: ["FIFO topic", "ordered delivery", "FIFO subscription"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest FIFO topics work with all subscription protocols.
+      FIFO topics only support SQS FIFO queue subscriptions.
+    actual_behavior: >
+      FIFO topics (.fifo suffix) only support SQS FIFO queues as
+      subscribers. HTTP/S, Lambda, email, and standard SQS queues
+      cannot subscribe to FIFO topics. Messages are ordered within
+      message groups.
+    common_false_claim: "Subscribe a Lambda function to your FIFO topic for ordered processing."
+    correct_action: "Use SQS FIFO queue subscription. Trigger Lambda from the SQS FIFO queue."
+
+  - id: P5-dlq-per-topic
+    trigger_words: ["dead-letter queue", "DLQ", "failed messages", "undeliverable"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest configuring DLQ on the topic. SNS DLQs are
+      configured per-subscription, not per-topic.
+    actual_behavior: >
+      Dead-letter queues are set on individual subscriptions using
+      the RedrivePolicy attribute. Each subscription can have its
+      own DLQ (SQS queue). The DLQ must be in the same Region.
+      There is no topic-level DLQ configuration.
+    common_false_claim: "Set a dead-letter queue on the SNS topic to catch failed deliveries."
+    correct_action: "Set RedrivePolicy on each subscription: {\"deadLetterTargetArn\": \"<sqs-arn>\"}."
+
+  - id: P6-sms-opt-out-error
+    trigger_words: ["opt-out", "STOP", "unsubscribe SMS", "SMS blocked"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs expect an error when sending to opted-out numbers.
+      Messages are silently dropped with no error.
+    actual_behavior: >
+      When a recipient opts out (replies STOP), subsequent messages
+      are silently dropped. The publish API returns success. No error
+      is returned. Check opt-out status with check-if-phone-number-is-opted-out.
+    common_false_claim: "You'll get an error if the number has opted out."
+    correct_action: "Check opt-out status before diagnosing. Messages to opted-out numbers silently fail."
+
+  - id: P7-uniform-retry
+    trigger_words: ["retry", "retry policy", "delivery retry", "backoff"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume uniform retry behavior across all protocols.
+      Each protocol has different retry policies.
+    actual_behavior: >
+      HTTP/S: retries for up to 23 days with exponential backoff.
+      Lambda: 3 immediate retries. SQS: single immediate delivery,
+      no retries. SMS: no retries. Email: no retries. Each protocol
+      has its own delivery policy.
+    common_false_claim: "SNS retries delivery 3 times for all subscription types."
+    correct_action: "Check the specific protocol's retry policy. Use DLQ for undeliverable messages."
+
+  - id: P8-standard-to-fifo
+    trigger_words: ["convert to FIFO", "change topic type", "upgrade to FIFO"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest converting standard topics to FIFO. This is
+      not possible — topic type is immutable.
+    actual_behavior: >
+      Topic type (standard vs FIFO) is set at creation and cannot
+      be changed. To switch from standard to FIFO, you must create
+      a new FIFO topic (.fifo suffix), migrate subscriptions, and
+      update publishers. Standard topics cannot be converted.
+    common_false_claim: "Convert your standard topic to FIFO for ordered delivery."
+    correct_action: "Create a new FIFO topic. Migrate subscriptions and publishers."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

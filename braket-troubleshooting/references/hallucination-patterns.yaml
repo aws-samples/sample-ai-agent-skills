@@ -1,0 +1,156 @@
+# =============================================================================
+# Amazon Braket "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-error-correction
+    trigger_words: ["Braket", "error correction", "fault tolerant", "error free"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Braket provides quantum error correction or
+      fault-tolerant computing. Braket accesses NISQ devices only.
+    actual_behavior: >
+      Amazon Braket provides access to noisy intermediate-scale
+      quantum (NISQ) devices. There is no built-in quantum error
+      correction, error mitigation, or fault-tolerant computing.
+      Results from QPU devices include hardware noise and gate
+      errors. Users must implement their own error mitigation
+      strategies if needed.
+    common_false_claim: "Braket automatically corrects quantum errors in your circuits."
+    correct_action: "Acknowledge NISQ limitations. Implement error mitigation techniques like zero-noise extrapolation if needed."
+
+  - id: P2-always-available
+    trigger_words: ["always available", "24/7", "on-demand QPU", "instant access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest QPU devices are always available like cloud
+      compute. QPUs have specific availability windows.
+    actual_behavior: >
+      QPU devices have specific availability windows that vary
+      by provider and device. Windows can change without notice.
+      Tasks submitted outside windows are queued. Only simulators
+      (SV1, DM1, TN1) are available on-demand 24/7. Check device
+      status with get-device before submitting tasks.
+    common_false_claim: "Submit your quantum task anytime — the QPU is always available."
+    correct_action: "Check device availability windows with aws braket get-device. Use simulators for immediate execution."
+
+  - id: P3-unlimited-qubits
+    trigger_words: ["any number of qubits", "unlimited qubits", "scale qubits"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Braket supports arbitrary qubit counts.
+      Each device has strict qubit limits.
+    actual_behavior: >
+      Each device has a maximum qubit count. Simulators: SV1
+      supports up to 34 qubits, DM1 up to 17 qubits, TN1 up
+      to 50 qubits (with structure constraints). QPU qubit
+      counts depend on the specific hardware (e.g., IonQ
+      Harmony 11 qubits, Rigetti Aspen-M-3 79 qubits). These
+      limits are hard constraints.
+    common_false_claim: "Braket can run circuits with any number of qubits."
+    correct_action: "Check device qubit limits with get-device capabilities. Design circuits within device constraints."
+
+  - id: P4-free-simulators
+    trigger_words: ["free simulator", "no cost", "free tier quantum"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Braket simulators are free. All Braket
+      resources incur charges.
+    actual_behavior: >
+      Braket simulators charge per minute of simulation time.
+      SV1, DM1, and TN1 each have different per-minute rates.
+      QPU devices charge per task plus per shot. Notebook
+      instances charge standard SageMaker rates. There is no
+      permanent free tier for Braket, though AWS occasionally
+      offers limited free credits for new users.
+    common_false_claim: "Use the Braket simulator for free to test your circuits."
+    correct_action: "Check current Braket pricing. Use local simulator (braket_sv) for free local testing before using cloud resources."
+
+  - id: P5-universal-gate-set
+    trigger_words: ["any gate", "all gates supported", "universal gates"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all quantum gates work on all devices.
+      Gate support is device-specific.
+    actual_behavior: >
+      Each device supports a specific native gate set. The Braket
+      SDK can transpile some gates to native equivalents, but not
+      all gates are supported on all devices. For example, IonQ
+      devices natively support GPi, GPi2, and MS gates. Rigetti
+      devices support different native gates. Unsupported gates
+      cause circuit validation failures.
+    common_false_claim: "Braket supports all standard quantum gates on every device."
+    correct_action: "Check device-supported gates via get-device. Use SDK verbatim=False for automatic transpilation where possible."
+
+  - id: P6-instant-results
+    trigger_words: ["instant results", "real-time quantum", "immediate output"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest quantum task results are instant. QPU tasks
+      involve queuing and processing delays.
+    actual_behavior: >
+      QPU tasks are queued and executed during device availability
+      windows. Wait times can range from seconds to hours depending
+      on queue depth and device availability. Results are written
+      to S3 asynchronously after task completion. Simulators are
+      faster but still take time proportional to circuit complexity.
+    common_false_claim: "Get quantum computation results instantly."
+    correct_action: "Poll task status with get-quantum-task. Set up S3 event notifications for result availability."
+
+  - id: P7-classical-quantum-same
+    trigger_words: ["hybrid job", "classical compute", "same instance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate classical and quantum components of hybrid
+      jobs as running on the same infrastructure.
+    actual_behavior: >
+      Hybrid jobs run classical code on EC2 instances (via
+      SageMaker) and quantum circuits on separate QPU or
+      simulator devices. The classical and quantum components
+      communicate via the Braket SDK. They are billed separately.
+      Classical instance failures and quantum task failures are
+      independent failure modes.
+    common_false_claim: "Hybrid jobs run classical and quantum code on the same machine."
+    correct_action: "Debug classical and quantum components separately. Check SageMaker logs for classical issues and task status for quantum issues."
+
+  - id: P8-braket-all-regions
+    trigger_words: ["any region", "all regions", "global service"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Braket is available in all AWS regions.
+      It is available in select regions only.
+    actual_behavior: >
+      Amazon Braket is available in specific AWS regions (e.g.,
+      us-east-1, us-west-1, us-west-2, eu-west-2). Not all
+      devices are available in all Braket regions. QPU device
+      availability depends on the physical location of the
+      quantum hardware. Always verify region support before
+      troubleshooting.
+    common_false_claim: "Braket works in any AWS region."
+    correct_action: "Check Braket regional availability. Verify the specific device is available in the target region."
+
+remediation_hallucinations:
+
+  - id: R1-delete-and-recreate
+    false_fix: "Delete the failed quantum task and recreate it to fix the error."
+    why_wrong: >
+      Failed quantum tasks cannot be deleted — they are immutable
+      records. The underlying issue (circuit error, device
+      constraint, permissions) must be fixed before creating a
+      new task.
+    correct_approach: >
+      Diagnose the failure reason from the task's failureReason
+      field. Fix the root cause (circuit design, IAM permissions,
+      S3 bucket config) then submit a new task.
+
+  - id: R2-increase-shots-for-accuracy
+    false_fix: "Increase the number of shots to eliminate quantum noise and get perfect results."
+    why_wrong: >
+      Increasing shots improves statistical sampling but does NOT
+      eliminate quantum noise or gate errors. NISQ devices have
+      inherent hardware noise that persists regardless of shot count.
+    correct_approach: >
+      Increase shots for better statistical confidence. For noise
+      reduction, implement error mitigation techniques or use
+      simulators for noise-free results.

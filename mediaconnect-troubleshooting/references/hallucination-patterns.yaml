@@ -1,0 +1,160 @@
+# =============================================================================
+# AWS Elemental MediaConnect "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-multi-region-auto
+    trigger_words: ["multi-region", "cross-region", "global flow", "region failover"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest MediaConnect flows automatically span multiple
+      regions. Flows are strictly regional resources.
+    actual_behavior: >
+      MediaConnect flows exist in a single AWS region and AZ.
+      Multi-region delivery requires creating separate flows in
+      each region connected via entitlements. The source account
+      grants an entitlement, and the subscriber account in another
+      region creates a flow using that entitlement ARN. There is
+      no automatic cross-region replication or failover.
+    common_false_claim: "Create a MediaConnect flow that spans us-east-1 and eu-west-1."
+    correct_action: "Create separate flows in each region. Use entitlements to share content between regions."
+
+  - id: P2-single-source-failover
+    trigger_words: ["failover", "redundancy", "high availability", "source backup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest failover works with a single source or sources
+      in the same AZ. Failover requires two sources in different AZs.
+    actual_behavior: >
+      Source failover requires exactly two sources configured in
+      different availability zones. Both sources must deliver
+      identical content with matching encoding settings. The
+      failover mode can be MERGE (combine both) or FAILOVER
+      (switch on failure). Single-source flows have no failover
+      capability.
+    common_false_claim: "Enable failover on your single-source flow for high availability."
+    correct_action: "Configure two sources in different AZs with identical content. Set failover mode to MERGE or FAILOVER."
+
+  - id: P3-entitlement-same-account
+    trigger_words: ["entitlement", "share flow", "grant access", "subscribe"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest entitlements can share content within the same
+      account. Entitlements are strictly cross-account.
+    actual_behavior: >
+      Entitlements grant another AWS account permission to use a
+      flow's content. The subscriber must be a different AWS
+      account. For same-account delivery, use outputs (up to 50
+      per flow). The subscriber creates their own flow using the
+      entitlement ARN as the source.
+    common_false_claim: "Create an entitlement to share the flow with another application in your account."
+    correct_action: "Use outputs for same-account delivery. Use entitlements only for cross-account sharing."
+
+  - id: P4-encryption-interchangeable
+    trigger_words: ["encrypt", "SPEKE", "static key", "SRT encryption", "DRM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate the three encryption models or suggest they
+      are interchangeable. Each has distinct requirements.
+    actual_behavior: >
+      SPEKE encryption requires a DRM key provider URL and an
+      IAM role with permission to call the key provider. Static-key
+      encryption requires a Secrets Manager secret containing a
+      base64-encoded 128-bit or 256-bit key. SRT encryption uses
+      a passphrase configured in the SRT protocol settings. These
+      are not interchangeable and have different setup procedures.
+    common_false_claim: "Just enable encryption on the flow and it will use your KMS key."
+    correct_action: "Choose the appropriate encryption model. SPEKE for DRM, static-key for AES, SRT passphrase for SRT protocol."
+
+  - id: P5-instant-flow-start
+    trigger_words: ["start flow", "flow status", "activate", "running"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest flows start instantly. Flow state transitions
+      take time and have intermediate states.
+    actual_behavior: >
+      Starting a flow transitions through STARTING before reaching
+      ACTIVE. Stopping transitions through STOPPING before reaching
+      STANDBY. These transitions can take 30 seconds to several
+      minutes. Issuing start/stop commands during transitions
+      causes ConflictException errors. Always poll flow status
+      before issuing state change commands.
+    common_false_claim: "Start the flow and it will be active immediately."
+    correct_action: "Start the flow and poll describe-flow until Status is ACTIVE. Handle STARTING state gracefully."
+
+  - id: P6-unlimited-outputs
+    trigger_words: ["outputs", "destinations", "multiple outputs", "fan-out"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention output limits or suggest unlimited
+      fan-out capability.
+    actual_behavior: >
+      Each MediaConnect flow supports up to 50 outputs. Each
+      output consumes bandwidth from the flow's source bitrate.
+      Total output bandwidth is constrained by the source input
+      rate. Adding too many high-bitrate outputs can cause
+      quality degradation or output failures.
+    common_false_claim: "Add as many outputs as you need to the flow."
+    correct_action: "Check current output count against the 50-output limit. Verify total output bandwidth fits within source bitrate."
+
+  - id: P7-protocol-agnostic
+    trigger_words: ["protocol", "Zixi", "SRT", "RIST", "RTP", "change protocol"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest protocols are interchangeable or that changing
+      protocol is a simple configuration change.
+    actual_behavior: >
+      Each protocol (Zixi, SRT, RIST, RTP/FEC, CDI) has different
+      network requirements, port configurations, NAT traversal
+      capabilities, and error correction mechanisms. SRT supports
+      caller/listener modes for NAT traversal. Zixi requires
+      specific port ranges and licensing. Changing protocol on a
+      source or output requires removing and recreating it.
+    common_false_claim: "Switch the source protocol from RTP to SRT without any changes."
+    correct_action: "Remove the existing source/output and create a new one with the desired protocol. Update firewall rules accordingly."
+
+  - id: P8-vpc-auto-config
+    trigger_words: ["VPC", "VPC interface", "private flow", "network interface"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest VPC interfaces are automatically configured
+      or that default security groups work.
+    actual_behavior: >
+      VPC interfaces require explicit configuration: a subnet ID,
+      security group IDs, and a role ARN. MediaConnect creates an
+      ENI in the specified subnet. Security groups must allow
+      inbound traffic on the specific protocol port from the
+      source IP range. Default security groups typically do NOT
+      allow the required inbound traffic. ENI limits per subnet
+      and account apply.
+    common_false_claim: "Add a VPC interface and MediaConnect will automatically configure networking."
+    correct_action: "Specify subnet, security groups, and role ARN. Configure security group inbound rules for the protocol port and source IPs."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-flow
+    trigger_words: ["delete flow", "recreate", "start over"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a flow removes all outputs, entitlements, and
+      VPC interfaces. Subscribers using entitlements lose access.
+      This is destructive and cannot be undone.
+    correct_approach: >
+      Stop the flow, modify the specific misconfigured component
+      (source, output, VPC interface), then restart. Only delete
+      and recreate as a last resort after documenting all outputs
+      and entitlements for recreation.
+
+  - id: R2-disable-encryption-to-debug
+    trigger_words: ["disable encryption", "remove encryption", "unencrypted"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Disabling encryption on a production flow exposes live video
+      content in transit. This violates security policies and may
+      breach compliance requirements (HIPAA, PCI, content protection).
+    correct_approach: >
+      Debug encryption issues by verifying key configuration,
+      Secrets Manager access, SPEKE endpoint connectivity, or SRT
+      passphrase matching. Use a separate test flow with test
+      content if unencrypted testing is required.

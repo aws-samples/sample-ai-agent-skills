@@ -1,0 +1,154 @@
+# =============================================================================
+# AWS Elemental MediaStore "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-s3-commands
+    trigger_words: ["s3 cp", "s3 sync", "s3api", "bucket", "s3://"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to S3 commands for any AWS storage service.
+      MediaStore uses completely different APIs and endpoints.
+    actual_behavior: >
+      MediaStore uses the mediastore-data API for object operations,
+      not S3 APIs. Commands like aws s3 cp, aws s3api put-object,
+      or s3:// URIs do not work with MediaStore. The correct
+      commands are aws mediastore-data put-object and
+      aws mediastore-data get-object with the container endpoint.
+    common_false_claim: "Upload your video to MediaStore with aws s3 cp video.mp4 s3://container-name/."
+    correct_action: "Use aws mediastore-data put-object --endpoint <container-endpoint> --body video.mp4 --path /video.mp4 --content-type video/mp4."
+
+  - id: P2-s3-bucket-policy
+    trigger_words: ["bucket policy", "s3 policy", "PutBucketPolicy", "s3:GetObject"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs use S3 bucket policy syntax for MediaStore container
+      policies. The formats are different.
+    actual_behavior: >
+      MediaStore container policies use MediaStore-specific actions
+      like mediastore:GetObject, mediastore:PutObject, and
+      mediastore:DeleteObject. They do NOT use s3:GetObject or
+      other S3 actions. The policy structure is similar but the
+      action namespace is different.
+    common_false_claim: "Add s3:GetObject permission to the MediaStore container policy."
+    correct_action: "Use mediastore:GetObject in the container policy. Set with aws mediastore put-container-policy."
+
+  - id: P3-general-purpose-storage
+    trigger_words: ["store files", "backup", "archive", "data lake", "general storage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MediaStore for general-purpose storage.
+      It is specifically designed for live video origination.
+    actual_behavior: >
+      MediaStore is optimized for live video origination with
+      consistent low-latency reads and writes. It has lower
+      throughput limits than S3 and higher per-GB costs. It
+      should only be used for media streaming workflows, not
+      for general file storage, backups, or data lakes.
+    common_false_claim: "Use MediaStore to store your application files for low-latency access."
+    correct_action: "Use S3 for general storage. Use MediaStore only for live video origination and streaming workflows."
+
+  - id: P4-versioning
+    trigger_words: ["versioning", "version history", "previous version", "rollback object"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume MediaStore supports versioning like S3.
+      MediaStore does not have object versioning.
+    actual_behavior: >
+      MediaStore does not support object versioning. When an
+      object is overwritten, the previous version is permanently
+      lost. When an object is deleted, it cannot be recovered.
+      There is no MFA delete, no version ID, and no lifecycle
+      rules for version management.
+    common_false_claim: "Enable versioning on the MediaStore container to keep previous versions."
+    correct_action: "MediaStore has no versioning. Implement application-level versioning with unique path names if needed."
+
+  - id: P5-oai-access
+    trigger_words: ["origin access identity", "OAI", "origin access control", "OAC"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using CloudFront OAI/OAC with MediaStore
+      like they would with S3. MediaStore uses container policies.
+    actual_behavior: >
+      CloudFront Origin Access Identity (OAI) and Origin Access
+      Control (OAC) are S3-specific features. MediaStore uses
+      container policies to control access. When integrating
+      with CloudFront, configure the container policy to allow
+      access from the CloudFront distribution or use public
+      read access for the container.
+    common_false_claim: "Create an OAI and attach it to the MediaStore origin in CloudFront."
+    correct_action: "Configure the MediaStore container policy to allow access. Use the container endpoint as the CloudFront origin."
+
+  - id: P6-cross-region-replication
+    trigger_words: ["replication", "cross-region", "multi-region", "replicate"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cross-region replication for MediaStore
+      like S3 CRR. MediaStore does not support replication.
+    actual_behavior: >
+      MediaStore does not have built-in cross-region replication.
+      Each container exists in a single region. For multi-region
+      media delivery, use CloudFront with the MediaStore origin
+      or implement application-level replication by writing to
+      containers in multiple regions.
+    common_false_claim: "Enable cross-region replication on the MediaStore container."
+    correct_action: "Use CloudFront for global delivery. For redundancy, write to containers in multiple regions at the application level."
+
+  - id: P7-storage-classes
+    trigger_words: ["storage class", "infrequent access", "glacier", "intelligent tiering"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest storage classes for MediaStore like S3.
+      MediaStore has a single storage tier.
+    actual_behavior: >
+      MediaStore does not have storage classes or tiers. All
+      objects are stored in a single high-performance tier
+      optimized for low-latency access. There is no equivalent
+      of S3 Infrequent Access, Glacier, or Intelligent Tiering.
+      For cost optimization, use lifecycle policies to delete
+      old content.
+    common_false_claim: "Move old MediaStore objects to a cheaper storage class."
+    correct_action: "Use lifecycle policies to delete old content. Move archived media to S3 Glacier if long-term retention is needed."
+
+  - id: P8-event-notifications
+    trigger_words: ["event notification", "trigger lambda", "object created event", "SNS notification"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest S3-style event notifications for MediaStore.
+      MediaStore has limited event support.
+    actual_behavior: >
+      MediaStore does not have S3-style event notifications
+      (object created, deleted events to Lambda/SNS/SQS).
+      For event-driven workflows, use CloudWatch Events/EventBridge
+      with CloudTrail data events for MediaStore, or poll the
+      container for changes.
+    common_false_claim: "Configure MediaStore to trigger a Lambda function when a new object is uploaded."
+    correct_action: "Use CloudTrail data events with EventBridge rules to detect MediaStore object operations."
+
+remediation_hallucinations:
+
+  - id: R1-force-delete-container
+    trigger_words: ["force delete", "delete container with objects", "rm -rf"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Suggesting force-deletion of containers with objects leads
+      to permanent data loss. MediaStore requires empty containers.
+    correct_approach: >
+      List all objects, delete them individually or in batches,
+      then delete the empty container. Use lifecycle policies
+      for automated cleanup. Always verify the container is
+      empty before deletion.
+
+  - id: R2-public-container-policy
+    trigger_words: ["make public", "public access", "allow all", "Principal *"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Making a MediaStore container publicly accessible without
+      restrictions exposes live video content and incurs
+      uncontrolled data transfer costs.
+    correct_approach: >
+      Use restrictive container policies with specific principals
+      or IP conditions. For public content delivery, use
+      CloudFront with the MediaStore origin and restrict direct
+      container access.

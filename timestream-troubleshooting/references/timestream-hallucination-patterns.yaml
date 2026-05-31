@@ -1,0 +1,141 @@
+# =============================================================================
+# Amazon Timestream "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-retention-unit-confusion
+    trigger_words: ["retention", "memory store", "magnetic store", "retention period", "data expiry"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse the units for memory store retention (hours) and
+      magnetic store retention (days). They may suggest setting memory
+      store retention to "30" meaning 30 days when it actually means
+      30 hours.
+    actual_behavior: >
+      Memory store retention is specified in HOURS (1-8760). Magnetic
+      store retention is specified in DAYS (1-73000). Setting memory
+      store retention to 24 means 24 hours (1 day), not 24 days.
+      Setting magnetic store retention to 365 means 365 days (1 year).
+      Always verify the unit when configuring or interpreting retention.
+    common_false_claim: "Set memory store retention to 30 for 30 days of hot data."
+    correct_action: "Memory store retention is in hours. For 30 days, set to 720 hours."
+
+  - id: P2-update-delete-supported
+    trigger_words: ["update record", "delete record", "modify data", "correct data", "remove record"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest UPDATE or DELETE operations because most databases
+      support them. Timestream is append-only and immutable.
+    actual_behavior: >
+      Timestream does not support UPDATE or DELETE operations. Data is
+      immutable once written. The only way to remove data is via
+      retention policy expiration. To correct data, write a new record
+      with the same dimensions and timestamp but different measure
+      values — Timestream uses the latest version for queries.
+    common_false_claim: "Delete the incorrect records and re-insert the correct ones."
+    correct_action: "Write corrected records with same dimensions/time. Let incorrect data expire via retention."
+
+  - id: P3-magnetic-writes-default-on
+    trigger_words: ["magnetic store", "late data", "historical data", "backfill", "magnetic writes"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume magnetic store writes are enabled by default because
+      it seems like a natural feature. They are disabled by default.
+    actual_behavior: >
+      Magnetic store writes are DISABLED by default on new tables. Data
+      can only be written to the memory store unless explicitly enabled.
+      Late-arriving data with timestamps older than the memory store
+      retention window is rejected with RejectedRecords error. Enable
+      with: aws timestream-write update-table --magnetic-store-write-properties
+      EnableMagneticStoreWrites=true.
+    common_false_claim: "Timestream automatically writes late-arriving data to magnetic store."
+    correct_action: "Explicitly enable magnetic store writes on the table for late-arriving data."
+
+  - id: P4-influxdb-same-service
+    trigger_words: ["InfluxDB", "Timestream InfluxDB", "InfluxQL", "Flux query"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate Timestream for InfluxDB with Timestream for
+      LiveAnalytics because they share the "Timestream" name.
+    actual_behavior: >
+      Timestream for InfluxDB and Timestream for LiveAnalytics are
+      completely different services. LiveAnalytics uses SQL and the
+      timestream-write/timestream-query APIs. InfluxDB uses InfluxQL/Flux
+      and the timestream-influxdb API. They have different pricing,
+      capabilities, and management interfaces.
+    common_false_claim: "Use InfluxQL to query your Timestream for LiveAnalytics table."
+    correct_action: "Use SQL for Timestream for LiveAnalytics. Use InfluxQL/Flux for Timestream for InfluxDB."
+
+  - id: P5-hardcoded-endpoints
+    trigger_words: ["endpoint", "connection", "API endpoint", "service URL"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest hardcoding Timestream endpoints like other AWS
+      services. Timestream requires endpoint discovery.
+    actual_behavior: >
+      Timestream uses cell-level architecture with dynamic endpoints.
+      Clients must call DescribeEndpoints to discover the correct
+      write and query endpoints. The AWS SDK handles this automatically.
+      Custom HTTP clients must implement endpoint discovery and caching.
+      Endpoints can change, so refresh periodically.
+    common_false_claim: "Connect to timestream.us-east-1.amazonaws.com for writes."
+    correct_action: "Use DescribeEndpoints to discover the correct endpoint. SDK handles this automatically."
+
+  - id: P6-dimensions-changeable
+    trigger_words: ["dimension", "schema", "data model", "rename dimension", "change schema"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying dimensions or schema after data is written,
+      as with traditional databases. Timestream schema is immutable.
+    actual_behavior: >
+      Once data is written with specific dimensions and measure names,
+      the schema is established and cannot be changed. You cannot rename
+      dimensions, change measure types, or restructure existing data.
+      To change the schema, create a new table with the desired structure
+      and migrate data via scheduled queries or application logic.
+    common_false_claim: "Rename the dimension column to fix the naming convention."
+    correct_action: "Create a new table with correct schema. Use scheduled queries to migrate data."
+
+  - id: P7-scheduled-query-auto-notify
+    trigger_words: ["scheduled query", "materialized view", "aggregation", "scheduled"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating scheduled queries without mentioning the
+      required SNS and S3 configuration, implying failures will be
+      visible automatically.
+    actual_behavior: >
+      Scheduled queries require: (1) IAM role with read/write permissions,
+      (2) SNS topic for execution notifications, (3) S3 bucket for error
+      reports. Without SNS, failures are SILENT — you won't know the
+      query failed. Always configure SNS notifications and monitor the
+      S3 error bucket.
+    common_false_claim: "Create a scheduled query and it will run automatically with error reporting."
+    correct_action: "Configure SNS topic and S3 error bucket when creating scheduled queries."
+
+  - id: P8-query-magnetic-same-speed
+    trigger_words: ["query performance", "magnetic store query", "memory vs magnetic", "query latency"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs imply querying memory store and magnetic store data has
+      similar performance characteristics.
+    actual_behavior: >
+      Memory store data is optimized for low-latency queries on recent
+      data. Magnetic store data has higher query latency because it's
+      stored on cost-optimized storage. Queries spanning both stores
+      may have variable latency. For best performance, query recent
+      data from memory store. Use scheduled queries to pre-aggregate
+      magnetic store data.
+    common_false_claim: "Query performance is the same regardless of whether data is in memory or magnetic store."
+    correct_action: "Expect higher latency for magnetic store queries. Use scheduled queries for aggregations."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

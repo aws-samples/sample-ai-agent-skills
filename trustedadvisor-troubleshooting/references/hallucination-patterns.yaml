@@ -1,0 +1,130 @@
+# =============================================================================
+# Trusted Advisor "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-api-all-plans
+    trigger_words: ["Trusted Advisor API", "describe-trusted-advisor", "TA API"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using the full Trusted Advisor API regardless of
+      support plan. Full API access requires Business or Enterprise.
+    actual_behavior: >
+      The full Trusted Advisor API (all checks, refresh, results) requires
+      Business or Enterprise Support plan. Basic and Developer plans only
+      have programmatic access to 7 core checks. Attempting to access
+      other checks returns a SubscriptionRequiredException.
+    common_false_claim: "Use the Trusted Advisor API to check all recommendations."
+    correct_action: "Verify support plan first. For Basic/Developer, only 7 core checks are available via API."
+
+  - id: P2-api-any-region
+    trigger_words: ["trusted advisor region", "support API region", "TA endpoint"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using the Trusted Advisor API in the user's default
+      region. The API is only available in us-east-1.
+    actual_behavior: >
+      The AWS Support API (which includes Trusted Advisor) is only
+      available in the us-east-1 region. All API calls must specify
+      --region us-east-1. Calls to other regions fail with endpoint
+      resolution errors.
+    common_false_claim: "Run the Trusted Advisor check in your preferred region."
+    correct_action: "Always use --region us-east-1 for all Trusted Advisor API calls."
+
+  - id: P3-real-time-results
+    trigger_words: ["current status", "real-time check", "live results"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs imply Trusted Advisor results are real-time. Results are
+      point-in-time snapshots from the last refresh.
+    actual_behavior: >
+      Trusted Advisor check results reflect the state at the last
+      refresh time. Some checks auto-refresh weekly, others require
+      manual refresh. Results can be hours or days old. Always check
+      the timestamp before acting on results.
+    common_false_claim: "Trusted Advisor shows the current state of your resources."
+    correct_action: "Check last refresh time. Trigger refresh if needed: aws support refresh-trusted-advisor-check --check-id <id> --region us-east-1"
+
+  - id: P4-exclude-fixes-issue
+    trigger_words: ["exclude resource", "suppress finding", "hide recommendation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest excluding resources as a way to resolve findings.
+      Excluding only hides the resource from the dashboard.
+    actual_behavior: >
+      Excluding a resource from a Trusted Advisor check only removes
+      it from the dashboard display and summary counts. The underlying
+      issue remains. The resource can be re-included at any time.
+      Exclusion is for acknowledged risks, not remediation.
+    common_false_claim: "Exclude the resource to resolve the Trusted Advisor finding."
+    correct_action: "Fix the underlying issue. Only exclude if the risk is intentionally accepted and documented."
+
+  - id: P5-priority-all-enterprise
+    trigger_words: ["Trusted Advisor Priority", "priority recommendations", "TAM recommendations"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Priority features for all Enterprise customers.
+      Priority requires Enterprise Support with an assigned TAM.
+    actual_behavior: >
+      Trusted Advisor Priority is a feature that provides curated,
+      prioritized recommendations through your Technical Account
+      Manager. It requires Enterprise Support plan AND an assigned
+      TAM. Not all Enterprise customers automatically have Priority.
+    common_false_claim: "Enable Trusted Advisor Priority in your Enterprise account."
+    correct_action: "Verify Enterprise Support with assigned TAM. Contact your TAM to enable Priority."
+
+  - id: P6-service-limits-accurate
+    trigger_words: ["service limit check", "quota check", "limit warning"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs treat service limit check results as current and accurate.
+      Results may lag behind recent quota increases.
+    actual_behavior: >
+      Trusted Advisor service limit checks may not immediately reflect
+      recent Service Quotas increases. There can be a delay of hours
+      to days. The check compares usage against the limit it last
+      retrieved, which may be outdated.
+    common_false_claim: "Trusted Advisor shows you're at 80% of your service limit."
+    correct_action: "Cross-reference with Service Quotas: aws service-quotas get-service-quota --service-code <code> --quota-code <code>"
+
+  - id: P7-eventbridge-resource-details
+    trigger_words: ["EventBridge Trusted Advisor", "TA event notification", "check event"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest EventBridge events contain detailed resource findings.
+      Events only contain check status changes.
+    actual_behavior: >
+      Trusted Advisor EventBridge events publish check-level status
+      changes (ok → warning, warning → error, etc.). They do not
+      include individual resource-level findings. To get resource
+      details, call describe-trusted-advisor-check-result after
+      receiving the event.
+    common_false_claim: "The EventBridge event will contain the list of affected resources."
+    correct_action: "Use EventBridge event as trigger, then call API for resource details."
+
+  - id: P8-org-view-consolidated-only
+    trigger_words: ["organizational view", "org Trusted Advisor", "multi-account TA"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest organizational view works with consolidated billing
+      only. It requires all features enabled in Organizations.
+    actual_behavior: >
+      Trusted Advisor organizational view requires AWS Organizations
+      with all features enabled, not just consolidated billing.
+      Additionally, Trusted Advisor must be enabled as a trusted
+      service in Organizations. The management account or a delegated
+      administrator can access the organizational view.
+    common_false_claim: "Enable organizational view since you have consolidated billing."
+    correct_action: "Enable all features in Organizations. Enable TA as trusted service. Access from management account."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

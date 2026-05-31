@@ -1,0 +1,125 @@
+# =============================================================================
+# Lambda "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about Lambda behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-memory-cpu-independence
+    trigger_words: ["CPU", "memory", "vCPU", "compute"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs treat CPU and memory as independent settings because most compute
+      services configure them separately. Lambda ties them together.
+    actual_behavior: >
+      Memory setting controls BOTH memory AND CPU proportionally.
+      1769 MB = 1 full vCPU. 128 MB = ~7% vCPU. 10240 MB = ~6 vCPUs.
+    common_false_claim: >
+      "Increase the CPU allocation for your Lambda function."
+    correct_action: "Increase memory to get more CPU. There is no separate CPU setting."
+
+  - id: P2-reserved-concurrency-prewarm
+    trigger_words: ["reserved concurrency", "warm", "pre-warm", "guarantee"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse reserved concurrency with provisioned concurrency.
+      Reserved is a cap. Provisioned is pre-warming.
+    actual_behavior: >
+      Reserved concurrency: sets MAX concurrent executions and removes
+      those units from the unreserved pool. Does NOT pre-warm.
+      Provisioned concurrency: pre-initializes execution environments.
+    common_false_claim: >
+      "Set reserved concurrency to 10 to keep 10 warm instances ready."
+    correct_action: "Use provisioned concurrency to pre-warm. Reserved concurrency is a cap."
+
+  - id: P3-vpc-lambda-internet
+    trigger_words: ["VPC", "internet", "public IP", "NAT"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume VPC resources can access the internet like EC2 instances
+      with public IPs. Lambda in VPC never gets a public IP.
+    actual_behavior: >
+      VPC Lambda functions are placed in private subnets with ENIs.
+      They have NO public IP and NO internet access by default.
+      Need NAT gateway or VPC endpoints for external connectivity.
+    common_false_claim: >
+      "Your Lambda function in the VPC can access the internet directly."
+
+  - id: P4-sync-retry
+    trigger_words: ["retry", "synchronous", "invoke", "error handling"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs apply async retry behavior to sync invocations because
+      "Lambda retries on failure" is a common oversimplification.
+    actual_behavior: >
+      Synchronous invocations return errors directly to the caller.
+      NO automatic retry. The caller must implement retry logic.
+      Only async invocations retry (twice by default).
+    common_false_claim: >
+      "Lambda will automatically retry the failed synchronous invocation."
+
+  - id: P5-tmp-persistence
+    trigger_words: ["/tmp", "temporary", "file storage", "ephemeral"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs know /tmp persists between invocations (warm starts) and
+      overgeneralize this to mean /tmp is reliable storage.
+    actual_behavior: >
+      /tmp persists across warm invocations of the SAME execution
+      environment. Wiped on cold starts. Not shared between concurrent
+      invocations. Max 10 GB. Not reliable for persistent data.
+    common_false_claim: >
+      "Store the cache in /tmp, it will persist across all invocations."
+
+  - id: P6-layer-universal-compatibility
+    trigger_words: ["layer", "runtime", "dependency", "shared"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs treat layers as universal packages. Layers with compiled
+      binaries are architecture and OS specific.
+    actual_behavior: >
+      Layers are extracted to /opt. Compiled binaries must match the
+      runtime OS (Amazon Linux 2) and architecture (x86_64 or arm64).
+      Pure Python/Node packages are usually portable. C extensions are not.
+    common_false_claim: >
+      "Just add the layer to your arm64 function, it will work."
+
+  - id: P7-execution-role-vs-resource-policy
+    trigger_words: ["IAM", "permission", "role", "invoke", "policy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate execution role (what Lambda can do) with resource
+      policy (who can invoke Lambda). Both involve IAM but serve
+      completely different purposes.
+    actual_behavior: >
+      Execution role: attached to function, grants permissions TO the
+      function (e.g., read DynamoDB). Resource policy: attached to
+      function, grants permissions FOR invoking the function (e.g.,
+      allow API Gateway to invoke).
+    common_false_claim: >
+      "Add lambda:InvokeFunction to the execution role so API Gateway can call it."
+    correct_action: "Add a resource policy (not execution role) to allow API Gateway invocation."
+
+  - id: P8-concurrency-scaling-instant
+    trigger_words: ["scale", "concurrency", "burst", "1000"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs claim Lambda scales instantly to any concurrency. There are
+      burst limits and account-level caps.
+    actual_behavior: >
+      Initial burst: 500-3000 concurrent executions (region-dependent).
+      After burst, scales by 500/minute. Account default limit: 1000
+      concurrent executions (can be increased). Unreserved minimum: 100.
+    common_false_claim: >
+      "Lambda will instantly scale to handle 10,000 concurrent requests."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

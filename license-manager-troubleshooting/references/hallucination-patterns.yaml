@@ -1,0 +1,156 @@
+# =============================================================================
+# AWS License Manager "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-enforcement
+    trigger_words: ["License Manager", "enforce", "block", "prevent"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest License Manager automatically enforces license
+      limits. Enforcement requires explicit hard limit configuration.
+    actual_behavior: >
+      License Manager tracks license consumption but does NOT
+      enforce limits by default. Hard limit enforcement must be
+      explicitly enabled on each license configuration. Without
+      hard limits, License Manager only tracks and alerts via
+      CloudWatch. Soft limits generate alerts but do not block
+      resource launches.
+    common_false_claim: "License Manager automatically prevents launching instances when licenses are exhausted."
+    correct_action: "Enable hard limit enforcement on the license configuration if blocking is desired. Otherwise, set up CloudWatch alarms for soft limit alerts."
+
+  - id: P2-grant-auto-active
+    trigger_words: ["grant", "share license", "cross-account license"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a grant automatically shares the
+      license. Grants must be accepted by the recipient.
+    actual_behavior: >
+      License grants go through a lifecycle: PENDING_WORKFLOW →
+      PENDING_ACCEPT → ACTIVE (or REJECTED). The recipient must
+      explicitly accept the grant via accept-grant API. Until
+      accepted, the grant provides no license access. Grants can
+      also be rejected or deleted.
+    common_false_claim: "Create a grant and the other account immediately gets license access."
+    correct_action: "Create the grant, then have the recipient accept it via accept-grant. Monitor grant status."
+
+  - id: P3-all-software-discovered
+    trigger_words: ["discover software", "find licenses", "inventory"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest automated discovery finds all software. It
+      only discovers software on SSM-managed instances.
+    actual_behavior: >
+      Automated discovery uses Systems Manager inventory to find
+      software installations. It only works on instances with SSM
+      Agent installed and running. On-premises servers require
+      SSM hybrid activation. Software installed in containers,
+      Lambda functions, or non-SSM instances is NOT discovered.
+    common_false_claim: "License Manager automatically discovers all software across your environment."
+    correct_action: "Ensure SSM Agent is installed on all instances. Use hybrid activation for on-premises. Manually track non-SSM software."
+
+  - id: P4-license-counting-universal
+    trigger_words: ["license count", "vCPU", "core", "socket"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest one counting method works for all software.
+      Different vendors use different counting methods.
+    actual_behavior: >
+      License counting rules vary by software vendor: vCPU-based
+      (common for cloud), core-based (Oracle, SQL Server),
+      socket-based (legacy), or instance-based. Each license
+      configuration must use the counting method specified in the
+      software license agreement. Using the wrong method leads
+      to inaccurate compliance tracking.
+    common_false_claim: "Set up vCPU counting for all your licenses."
+    correct_action: "Check each software vendor's license agreement for the correct counting method. Configure each license configuration accordingly."
+
+  - id: P5-dedicated-host-any-instance
+    trigger_words: ["dedicated host", "instance type", "host placement"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any instance type can run on any dedicated
+      host. Hosts are tied to instance families.
+    actual_behavior: >
+      Dedicated hosts are allocated for specific instance families
+      (e.g., m5, c5, r5). Only instances from that family can run
+      on the host. Some hosts support multiple instance sizes
+      within the family. You cannot run a c5.xlarge on an m5 host.
+    common_false_claim: "Launch any instance type on your dedicated host."
+    correct_action: "Verify the dedicated host's instance family matches the desired instance type. Allocate new hosts for different families."
+
+  - id: P6-linux-sub-all-distros
+    trigger_words: ["Linux subscription", "Linux license", "RHEL", "SUSE"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Linux subscription discovery covers all
+      distributions. Only specific commercial distributions are tracked.
+    actual_behavior: >
+      Linux subscription discovery tracks RHEL (Red Hat Enterprise
+      Linux), SUSE Linux Enterprise Server, and Ubuntu Pro
+      subscriptions. It does NOT track Amazon Linux, Debian,
+      CentOS, or other free distributions. Discovery requires
+      SSM Agent and the inventory plugin.
+    common_false_claim: "License Manager tracks all Linux distribution licenses."
+    correct_action: "Linux subscription discovery covers RHEL, SUSE, and Ubuntu Pro only. Use other tools for tracking other distributions."
+
+  - id: P7-user-sub-simple
+    trigger_words: ["user subscription", "Visual Studio", "per-user license"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest user-based subscriptions are simple to set up.
+      They require Active Directory and specific VPC configuration.
+    actual_behavior: >
+      User-based subscriptions (Microsoft Visual Studio, Office)
+      require: AWS Directory Service or AD Connector, VPC with
+      proper DNS resolution, network connectivity to the directory,
+      and specific IAM roles. Setup is significantly more complex
+      than standard license configurations.
+    common_false_claim: "Just create a user subscription and assign users."
+    correct_action: "Set up Active Directory integration first. Configure VPC, DNS, and IAM roles. Then create user subscriptions."
+
+  - id: P8-cross-account-automatic
+    trigger_words: ["cross-account", "share across accounts", "organization sharing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cross-account sharing works automatically in
+      organizations. It requires explicit RAM and License Manager setup.
+    actual_behavior: >
+      Cross-account license sharing requires: enabling organization
+      sharing in RAM, configuring License Manager organization
+      settings from the management account, and creating grants
+      for specific accounts or the organization. It is not
+      automatic even within an organization.
+    common_false_claim: "License Manager automatically shares licenses across organization accounts."
+    correct_action: "Enable RAM organization sharing. Configure License Manager org settings. Create grants for target accounts."
+
+remediation_hallucinations:
+
+  - id: R1-delete-config-clears-violations
+    trigger_words: ["delete configuration", "remove license config", "clear violations"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest deleting a license configuration clears
+      violations. It removes tracking entirely, creating compliance risk.
+    actual_behavior: >
+      Deleting a license configuration removes all tracking,
+      associations, and violation history. It does NOT resolve
+      the underlying compliance issue. Resources continue running
+      without license tracking. This creates a compliance blind
+      spot that could lead to audit failures.
+    correct_action: "Fix the license configuration rules or add more licenses. Never delete configurations to hide violations."
+
+  - id: R2-disable-hard-limit-fix
+    trigger_words: ["disable hard limit", "remove enforcement", "allow launches"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest disabling hard limits to fix launch failures.
+      This removes compliance enforcement entirely.
+    actual_behavior: >
+      Disabling hard limits allows resource launches to proceed
+      without license checks. While this fixes the immediate
+      launch failure, it removes compliance enforcement and can
+      lead to license overuse, audit failures, and unexpected
+      vendor true-up costs.
+    correct_action: "Add more licenses to the configuration, optimize license usage, or request temporary limit increase. Only disable hard limits as a last resort with compliance team approval."

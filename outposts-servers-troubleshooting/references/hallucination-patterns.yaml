@@ -1,0 +1,146 @@
+# =============================================================================
+# AWS Outposts Servers "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-rack-capabilities-on-server
+    trigger_words: ["Outposts server", "1U", "2U", "rack features", "server capacity"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate Outposts rack (42U) capabilities with Outposts
+      Servers (1U/2U). Servers have far fewer instance types, no
+      local S3, no RDS, and no redundancy.
+    actual_behavior: >
+      Outposts Servers support only EC2 and EBS. They do NOT support
+      S3 on Outposts, RDS on Outposts, ElastiCache on Outposts, or
+      ECS/EKS on Outposts. Instance families are limited to c6gd,
+      m6gd, r6gd (Graviton) and c6id, m6id, r6id (Intel).
+    common_false_claim: "You can run RDS and S3 on your Outposts Server."
+    correct_action: "Verify supported services with aws outposts get-outpost. Only EC2 and EBS are supported on servers."
+
+  - id: P2-ebs-regional-replication
+    trigger_words: ["EBS", "durability", "replication", "backup", "snapshot"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume EBS on Outposts has the same durability as regional
+      EBS with multi-AZ replication.
+    actual_behavior: >
+      EBS volumes on Outposts Servers are stored on local NVMe drives
+      with NO replication to the AWS Region. If the server hardware
+      fails, EBS data is lost. Snapshots can be taken to S3 in the
+      Region (requires service link), but the local volume itself
+      has no redundancy.
+    common_false_claim: "EBS on Outposts automatically replicates to the Region for durability."
+    correct_action: "Implement regular EBS snapshots to the Region. Design applications for data loss on server failure."
+
+  - id: P3-offline-full-operation
+    trigger_words: ["disconnected", "offline", "no connectivity", "service link down"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Outposts Servers can operate fully when disconnected
+      from the parent Region.
+    actual_behavior: >
+      When the service link is down, running EC2 instances continue
+      to operate, but new instance launches, EBS volume creation,
+      instance stops/starts, and all API calls fail. The server
+      cannot receive software updates or publish CloudWatch metrics.
+      DNS resolution for AWS services may also fail.
+    common_false_claim: "Outposts Servers work fully offline at edge locations."
+    correct_action: "Design for degraded operation during disconnection. Pre-launch instances. Use local DNS caching."
+
+  - id: P4-any-instance-type
+    trigger_words: ["instance type", "launch instance", "EC2 on Outposts"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any EC2 instance type can run on Outposts Servers.
+      Only specific families are supported.
+    actual_behavior: >
+      Outposts Servers support only specific instance families with
+      local NVMe storage: c6gd, m6gd, r6gd (Graviton ARM) and
+      c6id, m6id, r6id (Intel x86). Not all sizes within these
+      families may be available on a given server configuration.
+      Use aws outposts get-outpost-instance-types to verify.
+    common_false_claim: "Launch any EC2 instance type on your Outposts Server."
+    correct_action: "Check supported types: aws outposts get-outpost-instance-types --outpost-id <id>."
+
+  - id: P5-automatic-failover
+    trigger_words: ["failover", "high availability", "redundancy", "fault tolerance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Outposts Servers have built-in failover or
+      redundancy mechanisms.
+    actual_behavior: >
+      A single Outposts Server has NO built-in redundancy. If the
+      server fails, all EC2 instances and EBS volumes on it are
+      affected. There is no automatic failover to another server
+      or to the Region. High availability requires multiple servers
+      or application-level resilience design.
+    common_false_claim: "Outposts automatically fails over to the Region if the server goes down."
+    correct_action: "Design application-level HA. Consider multiple Outposts Servers or Region fallback at the app layer."
+
+  - id: P6-manual-firmware-updates
+    trigger_words: ["update", "firmware", "patch", "upgrade", "software update"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest customers can manually update Outposts Server
+      firmware or software.
+    actual_behavior: >
+      AWS manages all software and firmware updates for Outposts
+      Servers. Customers cannot manually apply patches or updates.
+      Updates are delivered through the service link and require
+      connectivity to the parent Region. Update scheduling can be
+      configured through the Outposts console.
+    common_false_claim: "SSH into the Outposts Server to apply firmware updates manually."
+    correct_action: "Updates are AWS-managed. Ensure service link is active. Configure update windows in the console."
+
+  - id: P7-coip-optional
+    trigger_words: ["CoIP", "customer-owned IP", "IP address", "networking"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest CoIP configuration is optional or that
+      standard VPC IPs work on Outposts Servers.
+    actual_behavior: >
+      Customer-owned IP (CoIP) pools are required for Outposts
+      Servers to provide local network addressing. The local
+      gateway route table must be configured with CoIP associations.
+      Without proper CoIP configuration, instances cannot communicate
+      with the on-premises network.
+    common_false_claim: "Just use regular VPC private IPs for on-premises connectivity."
+    correct_action: "Configure CoIP pools and local gateway route tables. Verify with aws ec2 describe-coip-pools."
+
+  - id: P8-unlimited-capacity
+    trigger_words: ["capacity", "scale", "more instances", "add capacity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Outposts Servers can scale like cloud resources
+      or that capacity can be added dynamically.
+    actual_behavior: >
+      Outposts Servers have fixed hardware capacity determined at
+      order time. You cannot add more compute or storage to an
+      existing server. Capacity is limited to the server's physical
+      resources. To add capacity, you must order additional servers.
+    common_false_claim: "Scale your Outposts Server capacity on demand like in the cloud."
+    correct_action: "Check available capacity: aws outposts get-outpost-instance-types. Order additional servers for more capacity."
+
+remediation_hallucinations:
+
+  - id: R1-ssh-to-outpost-server
+    false_remediation: "SSH into the Outposts Server host to diagnose hardware issues."
+    why_wrong: >
+      Customers do not have SSH or console access to the Outposts
+      Server host. AWS manages the underlying infrastructure.
+    correct_approach: >
+      Use AWS APIs, CloudWatch metrics, and AWS Support for hardware
+      diagnostics. Check ConnectedStatus metric and server lifecycle
+      status via aws outposts get-outpost.
+
+  - id: R2-move-ebs-to-region
+    false_remediation: "Move the EBS volume from Outposts to the Region for better durability."
+    why_wrong: >
+      EBS volumes on Outposts cannot be directly moved to the Region.
+      They exist on local NVMe storage only.
+    correct_approach: >
+      Create an EBS snapshot (requires service link) which is stored
+      in S3 in the Region. Then create a new volume from the snapshot
+      in the Region. This is a copy operation, not a move.

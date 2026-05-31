@@ -1,0 +1,114 @@
+# =============================================================================
+# DynamoDB "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-throttling-table-level
+    trigger_words: ["throttling", "ProvisionedThroughputExceeded", "capacity"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs see table-level capacity and assume throttling is table-level.
+      Throttling occurs at the partition level.
+    actual_behavior: >
+      Capacity is distributed across partitions. A hot partition throttles
+      even if table-level consumed capacity is well below provisioned.
+    common_false_claim: "Increase table WCU to fix throttling."
+    correct_action: "Check partition key distribution. Increasing WCU helps only if all partitions are hot."
+
+  - id: P2-gsi-independent
+    trigger_words: ["GSI", "global secondary index", "index throttling"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may not mention that GSI throttling backpressures the base table.
+    actual_behavior: >
+      GSI write throttling causes base table writes to be rejected.
+      GSI capacity must be provisioned independently and adequately.
+    common_false_claim: "The base table has enough capacity, so writes should succeed."
+    correct_action: "Check GSI capacity. GSI throttling blocks base table writes."
+
+  - id: P3-ttl-immediate
+    trigger_words: ["TTL", "time to live", "expire", "delete automatically"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume TTL deletes items at the exact expiry time.
+    actual_behavior: >
+      TTL deletion is best-effort, taking up to 48 hours after expiry.
+      Expired items still appear in queries until actually deleted.
+    common_false_claim: "Items will be deleted immediately when the TTL expires."
+    correct_action: "Filter expired items in application code. TTL deletion can take up to 48 hours."
+
+  - id: P4-scan-filter-efficient
+    trigger_words: ["scan", "filter", "FilterExpression", "full table"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume FilterExpression reduces consumed capacity like a
+      WHERE clause in SQL. It only filters the result set.
+    actual_behavior: >
+      Scan reads every item regardless of FilterExpression. Filters
+      reduce returned data but NOT consumed capacity. A filtered scan
+      on a 10 GB table still reads 10 GB.
+    common_false_claim: "Use FilterExpression to efficiently scan for specific items."
+    correct_action: "Use Query with a proper key design. Scan with filter is always a full table read."
+
+  - id: P5-on-demand-unlimited
+    trigger_words: ["on-demand", "pay per request", "unlimited", "auto scale"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim on-demand has no limits. It has scaling limits based
+      on previous peak traffic.
+    actual_behavior: >
+      On-demand instantly handles up to 2x previous peak. Beyond that,
+      throttling occurs until DynamoDB adapts. New tables start with
+      a default capacity that may be insufficient for large initial loads.
+    common_false_claim: "Switch to on-demand and you'll never be throttled."
+    correct_action: "On-demand handles 2x previous peak. Pre-warm with provisioned mode for large initial loads."
+
+  - id: P6-lsi-add-later
+    trigger_words: ["LSI", "local secondary index", "add index"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may suggest adding an LSI to an existing table. LSIs can
+      only be created at table creation time.
+    actual_behavior: >
+      LSIs must be defined when the table is created. They cannot be
+      added, modified, or removed after creation. Only GSIs can be
+      added to existing tables.
+    common_false_claim: "Add a Local Secondary Index to optimize this query."
+    correct_action: "Use a GSI instead, or recreate the table with the LSI."
+
+  - id: P7-global-table-conflict
+    trigger_words: ["global table", "multi-region", "replication", "conflict"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may claim global tables have conflict resolution. They use
+      simple last-writer-wins.
+    actual_behavior: >
+      Global tables use last-writer-wins based on timestamp. No conflict
+      detection, no merge. Concurrent writes to the same item in
+      different regions may silently lose data.
+    common_false_claim: "Global tables handle write conflicts automatically."
+    correct_action: "Design for single-region writes per item. Last-writer-wins may lose data."
+
+  - id: P8-dax-strong-consistency
+    trigger_words: ["DAX", "cache", "strongly consistent", "accelerator"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs recommend DAX for all read workloads without mentioning
+      the consistency limitation.
+    actual_behavior: >
+      DAX only caches eventually consistent reads. Strongly consistent
+      reads bypass DAX entirely and go to DynamoDB directly.
+    common_false_claim: "Use DAX to speed up all your DynamoDB reads."
+    correct_action: "DAX helps only with eventually consistent reads. Strongly consistent reads bypass DAX."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

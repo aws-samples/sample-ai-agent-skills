@@ -1,0 +1,150 @@
+# =============================================================================
+# AWS Data Exchange "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-data-copy
+    trigger_words: ["subscribe", "entitled", "data available", "automatic copy"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest subscribing to a data set automatically copies
+      data to the subscriber's account.
+    actual_behavior: >
+      Subscribing to a data set grants entitlement (access rights)
+      but does NOT copy data. Subscribers must explicitly export
+      S3 assets to their bucket, query Redshift data shares, or
+      access Lake Formation permissions. Data remains in the
+      provider's account until explicitly exported.
+    common_false_claim: "Subscribe to the data set and the data will appear in your S3 bucket."
+    correct_action: "After subscribing, create an export job to copy S3 assets, or configure Redshift/Lake Formation access."
+
+  - id: P2-instant-export
+    trigger_words: ["export data", "download", "instant", "synchronous export"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest data export is instant or synchronous.
+      Export jobs are asynchronous and can take significant time.
+    actual_behavior: >
+      S3 export jobs are asynchronous. Creating a job returns a
+      job ID. The job runs in the background and must be polled
+      for completion. Large data sets can take hours to export.
+      There is no synchronous download API.
+    common_false_claim: "Export the data set and it will be immediately available in your S3 bucket."
+    correct_action: "Create export job, poll job status with get-job, wait for COMPLETED state."
+
+  - id: P3-api-asset-direct
+    trigger_words: ["API asset", "call API", "direct endpoint", "API URL"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest calling the provider's API directly instead
+      of through Data Exchange's proxy.
+    actual_behavior: >
+      API assets must be accessed through Data Exchange's
+      send-api-asset API, which proxies requests to the
+      provider's API Gateway. Direct calls to the provider's
+      endpoint bypass entitlement checks and will be rejected.
+      The proxy adds authentication and metering.
+    common_false_claim: "Call the provider's API endpoint directly with your API key."
+    correct_action: "Use aws dataexchange send-api-asset with the correct asset ID, data set ID, and revision ID."
+
+  - id: P4-free-data-exchange
+    trigger_words: ["free", "no cost", "pricing", "data exchange cost"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not distinguish between Data Exchange service
+      costs and data product subscription costs.
+    actual_behavior: >
+      Data Exchange itself has no service fee, but data products
+      have subscription costs set by providers. These can be
+      one-time, recurring, or usage-based. Additionally, S3
+      data transfer and storage costs apply when exporting data.
+      Some products are free, but most commercial products have
+      subscription fees.
+    common_false_claim: "AWS Data Exchange is free to use."
+    correct_action: "Check product pricing on AWS Marketplace. Account for subscription fees plus S3 transfer/storage costs."
+
+  - id: P5-universal-asset-type
+    trigger_words: ["export", "all data sets", "download any", "access data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs apply S3 export procedures to all asset types.
+      Different asset types require different access methods.
+    actual_behavior: >
+      Data Exchange supports multiple asset types: S3 snapshots
+      (export to S3), API Gateway APIs (send-api-asset), Redshift
+      data shares (query via Redshift), and Lake Formation data
+      permissions (query via Athena/Redshift Spectrum). Each type
+      has a different access method. S3 export only works for
+      S3 snapshot assets.
+    common_false_claim: "Export any data set to S3 using create-job."
+    correct_action: "Check the asset type first. Use the appropriate access method for each type."
+
+  - id: P6-revision-auto-publish
+    trigger_words: ["create revision", "publish", "automatic", "subscriber sees"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a revision automatically makes it
+      available to subscribers.
+    actual_behavior: >
+      Revisions are created as drafts. Assets must be added to
+      the revision, then the revision must be explicitly finalized.
+      Only finalized revisions are visible to subscribers. The
+      finalize step is a separate API call.
+    common_false_claim: "Create a revision and subscribers will see the new data immediately."
+    correct_action: "Create revision, add assets, then finalize: aws dataexchange update-revision --finalized."
+
+  - id: P7-cross-region-access
+    trigger_words: ["cross-region", "any region", "global data set"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest data sets are globally accessible across
+      all AWS regions.
+    actual_behavior: >
+      Data Exchange is regional. Data sets, subscriptions, and
+      entitlements exist in specific regions. A subscription in
+      us-east-1 does not provide access in eu-west-1. Providers
+      may publish the same data in multiple regions, but each
+      requires a separate subscription.
+    common_false_claim: "Subscribe once and access the data from any AWS region."
+    correct_action: "Subscribe in the region where you need the data. Check provider's regional availability."
+
+  - id: P8-subscription-instant-approval
+    trigger_words: ["subscribe", "instant access", "immediate", "auto-approve"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all subscriptions are instantly approved
+      and activated.
+    actual_behavior: >
+      Some data products require provider approval before
+      subscription activation. Subscriptions can be in PENDING
+      state while awaiting approval. Only ACTIVE subscriptions
+      grant data access. Free products and products with
+      auto-approval are activated immediately.
+    common_false_claim: "Subscribe and you'll have immediate access to the data."
+    correct_action: "Check subscription status. If PENDING, wait for provider approval or contact the provider."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-subscription
+    false_fix: "Delete and recreate the subscription to fix access issues."
+    why_wrong: >
+      Deleting a subscription terminates entitlement and may
+      require re-approval from the provider. For paid products,
+      it may trigger additional charges for a new subscription.
+    correct_approach: >
+      Diagnose the access issue first (IAM permissions, export
+      job status, RAM invitation). Only cancel a subscription
+      as a last resort after confirming with the provider.
+
+  - id: R2-direct-s3-access
+    false_fix: "Access the provider's S3 bucket directly using the ARN from the data set."
+    why_wrong: >
+      Subscribers cannot access the provider's S3 bucket directly.
+      Data Exchange manages access through export jobs and
+      entitlement checks. Direct S3 access would bypass billing
+      and metering.
+    correct_approach: >
+      Use Data Exchange export jobs to copy S3 assets to your
+      own bucket. The export job handles cross-account access
+      and metering automatically.

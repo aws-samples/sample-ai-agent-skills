@@ -1,0 +1,148 @@
+# =============================================================================
+# Amazon Bedrock "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-model-auto-available
+    trigger_words: ["model access", "foundation model", "invoke model", "model available"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume all Bedrock models are automatically available.
+      Each model requires explicit access approval per region.
+    actual_behavior: >
+      Foundation models in Bedrock require explicit access approval
+      through the console. Access is per-region. Without approval,
+      InvokeModel returns AccessDeniedException. Some models
+      require additional terms acceptance. Model availability
+      varies by region. Check model access in the Bedrock console.
+    common_false_claim: "Call InvokeModel with the model ID to use any Bedrock model."
+    correct_action: "Request model access in the Bedrock console first. Wait for approval. Then invoke."
+
+  - id: P2-unlimited-throughput
+    trigger_words: ["rate limit", "throttling", "throughput", "requests per minute"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Bedrock has unlimited on-demand capacity.
+      Each model has specific rate limits.
+    actual_behavior: >
+      On-demand throughput has per-model rate limits: tokens-per-
+      minute (TPM) and requests-per-minute (RPM). Limits vary by
+      model, region, and account. Exceeding limits returns
+      ThrottlingException. Provisioned throughput provides
+      dedicated capacity but costs more. Rate limit increases
+      can be requested through AWS support.
+    common_false_claim: "Bedrock scales automatically to handle any request volume."
+    correct_action: "Check model-specific rate limits. Implement retry with backoff. Use provisioned throughput for guaranteed capacity."
+
+  - id: P3-kb-instant-sync
+    trigger_words: ["knowledge base", "data source", "sync", "ingestion"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest knowledge base data is immediately available
+      after upload. Sync is asynchronous and must be triggered.
+    actual_behavior: >
+      After uploading data to the S3 data source, you must
+      explicitly trigger a sync (StartIngestionJob). Sync
+      processes documents, chunks text, generates embeddings,
+      and stores in the vector database. This takes minutes to
+      hours depending on data volume. Queries return stale or
+      empty results until sync completes. Check status with
+      GetIngestionJob.
+    common_false_claim: "Upload documents to S3 and the knowledge base is immediately updated."
+    correct_action: "Upload to S3, trigger StartIngestionJob, wait for completion, then query."
+
+  - id: P4-agent-simple-routing
+    trigger_words: ["agent", "action group", "orchestration", "agent routing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs oversimplify agent orchestration as simple API
+      routing. Agents use complex multi-step reasoning.
+    actual_behavior: >
+      Agents use a foundation model for multi-step reasoning.
+      They analyze the user request, decide which action groups
+      to invoke, process results, and may loop multiple times.
+      Orchestration can fail due to ambiguous prompts, action
+      group errors, or exceeding max iterations. The agent's
+      instruction prompt significantly affects behavior.
+      Debugging requires examining the orchestration trace.
+    common_false_claim: "The agent simply routes requests to the appropriate action group."
+    correct_action: "Design clear agent instructions. Configure action groups with precise descriptions. Monitor orchestration traces."
+
+  - id: P5-guardrails-output-only
+    trigger_words: ["guardrails", "content filter", "safety", "content moderation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest guardrails only filter model output.
+      Guardrails evaluate both input and output.
+    actual_behavior: >
+      Bedrock guardrails evaluate BOTH user input and model
+      output. Content filters, topic denials, word filters,
+      and sensitive information filters apply bidirectionally.
+      A guardrail can block the user's question (input
+      filtering) or the model's response (output filtering).
+      The guardrail response indicates which direction triggered
+      the block.
+    common_false_claim: "Add a guardrail to filter inappropriate model responses."
+    correct_action: "Configure guardrails for both input and output. Test with representative inputs. Check which direction triggers blocks."
+
+  - id: P6-universal-model-params
+    trigger_words: ["model parameters", "invoke model", "request body", "model input"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs use generic parameters for all models. Each model
+      has a unique request/response format.
+    actual_behavior: >
+      Each foundation model has different request formats:
+      Claude uses anthropic_version and messages array. Titan
+      uses inputText and textGenerationConfig. Llama uses
+      prompt. Mistral uses prompt. Cohere uses message. Using
+      wrong parameters returns ValidationException. Always
+      check model-specific documentation for the correct
+      request body format.
+    common_false_claim: "Use the same request format for all Bedrock models."
+    correct_action: "Check model-specific request format. Use the correct parameters for each model provider."
+
+  - id: P7-provisioned-autoscales
+    trigger_words: ["provisioned throughput", "dedicated capacity", "model units"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest provisioned throughput auto-scales.
+      It provides fixed capacity with no auto-scaling.
+    actual_behavior: >
+      Provisioned throughput provides a fixed number of model
+      units with guaranteed token rates. There is NO auto-scaling.
+      You get exactly the provisioned capacity. Charges apply
+      regardless of usage. Commitment terms (no commitment,
+      1-month, 6-month) affect pricing. To change capacity,
+      you must create new provisioned throughput.
+    common_false_claim: "Provisioned throughput automatically scales with demand."
+    correct_action: "Provision capacity based on peak demand. No auto-scaling. Delete unused throughput to stop charges."
+
+  - id: P8-kb-no-vector-store
+    trigger_words: ["knowledge base creation", "vector store", "embedding", "vector database"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Bedrock automatically creates the vector
+      store. The vector store must be pre-configured.
+    actual_behavior: >
+      Knowledge bases require a pre-configured vector store:
+      OpenSearch Serverless collection, Pinecone index, Redis
+      Enterprise Cloud, or Aurora PostgreSQL with pgvector.
+      The vector store must be created BEFORE the knowledge
+      base. The vector index dimensions must match the
+      embedding model (e.g., 1024 for Titan Embeddings V2).
+      Misconfigured vector stores cause sync failures.
+    common_false_claim: "Create a knowledge base and Bedrock sets up the vector store automatically."
+    correct_action: "Create and configure the vector store first. Match index dimensions to embedding model. Then create KB."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

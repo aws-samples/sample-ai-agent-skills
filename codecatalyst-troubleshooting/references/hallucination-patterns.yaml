@@ -1,0 +1,146 @@
+# =============================================================================
+# Amazon CodeCatalyst "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-iam-login
+    trigger_words: ["IAM login", "IAM user", "access key", "secret key"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to IAM-based authentication for all AWS services.
+      CodeCatalyst uses Builder ID, a separate identity system.
+    actual_behavior: >
+      CodeCatalyst authenticates users via AWS Builder ID, which
+      is a personal identity separate from AWS IAM. Users create
+      a Builder ID with an email address and password. IAM users,
+      access keys, and secret keys are NOT used for CodeCatalyst
+      login. IAM roles are only used for AWS account connections.
+    common_false_claim: "Log into CodeCatalyst using your IAM user credentials."
+    correct_action: "Use AWS Builder ID to sign into CodeCatalyst. Create a Builder ID at https://profile.aws.amazon.com/."
+
+  - id: P2-github-actions-syntax
+    trigger_words: ["GitHub Actions", "uses:", "runs-on:", "github workflow"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs have extensive GitHub Actions training data and
+      conflate it with CodeCatalyst workflow syntax.
+    actual_behavior: >
+      CodeCatalyst workflows use a distinct YAML schema. Key
+      differences include: action references use CodeCatalyst
+      action identifiers (not GitHub owner/repo), compute
+      configuration uses Fleet instead of runs-on, environment
+      variables and secrets use different syntax, and trigger
+      configuration differs significantly.
+    common_false_claim: "Add 'uses: actions/checkout@v3' to your CodeCatalyst workflow."
+    correct_action: "Use CodeCatalyst-native action syntax. Refer to CodeCatalyst workflow documentation for correct YAML schema."
+
+  - id: P3-ec2-dev-environments
+    trigger_words: ["EC2 instance", "SSH into dev environment", "instance type"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs associate cloud compute with EC2 instances. Dev
+      environments are managed differently.
+    actual_behavior: >
+      CodeCatalyst dev environments are managed compute instances
+      that are NOT EC2 instances. They cannot be accessed via
+      SSH, managed with EC2 APIs, or customized at the OS level.
+      They are accessed through the CodeCatalyst IDE integration
+      (VS Code, JetBrains, or browser-based).
+    common_false_claim: "SSH into your dev environment using the instance's public IP."
+    correct_action: "Connect to dev environments through VS Code, JetBrains, or the CodeCatalyst browser IDE."
+
+  - id: P4-space-is-account
+    trigger_words: ["space account", "space billing", "space IAM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse CodeCatalyst spaces with AWS accounts due
+      to similar organizational hierarchy concepts.
+    actual_behavior: >
+      A CodeCatalyst space is a logical container for projects
+      and team members. It is NOT an AWS account. Spaces have
+      their own billing (Free/Enterprise tiers), member
+      management, and settings. AWS accounts are connected to
+      spaces via AWS connections for deployment purposes.
+    common_false_claim: "Configure the space's IAM policies to control access."
+    correct_action: "Manage space access through CodeCatalyst member roles (Admin, Power User, Contributor, Reviewer)."
+
+  - id: P5-blueprint-continuous
+    trigger_words: ["blueprint update", "blueprint sync", "blueprint manages"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest blueprints continuously manage projects like
+      IaC tools. Blueprints are one-time generators.
+    actual_behavior: >
+      Blueprints generate initial project structure, workflows,
+      and configuration at project creation time. After creation,
+      the blueprint does NOT continuously manage the project.
+      Changes to the blueprint template do not automatically
+      propagate to existing projects. Projects evolve independently.
+    common_false_claim: "Update the blueprint to automatically update all projects created from it."
+    correct_action: "Modify project files directly after creation. Blueprints only affect new projects."
+
+  - id: P6-unlimited-compute
+    trigger_words: ["unlimited", "no limits", "scale compute"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CodeCatalyst compute is unlimited like
+      cloud infrastructure. It has tier-based limits.
+    actual_behavior: >
+      CodeCatalyst has compute limits based on the pricing tier
+      (Free or Enterprise). Workflow minutes, dev environment
+      hours, and storage have monthly quotas. Exceeding limits
+      may result in workflow failures or inability to start
+      dev environments.
+    common_false_claim: "CodeCatalyst provides unlimited workflow compute minutes."
+    correct_action: "Check space billing tier and usage. Monitor compute minutes and dev environment hours against tier limits."
+
+  - id: P7-direct-aws-deploy
+    trigger_words: ["deploy directly", "automatic deployment", "push to deploy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CodeCatalyst can deploy directly to AWS
+      without connection setup. AWS connections are required.
+    actual_behavior: >
+      Deploying to AWS from CodeCatalyst requires: (1) an AWS
+      connection linking the space to an AWS account, (2) an
+      IAM role in the target account with CodeCatalyst trust
+      policy, and (3) a workflow configured with the correct
+      environment and connection. Direct deployment without
+      these prerequisites is not possible.
+    common_false_claim: "Push your code and CodeCatalyst automatically deploys to your AWS account."
+    correct_action: "Set up AWS connection, create IAM role with trust policy, configure workflow with environment and deployment action."
+
+  - id: P8-native-repo-features
+    trigger_words: ["all Git features", "advanced Git", "Git LFS"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume CodeCatalyst native repos have all features
+      of GitHub or GitLab. Feature sets differ.
+    actual_behavior: >
+      CodeCatalyst native source repositories support standard
+      Git operations but may not support all advanced features
+      available in GitHub or GitLab (such as Git LFS, advanced
+      branch protection rules, or webhooks). Linked repositories
+      retain their platform's features but integration depth
+      varies.
+    common_false_claim: "Use Git LFS in your CodeCatalyst repository for large files."
+    correct_action: "Check CodeCatalyst documentation for supported repository features. Use linked repos for advanced Git features."
+
+remediation_hallucinations:
+
+  - id: R1-recreate-space
+    false_pattern: "Delete and recreate the space to fix configuration issues"
+    why_wrong: >
+      Space deletion removes all projects, repositories, workflows,
+      and member associations. This is irreversible and causes
+      significant data loss.
+    correct_approach: "Modify space settings directly. Contact CodeCatalyst support for issues that cannot be resolved through configuration."
+
+  - id: R2-ec2-troubleshoot
+    false_pattern: "Use EC2 console to troubleshoot dev environment compute issues"
+    why_wrong: >
+      Dev environments are not EC2 instances and do not appear
+      in the EC2 console. EC2 troubleshooting tools and APIs
+      do not apply.
+    correct_approach: "Use CodeCatalyst API (get-dev-environment) and IDE logs to troubleshoot dev environment issues."

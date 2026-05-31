@@ -1,0 +1,135 @@
+# =============================================================================
+# Amazon EventBridge Advanced "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-scheduler-is-rules
+    trigger_words: ["scheduler rule", "schedule rule", "cron rule", "rate rule"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate EventBridge Scheduler with EventBridge rules because
+      both support cron/rate expressions. They are separate services with
+      different APIs, IAM roles, and capabilities.
+    actual_behavior: >
+      EventBridge Scheduler uses the scheduler API (aws scheduler), not
+      the events API. Schedules have their own execution roles, retry
+      policies, flexible time windows, and one-time schedule support.
+      Rules use the events API and are attached to event buses. They
+      are fundamentally different services.
+    common_false_claim: "Create an EventBridge rule with a schedule expression using aws scheduler."
+    correct_action: "Use aws scheduler for Scheduler. Use aws events put-rule for EventBridge rules."
+
+  - id: P2-pipes-use-event-bus
+    trigger_words: ["pipe event bus", "pipe rule", "pipe routing", "pipe pattern"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume Pipes route events through event buses like rules.
+      Pipes are point-to-point — they connect source to target directly.
+    actual_behavior: >
+      EventBridge Pipes connect a source directly to a target without
+      using an event bus. Pipes have their own filtering (not event
+      patterns on rules), optional enrichment, and target configuration.
+      Pipes do not create or use rules. They have their own IAM
+      execution role separate from event bus permissions.
+    common_false_claim: "Configure the pipe to route events through the event bus to the target."
+    correct_action: "Pipes connect source to target directly. No event bus or rules involved."
+
+  - id: P3-pipe-any-source
+    trigger_words: ["pipe source s3", "pipe source sns", "pipe source cloudwatch", "pipe any source"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest any AWS service can be a pipe source. Pipe sources
+      are limited to five specific services.
+    actual_behavior: >
+      Pipe sources are limited to: SQS, Kinesis Data Streams, DynamoDB
+      Streams, Amazon MSK, and Amazon MQ. No other services can be pipe
+      sources. For S3, SNS, CloudWatch, or other event sources, use
+      EventBridge rules with event buses instead.
+    common_false_claim: "Create a pipe with S3 as the source to process object events."
+    correct_action: "Use EventBridge rules for S3 events. Pipes only support SQS, Kinesis, DynamoDB Streams, MSK, MQ."
+
+  - id: P4-replay-different-bus
+    trigger_words: ["replay to different bus", "replay cross-bus", "replay target bus"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest replaying archived events to a different event bus.
+      Replays always deliver to the same bus the events were archived from.
+    actual_behavior: >
+      Archive replay delivers events to the same event bus they were
+      originally sent to. You cannot specify a different destination bus.
+      All rules on the bus will process replayed events. Replayed events
+      include a replay-name header for identification. Filter replayed
+      events in rules if needed.
+    common_false_claim: "Replay the archived events to a test event bus for validation."
+    correct_action: "Replays go to the same bus. Use event pattern filtering to handle replayed events."
+
+  - id: P5-schema-discovery-free
+    trigger_words: ["schema discovery free", "no cost discovery", "always enable discovery"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling schema discovery without mentioning costs.
+      Schema discovery charges per event analyzed.
+    actual_behavior: >
+      Schema discovery costs $0.10 per million events analyzed. For
+      high-volume event buses, this can be significant. Discovery should
+      be enabled during development and disabled in production unless
+      actively needed. Discovery adds minimal latency but ongoing cost.
+    common_false_claim: "Enable schema discovery on all event buses — it's free and useful."
+    correct_action: "Enable discovery selectively. Disable when not actively developing to avoid costs."
+
+  - id: P6-global-dlq
+    trigger_words: ["global dlq", "bus dlq", "single dlq", "default dlq"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest a single DLQ for an entire event bus. DLQs are
+      configured per-target or per-pipe, not globally.
+    actual_behavior: >
+      Dead letter queues are configured per-target (for rules) or
+      per-pipe (for Pipes). There is no global DLQ for an event bus.
+      Each target can have its own SQS DLQ. The execution role must
+      have sqs:SendMessage permission on the DLQ. Events in the DLQ
+      include error information and the original event.
+    common_false_claim: "Configure a DLQ on the event bus to catch all failed deliveries."
+    correct_action: "Configure DLQ per-target or per-pipe. Each needs its own SQS queue."
+
+  - id: P7-one-time-schedule-persists
+    trigger_words: ["one-time schedule stays", "at schedule reuse", "one-time permanent"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume one-time schedules persist after execution like
+      recurring schedules. By default, they are auto-deleted.
+    actual_behavior: >
+      One-time schedules (at expressions) are automatically deleted
+      after execution by default (ActionAfterCompletion=DELETE). To
+      keep the schedule after execution, set ActionAfterCompletion=NONE.
+      The schedule will remain in COMPLETE state but will not execute
+      again. This is different from recurring schedules which persist.
+    common_false_claim: "The one-time schedule will remain available after execution for review."
+    correct_action: "Set ActionAfterCompletion=NONE to keep one-time schedules after execution."
+
+  - id: P8-flexible-window-exact
+    trigger_words: ["flexible window exact", "precise scheduling", "exact time flexible"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest flexible time windows provide exact execution times.
+      Flexible windows execute at a random time within the window.
+    actual_behavior: >
+      Flexible time windows (1-15 minutes) execute the schedule at a
+      random time within the window after the scheduled time. This
+      distributes load and improves reliability. For exact timing,
+      set FlexibleTimeWindow to OFF. With a 5-minute window, a schedule
+      at 10:00 may execute between 10:00 and 10:05.
+    common_false_claim: "Set a 5-minute flexible window for the schedule to execute at exactly 10:00."
+    correct_action: "Use FlexibleTimeWindow=OFF for exact timing. Flexible windows are approximate."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

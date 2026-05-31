@@ -1,0 +1,130 @@
+# =============================================================================
+# Cost Explorer "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-real-time-costs
+    trigger_words: ["current cost", "real-time spending", "live cost"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest checking Cost Explorer for real-time cost data.
+      Cost data has a 24-48 hour delay.
+    actual_behavior: >
+      Cost Explorer data is delayed by 24-48 hours. The most recent
+      cost data available is from approximately 2 days ago. For more
+      current estimates, CloudWatch billing metrics (updated every
+      few hours) can provide approximate totals.
+    common_false_claim: "Check Cost Explorer to see your current spending in real-time."
+    correct_action: "Use Cost Explorer for historical analysis. For near-real-time estimates, check CloudWatch EstimatedCharges metric."
+
+  - id: P2-tags-auto-allocation
+    trigger_words: ["cost allocation tag", "tag costs", "resource tagging"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume resource tags automatically appear in cost reports.
+      Tags must be activated as cost allocation tags separately.
+    actual_behavior: >
+      Resource tags and cost allocation tags are different. Tags must
+      be explicitly activated in the Billing console to appear in
+      Cost Explorer and CUR. Activation takes up to 24 hours. Only
+      user-defined tags that are activated become cost allocation tags.
+    common_false_claim: "Tag your resources and the costs will automatically be grouped by tag."
+    correct_action: "Activate tags in Billing console > Cost Allocation Tags. Wait 24 hours for activation."
+
+  - id: P3-budget-instant-alerts
+    trigger_words: ["budget alert", "budget notification", "threshold exceeded"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs imply budget alerts fire immediately when thresholds are
+      crossed. Budgets evaluate periodically with delays.
+    actual_behavior: >
+      AWS Budgets evaluate cost data periodically, typically once per
+      day for cost budgets. There can be a 24-hour delay between
+      exceeding a threshold and receiving the notification. Usage
+      budgets may evaluate more frequently but are still not real-time.
+    common_false_claim: "You'll receive an alert immediately when your budget threshold is exceeded."
+    correct_action: "Set budget thresholds with buffer (e.g., 80% warning). Understand evaluation is periodic, not real-time."
+
+  - id: P4-anomaly-instant-detection
+    trigger_words: ["cost anomaly", "anomaly detection", "spending spike"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest anomaly detection works immediately on new setups.
+      It requires historical data to build a baseline.
+    actual_behavior: >
+      Cost Anomaly Detection uses machine learning that needs at least
+      2 weeks of historical spending data. New monitors will not
+      generate meaningful alerts until sufficient baseline data is
+      collected. Detection also has a delay matching Cost Explorer data.
+    common_false_claim: "Set up anomaly detection to immediately catch spending spikes."
+    correct_action: "Create anomaly monitor and wait 2+ weeks for baseline. Set appropriate threshold for alerts."
+
+  - id: P5-savings-plans-manual-assign
+    trigger_words: ["Savings Plans", "assign savings", "SP coverage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manually assigning Savings Plans to specific
+      resources. SP discounts are applied automatically.
+    actual_behavior: >
+      Savings Plans discounts are applied automatically by AWS to
+      eligible usage. Compute Savings Plans apply to EC2, Fargate,
+      and Lambda. EC2 Instance Savings Plans apply to specific instance
+      families. You cannot control which specific instances receive
+      the discount — AWS applies it to maximize savings.
+    common_false_claim: "Assign your Savings Plan to the specific EC2 instances you want to cover."
+    correct_action: "Purchase appropriate SP type. AWS automatically applies discounts to eligible usage."
+
+  - id: P6-cur-immediate-delivery
+    trigger_words: ["CUR report", "cost usage report", "billing report"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs expect CUR reports to appear immediately after creation.
+      First delivery takes up to 24 hours.
+    actual_behavior: >
+      After creating a CUR report definition, the first report delivery
+      to S3 can take up to 24 hours. Subsequent reports are updated
+      multiple times per day as cost data finalizes. Reports for the
+      current month are updated incrementally.
+    common_false_claim: "Create the CUR report and check S3 immediately for the data."
+    correct_action: "Create CUR report definition. Wait up to 24 hours for first delivery. Check S3 bucket for report prefix."
+
+  - id: P7-blended-cost-actual
+    trigger_words: ["blended cost", "cost metric", "actual cost"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs use blended cost and unblended cost interchangeably.
+      They represent fundamentally different calculations.
+    actual_behavior: >
+      Unblended cost is the actual charge for each line item. Blended
+      cost averages RI/SP discounts across the organization. Amortized
+      cost spreads upfront payments over the term. Using the wrong
+      metric leads to incorrect analysis and decisions.
+    common_false_claim: "Check your blended cost to see what you actually paid."
+    correct_action: "Use UnblendedCost for actual charges. Use AmortizedCost for RI/SP analysis. Use BlendedCost only for organizational averaging."
+
+  - id: P8-cost-categories-retroactive
+    trigger_words: ["cost category", "cost grouping", "categorize costs"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs imply cost categories apply retroactively to historical
+      data. They only apply to new data going forward.
+    actual_behavior: >
+      Cost categories take up to 24 hours to apply after creation or
+      modification. They apply to cost data going forward from the
+      creation date. Historical cost data is not retroactively
+      categorized. To analyze historical data, use Cost Explorer
+      filters and groupings instead.
+    common_false_claim: "Create a cost category to see last month's costs grouped by team."
+    correct_action: "Cost categories apply forward only. For historical analysis, use Cost Explorer filters with tags or accounts."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

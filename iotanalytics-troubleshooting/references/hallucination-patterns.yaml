@@ -1,0 +1,138 @@
+# =============================================================================
+# AWS IoT Analytics "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-datastore-realtime
+    trigger_words: ["real-time query", "instant query", "live data", "data store query"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest querying data stores in real-time like a database.
+      Data stores are optimized for batch queries via datasets.
+    actual_behavior: >
+      Data stores are not real-time queryable databases. Data is
+      queried through datasets which run SQL on a schedule or
+      on-demand. Results are stored as dataset content. For
+      real-time data access, use IoT Core rules to route to
+      DynamoDB or Timestream instead.
+    common_false_claim: "Query the data store directly for the latest sensor reading."
+    correct_action: "Create a dataset with SQL query and run it on-demand or on schedule."
+
+  - id: P2-pipeline-parallel
+    trigger_words: ["parallel processing", "concurrent activities", "pipeline speed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest pipeline activities run in parallel. They
+      execute sequentially.
+    actual_behavior: >
+      Pipeline activities execute in strict sequential order.
+      Each activity receives the output of the previous activity.
+      If an activity fails, the message is dropped for that
+      pipeline execution. There is no parallel branching within
+      a single pipeline.
+    common_false_claim: "Pipeline activities run in parallel for faster processing."
+    correct_action: "Activities run sequentially. Optimize individual activities for throughput."
+
+  - id: P3-standard-sql
+    trigger_words: ["SQL query", "SELECT", "dataset query"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs write MySQL/PostgreSQL SQL for datasets. IoT Analytics
+      uses Presto SQL syntax.
+    actual_behavior: >
+      IoT Analytics datasets use Presto SQL syntax. Key differences:
+      date functions use Presto syntax (date_parse, date_format),
+      string functions differ, LIMIT syntax is Presto-style.
+      The __dt column provides automatic time partitioning.
+      JOINs between data stores are supported.
+    common_false_claim: "SELECT * FROM datastore WHERE DATE(timestamp) = CURDATE()"
+    correct_action: "SELECT * FROM datastore WHERE __dt >= current_date - interval '1' day"
+
+  - id: P4-channel-unlimited
+    trigger_words: ["channel storage", "message retention", "channel capacity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume channels have unlimited free storage. Channel
+      storage has costs and configurable retention.
+    actual_behavior: >
+      Channel storage is charged per GB. Default retention is
+      unlimited but incurs ongoing costs. Setting a retention
+      period automatically deletes older data. Channel storage
+      is separate from data store storage. Customer-managed S3
+      storage gives more control over lifecycle.
+    common_false_claim: "Channels store all messages indefinitely at no cost."
+    correct_action: "Configure channel retention period to manage costs. Use customer-managed S3 for control."
+
+  - id: P5-container-lambda
+    trigger_words: ["container dataset", "custom processing", "Docker"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse container datasets with Lambda functions.
+      Container datasets run Docker containers on ECS.
+    actual_behavior: >
+      Container datasets execute Docker containers on ECS, not
+      Lambda. The container reads input from S3 and writes output
+      to S3. The execution role must have S3 and ECR permissions.
+      Container images must be in ECR. Execution timeout is
+      configurable. This is for complex processing that exceeds
+      SQL capabilities.
+    common_false_claim: "Use a Lambda function in the dataset for custom processing."
+    correct_action: "Create a Docker container, push to ECR, and configure as container dataset."
+
+  - id: P6-enrichment-free
+    trigger_words: ["device registry enrich", "shadow enrich", "pipeline enrichment"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enrichment activities are free and instant.
+      They add latency and require IAM permissions.
+    actual_behavior: >
+      DeviceRegistryEnrich and DeviceShadowEnrich activities call
+      IoT Core APIs for each message. This adds latency and
+      requires IAM permissions (iot:DescribeThing, iot:GetThingShadow).
+      High message rates can cause IoT Core API throttling.
+      Enrichment data is added to the message payload.
+    common_false_claim: "Add enrichment activities freely without performance impact."
+    correct_action: "Use enrichment judiciously. Monitor IoT Core API throttling. Cache where possible."
+
+  - id: P7-dataset-streaming
+    trigger_words: ["streaming dataset", "continuous query", "real-time dataset"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest datasets can run continuously like streaming
+      queries. Datasets are batch operations.
+    actual_behavior: >
+      Datasets are batch operations that run on a schedule or
+      on-demand. They are not streaming queries. The minimum
+      practical schedule interval depends on data volume and
+      query complexity. For near-real-time processing, use
+      IoT Core rules with Lambda or Kinesis instead.
+    common_false_claim: "Configure the dataset to process data in real-time as it arrives."
+    correct_action: "Schedule datasets at appropriate intervals. Use IoT Core rules for real-time."
+
+  - id: P8-pipeline-error-handling
+    trigger_words: ["pipeline error", "retry", "dead letter", "error handling"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest pipelines have built-in retry and DLQ.
+      Failed messages are simply dropped.
+    actual_behavior: >
+      Pipeline activities that fail for a message simply drop
+      that message. There is no built-in retry mechanism or
+      dead letter queue. Failed messages are lost unless the
+      channel retains the raw data. Monitor pipeline activity
+      errors via CloudWatch metrics. Implement error handling
+      in Lambda activities.
+    common_false_claim: "Configure a DLQ for pipeline processing failures."
+    correct_action: "Monitor pipeline errors via CloudWatch. Use channel retention to preserve raw data."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

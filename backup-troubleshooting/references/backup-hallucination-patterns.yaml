@@ -1,0 +1,139 @@
+# =============================================================================
+# AWS Backup "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-vault-lock-reversibility
+    trigger_words: ["vault lock", "compliance mode", "governance mode", "immutable"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate governance mode and compliance mode vault locks.
+      Compliance mode is irreversible — even the root account cannot
+      remove it. Governance mode can be removed with proper permissions.
+    actual_behavior: >
+      Compliance mode vault lock is PERMANENT after the cooling-off period
+      (3-36 days). It cannot be removed by any principal including root.
+      Governance mode can be removed by users with
+      backup:DeleteBackupVaultLockConfiguration permission.
+    common_false_claim: "You can remove the vault lock by contacting AWS Support."
+    correct_action: "Verify the lock mode. If compliance mode, it is permanent. Only governance mode can be removed."
+
+  - id: P2-cross-account-standalone
+    trigger_words: ["cross-account backup", "cross-account copy", "another account", "destination account"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest cross-account backup between any two AWS accounts.
+      It requires AWS Organizations — standalone accounts cannot use
+      cross-account backup features.
+    actual_behavior: >
+      Cross-account backup requires both accounts to be in the same
+      AWS Organization. The management account must enable cross-account
+      backup in AWS Backup settings. The destination vault needs an
+      access policy granting the source account permissions.
+    common_false_claim: "Configure the destination vault policy and you can copy backups between any accounts."
+    correct_action: "Verify both accounts are in the same Organization and cross-account backup is enabled."
+
+  - id: P3-cold-storage-all-services
+    trigger_words: ["cold storage", "cold tier", "transition to cold", "archive"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume all backup types support cold storage transition.
+      Only EBS, EFS, and DynamoDB backups support cold storage.
+    actual_behavior: >
+      Cold storage transition is only supported for EBS snapshots, EFS
+      backups, and DynamoDB backups. EC2 AMIs, RDS snapshots, Aurora
+      snapshots, S3 backups, and FSx backups do NOT support cold storage.
+      Minimum retention for cold storage is 90 days. Delete-after must
+      be at least 90 days greater than move-to-cold-after.
+    common_false_claim: "Set lifecycle to transition RDS snapshots to cold storage after 30 days."
+    correct_action: "Verify the resource type supports cold storage. Only use for EBS, EFS, DynamoDB."
+
+  - id: P4-on-demand-inherits-plan
+    trigger_words: ["on-demand backup", "manual backup", "start-backup-job", "ad hoc"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume on-demand backups inherit lifecycle rules from backup
+      plans. On-demand backups use their own specified lifecycle or defaults.
+    actual_behavior: >
+      On-demand backups do NOT inherit backup plan lifecycle rules. The
+      lifecycle must be specified in the StartBackupJob API call. If not
+      specified, the recovery point has no automatic deletion or cold
+      storage transition. On-demand backups use the specified vault and
+      IAM role, not plan defaults.
+    common_false_claim: "The on-demand backup will follow the lifecycle rules in your backup plan."
+    correct_action: "Explicitly specify lifecycle parameters when creating on-demand backups."
+
+  - id: P5-continuous-backup-all-services
+    trigger_words: ["continuous backup", "point-in-time", "PITR", "any point in time"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest continuous backup (PITR) is available for all services.
+      It is only supported for S3, RDS, Aurora, and SAP HANA.
+    actual_behavior: >
+      Continuous backup enabling point-in-time recovery is only supported
+      for S3, RDS, Aurora, and SAP HANA on EC2. Other services use
+      snapshot-based backup with discrete recovery points. RDS/Aurora
+      PITR supports up to 35 days retention. S3 PITR supports up to
+      35 days. Continuous and snapshot backups can coexist.
+    common_false_claim: "Enable continuous backup for your EBS volumes to restore to any point in time."
+    correct_action: "Verify the service supports continuous backup. Use snapshot backup for unsupported services."
+
+  - id: P6-vault-encryption-changeable
+    trigger_words: ["vault encryption", "change KMS key", "re-encrypt", "encryption key"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest changing the encryption key on an existing vault.
+      The KMS key is set at vault creation and cannot be changed.
+    actual_behavior: >
+      The KMS encryption key for a backup vault is specified at creation
+      time and is immutable. To use a different key, you must create a
+      new vault with the desired key and copy recovery points to it.
+      The default vault uses the AWS-managed key aws/backup. Cross-account
+      and cross-region copy require appropriate KMS key policies.
+    common_false_claim: "Update the vault encryption settings to use your customer-managed KMS key."
+    correct_action: "Create a new vault with the desired KMS key. Copy existing recovery points if needed."
+
+  - id: P7-backup-window-completion
+    trigger_words: ["backup window", "schedule", "cron", "completion window"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs confuse the backup window (when a job starts) with the
+      completion window (when to cancel if not finished). They also
+      assume jobs must complete within the backup window.
+    actual_behavior: >
+      The backup window defines when a job CAN START. The job may run
+      well beyond the backup window. The completion window is a separate
+      setting that defines the maximum duration — if the job hasn't
+      finished by then, it is cancelled. Default completion window is
+      7 days. A job started at the end of the backup window still runs
+      to completion (or until the completion window expires).
+    common_false_claim: "The backup job will complete within the 8-hour backup window."
+    correct_action: "Set both start window and completion window. Jobs may run beyond the start window."
+
+  - id: P8-restore-testing-data-validation
+    trigger_words: ["restore testing", "restore validation", "backup validation", "test restore"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs claim restore testing validates data integrity or content.
+      It only validates that the restore operation completes successfully.
+    actual_behavior: >
+      Restore testing creates actual AWS resources and confirms the
+      restore operation succeeds. It does NOT validate data integrity,
+      content correctness, or application functionality. Resources are
+      automatically cleaned up after validation, but failed cleanup may
+      leave orphaned resources. Restore testing incurs costs for the
+      temporary resources created.
+    common_false_claim: "Restore testing validates that your backup data is intact and correct."
+    correct_action: "Use restore testing to validate restorability. Implement separate data validation if needed."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

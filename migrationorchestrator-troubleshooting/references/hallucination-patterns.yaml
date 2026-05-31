@@ -1,0 +1,132 @@
+# =============================================================================
+# AWS Migration Hub Orchestrator "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-custom-templates
+    trigger_words: ["create template", "custom template", "build workflow"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest creating custom workflow templates. Templates
+      are predefined by AWS.
+    actual_behavior: >
+      Migration Hub Orchestrator provides predefined workflow
+      templates for specific migration patterns (Rehost on EC2,
+      Replatform to ECS, SAP migration, SQL Server migration).
+      You cannot create custom templates from scratch. You select
+      a template and customize parameters within it.
+    common_false_claim: "Create a custom workflow template for your migration."
+    correct_action: "Select the predefined template that best matches your migration pattern. Customize parameters within the template."
+
+  - id: P2-fully-automated
+    trigger_words: ["fully automated", "hands-off", "automatic migration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Orchestrator fully automates migration.
+      Many steps require manual intervention.
+    actual_behavior: >
+      Orchestrator coordinates migration steps but many steps
+      require manual action — validation, approval, configuration,
+      testing. Manual steps pause the workflow until the user
+      marks them complete. Migration is orchestrated, not fully
+      automated.
+    common_false_claim: "Orchestrator fully automates your migration end-to-end."
+    correct_action: "Orchestrator coordinates steps. Plan for manual steps requiring user action."
+
+  - id: P3-restart-workflow
+    trigger_words: ["restart", "start over", "reset workflow"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest restarting failed workflows. Workflows cannot
+      be restarted from the beginning.
+    actual_behavior: >
+      Workflows can be paused and resumed but cannot be restarted
+      from step 1. Failed steps can be retried individually. If
+      the workflow is in an unrecoverable state, create a new
+      workflow. Completed steps are not re-executed.
+    common_false_claim: "Restart the workflow from the beginning to fix the issue."
+    correct_action: "Retry the failed step. If unrecoverable, create a new workflow."
+
+  - id: P4-all-migrations-supported
+    trigger_words: ["any migration", "all workloads", "universal"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Orchestrator supports all migration types.
+      Only specific patterns have templates.
+    actual_behavior: >
+      Orchestrator has templates for specific migration patterns:
+      Rehost on EC2, Replatform to ECS, SAP on AWS, SQL Server
+      migration. Not all migration scenarios have templates.
+      For unsupported patterns, use MGN, DMS, or manual migration.
+    common_false_claim: "Use Orchestrator for any type of migration."
+    correct_action: "Check available templates. Use Orchestrator for supported patterns. Use other tools for unsupported migrations."
+
+  - id: P5-plugin-optional
+    trigger_words: ["plugin", "agent", "source server plugin"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest plugins are optional. Certain workflows
+      require plugins for source server interaction.
+    actual_behavior: >
+      Plugins are required for workflow types that interact with
+      source servers (e.g., SAP migration, application discovery).
+      Without healthy plugins, these workflow steps fail. Plugin
+      health must be verified before starting the workflow.
+    common_false_claim: "Plugins are optional — install them if you want extra features."
+    correct_action: "Check template requirements. Install and verify plugin health before starting workflows that require them."
+
+  - id: P6-dms-included
+    trigger_words: ["database migration", "DMS", "data migration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Orchestrator handles database migration
+      directly. It coordinates with DMS which must be set up
+      separately.
+    actual_behavior: >
+      For database migration steps, Orchestrator coordinates with
+      AWS DMS. DMS replication instances, source/target endpoints,
+      and migration tasks must be configured separately. Orchestrator
+      triggers and monitors DMS tasks but doesn't replace DMS setup.
+    common_false_claim: "Orchestrator handles database migration automatically."
+    correct_action: "Set up DMS separately (replication instance, endpoints, tasks). Orchestrator coordinates DMS within the workflow."
+
+  - id: P7-cross-region-workflow
+    trigger_words: ["cross-region", "multi-region", "region migration"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not clarify that Orchestrator is regional.
+    actual_behavior: >
+      Migration Hub Orchestrator is regional. Workflows run in
+      a specific region. For cross-region migrations, the workflow
+      typically runs in the target region. Source server plugins
+      communicate via SSM which may require cross-region
+      connectivity.
+    common_false_claim: "Create one workflow to migrate across regions."
+    correct_action: "Run the workflow in the target region. Ensure source servers can communicate with SSM in the target region."
+
+  - id: P8-step-parallel
+    trigger_words: ["parallel steps", "concurrent", "simultaneous"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest steps run in parallel. Steps within a group
+      are sequential.
+    actual_behavior: >
+      Steps within a step group execute sequentially. Step groups
+      can potentially run in parallel if they don't have
+      dependencies. However, most templates define sequential
+      group dependencies. A failed step blocks all subsequent
+      steps in the group.
+    common_false_claim: "Steps run in parallel for faster migration."
+    correct_action: "Steps are sequential within groups. Plan migration timeline based on sequential execution."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,120 @@
+# =============================================================================
+# Incident Manager "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-no-replication-set
+    trigger_words: ["create response plan", "incident manager setup", "enable incident manager"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest creating response plans directly. A replication set
+      must be created first before any other operations.
+    actual_behavior: >
+      Incident Manager requires a replication set before any operations.
+      The replication set defines active regions and KMS encryption.
+      Without it, create-response-plan and other APIs fail.
+    common_false_claim: "Create a response plan to get started with Incident Manager."
+    correct_action: "Create a replication set first, then create response plans."
+
+  - id: P2-channel-auto-active
+    trigger_words: ["contact channel", "notification channel", "sms notification"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume contact channels work immediately after creation.
+      They require activation by the recipient.
+    actual_behavior: >
+      Contact channels (email, SMS, voice) must be activated by the
+      recipient responding to a verification message. Unactivated
+      channels silently fail during incidents.
+    common_false_claim: "Create the contact channel and it will start receiving notifications."
+    correct_action: "Create channel, then verify recipient activates it before relying on it."
+
+  - id: P3-response-plan-replicates
+    trigger_words: ["response plan region", "cross-region response", "multi-region incident"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest response plans replicate across regions like incident
+      data. Response plans are regional resources.
+    actual_behavior: >
+      Response plans, contacts, and escalation plans are regional
+      resources. They must be created in each region independently.
+      Only incident records replicate across the replication set.
+    common_false_claim: "The response plan will be available in all replication set regions."
+    correct_action: "Create response plans in each region where incidents may occur."
+
+  - id: P4-alarm-sns-trigger
+    trigger_words: ["cloudwatch alarm incident", "alarm trigger incident", "alarm response plan"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using SNS topics to trigger incidents from alarms.
+      The alarm action must directly reference the response plan ARN.
+    actual_behavior: >
+      CloudWatch alarm actions must use the response plan ARN directly,
+      not an SNS topic. The alarm needs ssm-incidents:StartIncident
+      permission via a service-linked role.
+    common_false_claim: "Configure the alarm to send to an SNS topic that triggers the response plan."
+    correct_action: "Set the alarm action to the response plan ARN directly."
+
+  - id: P5-runbook-no-role
+    trigger_words: ["automation runbook", "incident runbook", "ssm automation incident"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs omit the execution role requirement for automation runbooks.
+      The role must have permissions for all runbook actions.
+    actual_behavior: >
+      Automation runbooks in response plans require an SSM execution
+      role with permissions for all actions in the document. Missing
+      permissions cause partial or complete runbook failure.
+    common_false_claim: "Just reference the SSM document in the response plan."
+    correct_action: "Specify an execution role with all required permissions in the response plan."
+
+  - id: P6-escalation-immediate
+    trigger_words: ["escalation plan", "escalate incident", "contact escalation"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not explain that escalation is time-based with
+      acknowledgment gates that can stop escalation.
+    actual_behavior: >
+      Escalation plans engage contacts in timed stages. If the incident
+      is acknowledged before the next stage, escalation stops. Stage
+      durations must be carefully configured to allow response time.
+    common_false_claim: "All contacts in the escalation plan are notified simultaneously."
+    correct_action: "Configure stage durations carefully. Understand acknowledgment stops escalation."
+
+  - id: P7-analysis-immediate
+    trigger_words: ["post-incident analysis", "incident analysis", "incident review"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest analysis is available immediately. It requires
+      resolved status and up to 24 hours for data finalization.
+    actual_behavior: >
+      Post-incident analysis is only available after the incident is
+      resolved. Metrics and timeline data may take up to 24 hours to
+      finalize. Analysis cannot be started on active incidents.
+    common_false_claim: "Start the post-incident analysis while the incident is still active."
+    correct_action: "Resolve the incident first, then wait for analysis data to finalize."
+
+  - id: P8-impact-level-cosmetic
+    trigger_words: ["impact level", "incident severity", "incident priority"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs treat impact levels as cosmetic labels. They actually
+      determine routing and engagement behavior.
+    actual_behavior: >
+      Impact levels (1-5) determine which contacts and escalation
+      plans are engaged. Response plans can have different engagement
+      configurations per impact level. Wrong level = wrong routing.
+    common_false_claim: "Impact level is just a label for categorization."
+    correct_action: "Configure impact-specific engagements in response plans. Set correct impact on incidents."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

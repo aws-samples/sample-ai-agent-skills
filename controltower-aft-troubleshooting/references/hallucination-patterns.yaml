@@ -1,0 +1,159 @@
+# =============================================================================
+# AWS Control Tower AFT "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-aft-creates-accounts-directly
+    trigger_words: ["AFT creates accounts", "AFT provisions", "AFT account creation"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest AFT directly creates AWS accounts. AFT orchestrates
+      account creation through Control Tower Account Factory.
+    actual_behavior: >
+      AFT does not directly create AWS accounts. It submits account
+      requests to AWS Control Tower Account Factory, which handles
+      the actual account creation including organizational unit
+      placement, guardrail enrollment, and baseline configuration.
+      AFT orchestrates the process and adds Terraform customizations
+      on top of Control Tower's account factory.
+    common_false_claim: "AFT creates AWS accounts using the Organizations API."
+    correct_action: "AFT submits requests to Control Tower Account Factory. Diagnose account creation failures in Control Tower, not AFT."
+
+  - id: P2-aft-manages-sso
+    trigger_words: ["AFT creates SSO", "AFT manages permission sets", "AFT SSO setup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest AFT creates and manages SSO permission sets.
+      AFT only assigns existing permission sets to accounts.
+    actual_behavior: >
+      AFT assigns pre-existing SSO permission sets to provisioned
+      accounts. It does NOT create, modify, or delete permission
+      sets. Permission sets must be created separately (manually,
+      via CloudFormation, or via Terraform in a different workflow)
+      before they can be referenced in AFT account requests.
+    common_false_claim: "Define your SSO permission sets in the AFT account request and AFT will create them."
+    correct_action: "Create permission sets separately. Reference existing permission set names in AFT account requests."
+
+  - id: P3-terraform-state-in-dynamodb
+    trigger_words: ["Terraform state", "state file", "state storage", "state backend"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse the Terraform state backend components. State
+      is in S3; DynamoDB is only for state locking.
+    actual_behavior: >
+      AFT stores Terraform state files in an S3 bucket
+      (aft-backend-<account-id>-<region>). DynamoDB is used
+      ONLY for state locking to prevent concurrent modifications.
+      The state file itself is never stored in DynamoDB. State
+      lock issues are DynamoDB problems; state content issues
+      are S3 problems.
+    common_false_claim: "Terraform state is stored in DynamoDB."
+    correct_action: "Check S3 for state file issues. Check DynamoDB only for lock contention. They serve different purposes."
+
+  - id: P4-aft-single-pipeline
+    trigger_words: ["AFT pipeline", "the pipeline", "pipeline failed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs refer to "the AFT pipeline" as if there is one.
+      AFT uses multiple separate pipelines.
+    actual_behavior: >
+      AFT uses multiple CodePipeline pipelines: ct-aft-account-request
+      for processing account requests, ct-aft-account-provisioning-framework
+      for provisioning, ct-aft-global-customizations for global
+      customizations, and ct-aft-account-customizations for
+      account-specific customizations. Each pipeline has its own
+      stages, CodeBuild projects, and failure modes.
+    common_false_claim: "The AFT pipeline failed — check the pipeline logs."
+    correct_action: "Identify which specific AFT pipeline failed. Check that pipeline's CodeBuild logs for the actual error."
+
+  - id: P5-aft-in-management-account
+    trigger_words: ["management account", "AFT account", "where AFT runs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest AFT runs in the Control Tower management account.
+      AFT runs in a dedicated AFT management account.
+    actual_behavior: >
+      AFT infrastructure (pipelines, Lambda functions, DynamoDB
+      tables, S3 buckets) runs in a dedicated AFT management
+      account, NOT the Control Tower management account. The AFT
+      management account is a separate account enrolled in the
+      organization. Investigating AFT issues requires access to
+      the AFT management account.
+    common_false_claim: "Check the Control Tower management account for AFT pipeline logs."
+    correct_action: "Switch to the AFT management account to investigate AFT infrastructure, pipelines, and logs."
+
+  - id: P6-customizations-are-optional
+    trigger_words: ["customizations", "account customization", "global customization"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest customizations are always required. They are
+      optional and can be empty repositories.
+    actual_behavior: >
+      AFT customizations (both global and account-specific) are
+      optional. The customization repositories can be empty or
+      contain minimal Terraform code. Account provisioning works
+      without any customizations. Customization pipelines still
+      run but execute no Terraform changes if repositories are empty.
+    common_false_claim: "You must define customizations for AFT to provision accounts."
+    correct_action: "Customizations are optional. Empty repositories are valid. Focus on account-request configuration for provisioning issues."
+
+  - id: P7-aft-auto-updates
+    trigger_words: ["AFT update", "auto-update", "latest version", "AFT upgrade"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest AFT auto-updates to the latest version.
+      AFT requires manual version upgrades.
+    actual_behavior: >
+      AFT does NOT auto-update. Upgrading AFT requires manually
+      updating the AFT module version in the Terraform configuration,
+      running terraform plan/apply, and verifying compatibility
+      with the current Control Tower and Terraform versions.
+      Version skipping is not supported — upgrades must follow
+      the documented upgrade path.
+    common_false_claim: "AFT automatically updates to the latest version."
+    correct_action: "Check current AFT version. Follow the documented upgrade path. Test in a non-production environment first."
+
+  - id: P8-aft-rollback-accounts
+    trigger_words: ["rollback account", "undo provisioning", "delete account", "remove account"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest AFT can roll back or delete provisioned accounts.
+      AWS accounts cannot be easily deleted once created.
+    actual_behavior: >
+      Once an AWS account is provisioned through AFT and Control
+      Tower, it cannot be simply "rolled back" or deleted. AWS
+      accounts require a manual closure process through the
+      Organizations console, and closed accounts enter a 90-day
+      suspension period. AFT can remove customizations but cannot
+      un-provision the account itself.
+    common_false_claim: "Roll back the account provisioning by removing the account request from the repository."
+    correct_action: "Removing the account request does NOT delete the account. To close an account, use the Organizations console and follow the account closure process."
+
+remediation_hallucinations:
+
+  - id: R1-delete-terraform-state
+    false_advice: "Delete the Terraform state file to fix state corruption."
+    why_dangerous: >
+      Deleting Terraform state causes AFT to lose track of all
+      managed resources. This results in orphaned resources,
+      duplicate resource creation attempts, and potential security
+      gaps from unmanaged infrastructure.
+    correct_approach: >
+      Use `terraform state` commands to fix specific state issues.
+      For state corruption, restore from S3 versioning. For lock
+      issues, use `terraform force-unlock` with the lock ID.
+      Never delete state files without a verified backup.
+
+  - id: R2-rerun-all-pipelines
+    false_advice: "Rerun all AFT pipelines to fix the issue."
+    why_dangerous: >
+      Blindly rerunning all pipelines can cause cascading failures,
+      duplicate account provisioning attempts, and conflicting
+      Terraform applies. Each pipeline should be diagnosed and
+      fixed individually.
+    correct_approach: >
+      Identify the specific failing pipeline and stage. Check
+      CodeBuild logs for the actual error. Fix the root cause
+      before retrying only the affected pipeline. Never retry
+      account-request pipeline without verifying DynamoDB state.

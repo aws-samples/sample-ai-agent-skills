@@ -1,0 +1,154 @@
+# =============================================================================
+# Elastic Fabric Adapter "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-all-instances-support-efa
+    trigger_words: ["EFA", "any instance", "all instances", "enable EFA"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest EFA can be enabled on any EC2 instance type.
+      EFA is only supported on specific instance types.
+    actual_behavior: >
+      EFA is supported on a limited set of instance types designed
+      for high-performance networking: p4d, p5, trn1, inf2, hpc6a,
+      hpc7g, c5n.18xlarge, c6in, m5n, r5n, dl1, and others.
+      Standard instance types like t3, m5, c5 do NOT support EFA.
+      The list changes as new instance types are released.
+    common_false_claim: "Enable EFA on your c5.4xlarge instance for better networking."
+    correct_action: "Check EFA support: aws ec2 describe-instance-types --instance-types <type> --query 'InstanceTypes[0].NetworkInfo.EfaSupported'."
+
+  - id: P2-efa-works-without-driver
+    trigger_words: ["EFA networking", "attach EFA", "EFA interface"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest attaching an EFA interface is sufficient for
+      high-performance networking. The EFA driver must be installed.
+    actual_behavior: >
+      An EFA interface without the EFA driver functions as a
+      standard ENA adapter. OS-bypass capabilities require the
+      EFA kernel driver, libfabric with the EFA provider, and
+      optionally rdma-core. These must be installed using the
+      AWS EFA installer package.
+    common_false_claim: "Attach an EFA interface and your MPI jobs will use OS-bypass automatically."
+    correct_action: "Install the EFA driver package: curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz && tar xf aws-efa-installer-latest.tar.gz && cd aws-efa-installer && sudo ./efa_installer.sh -y."
+
+  - id: P3-standard-security-group-rules
+    trigger_words: ["security group", "firewall", "port", "allow traffic"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest standard port-based security group rules for
+      EFA. EFA requires ALL traffic from the same security group.
+    actual_behavior: >
+      EFA OS-bypass traffic does not use standard TCP/UDP ports.
+      The security group must have an inbound rule allowing ALL
+      protocols from itself (self-referencing). Opening specific
+      ports is insufficient for EFA traffic. The self-referencing
+      rule allows all traffic between instances in the same SG.
+    common_false_claim: "Open ports 22 and 443 in the security group for EFA."
+    correct_action: "Add inbound rule: All traffic, source = same security group ID."
+
+  - id: P4-efa-cross-vpc
+    trigger_words: ["cross-VPC", "VPC peering", "transit gateway", "cross-region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest EFA works across VPCs or regions. EFA
+      OS-bypass traffic is confined to a single VPC.
+    actual_behavior: >
+      EFA OS-bypass traffic cannot traverse VPC peering, Transit
+      Gateway, VPN, or cross-region connections. All instances
+      communicating via EFA must be in the same VPC. For cross-VPC
+      communication, applications fall back to standard TCP/IP
+      over ENA, losing OS-bypass performance benefits.
+    common_false_claim: "Use EFA across VPC peering for your distributed training job."
+    correct_action: "Place all EFA-communicating instances in the same VPC and subnet for best performance."
+
+  - id: P5-hot-attach-efa
+    trigger_words: ["attach EFA", "add EFA", "enable EFA on running"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest attaching EFA interfaces to running instances
+      like standard ENIs. EFA requires instance stop.
+    actual_behavior: >
+      EFA interfaces cannot be attached to running instances.
+      They must be configured at launch time (in the launch
+      template or run-instances command) or attached while the
+      instance is stopped. This is a fundamental difference from
+      standard ENI attachment.
+    common_false_claim: "Attach an EFA interface to your running instance."
+    correct_action: "Stop the instance, attach the EFA interface, then start it. Or specify EFA at launch time."
+
+  - id: P6-nccl-native-efa
+    trigger_words: ["NCCL", "collective communication", "all-reduce", "distributed training"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest NCCL natively supports EFA. NCCL requires
+      the aws-ofi-nccl plugin for EFA support.
+    actual_behavior: >
+      NCCL does not have native EFA support. The aws-ofi-nccl
+      plugin provides a transport layer that maps NCCL operations
+      to libfabric/EFA calls. Without this plugin, NCCL uses
+      TCP sockets, which is dramatically slower. The plugin must
+      be compiled against the installed NCCL and libfabric versions.
+    common_false_claim: "NCCL automatically uses EFA when available."
+    correct_action: "Install aws-ofi-nccl plugin. Set NCCL_NET=ofi and FI_PROVIDER=efa environment variables."
+
+  - id: P7-placement-group-optional
+    trigger_words: ["placement group", "cluster placement", "instance placement"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest placement groups are optional for EFA. While
+      technically true, performance without them is severely degraded.
+    actual_behavior: >
+      Cluster placement groups are strongly recommended for EFA
+      workloads. Without them, instances may be placed across
+      different network switches or racks, adding latency hops.
+      For HPC and ML training workloads, the latency difference
+      can be 2-10x. Placement groups also ensure consistent
+      bandwidth between instances.
+    common_false_claim: "Placement groups are optional and don't significantly affect EFA performance."
+    correct_action: "Always use cluster placement groups for EFA workloads. Create before launching instances."
+
+  - id: P8-efa-bandwidth-per-interface
+    trigger_words: ["EFA bandwidth", "network throughput", "100 Gbps", "400 Gbps"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs cite incorrect bandwidth numbers or assume all EFA
+      interfaces provide the same bandwidth.
+    actual_behavior: >
+      EFA bandwidth varies by instance type. p4d.24xlarge provides
+      4x100 Gbps (400 Gbps aggregate). p5.48xlarge provides
+      32x100 Gbps (3200 Gbps aggregate). hpc6a provides 100 Gbps.
+      Bandwidth is per-interface and aggregate depends on the
+      number of EFA interfaces. Actual throughput depends on
+      message size, protocol, and placement.
+    common_false_claim: "EFA provides 100 Gbps bandwidth on all supported instances."
+    correct_action: "Check instance-specific bandwidth: aws ec2 describe-instance-types --instance-types <type> --query 'InstanceTypes[0].NetworkInfo'."
+
+remediation_hallucinations:
+
+  - id: R1-disable-os-bypass
+    trigger_words: ["disable OS-bypass", "use TCP instead", "fallback to sockets"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Suggesting disabling OS-bypass as a fix removes the primary
+      benefit of EFA and masks the underlying issue.
+    correct_approach: >
+      Diagnose the OS-bypass issue (driver, libfabric, security
+      group). Only use TCP fallback as a temporary workaround
+      while fixing the root cause. Document the performance
+      impact of TCP fallback.
+
+  - id: R2-remove-placement-group
+    trigger_words: ["remove placement group", "delete placement group", "launch without placement"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Removing placement groups to work around capacity errors
+      severely degrades EFA performance and may not be noticed
+      until production workloads run.
+    correct_approach: >
+      If cluster placement group has insufficient capacity, try
+      a different AZ or instance type. Use capacity reservations
+      for critical workloads. Never remove placement groups
+      without documenting the performance impact.

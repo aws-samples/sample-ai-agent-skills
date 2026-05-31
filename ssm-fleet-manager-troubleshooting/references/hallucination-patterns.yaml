@@ -1,0 +1,159 @@
+# =============================================================================
+# AWS Systems Manager Fleet Manager "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-remote-desktop-security-groups
+    trigger_words: ["remote desktop", "RDP", "port 3389", "security group"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest opening inbound RDP/SSH ports in security groups
+      for Fleet Manager remote desktop. Fleet Manager tunnels through
+      SSM Session Manager and does not require inbound ports.
+    actual_behavior: >
+      Fleet Manager remote desktop uses Session Manager tunneling.
+      Traffic flows through the SSM Agent outbound connection to SSM
+      endpoints. No inbound security group rules are needed for RDP
+      (3389) or SSH (22). The connection is encrypted end-to-end
+      through the SSM channel.
+    common_false_claim: "Open port 3389 in the security group to enable Fleet Manager remote desktop."
+    correct_action: "Ensure SSM Agent connectivity and IAM permissions. No inbound port changes needed."
+
+  - id: P2-agent-version-features
+    trigger_words: ["Fleet Manager", "performance counters", "file system", "SSM Agent"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all Fleet Manager features work with any SSM Agent
+      version. Advanced features require Agent 3.0+.
+    actual_behavior: >
+      Fleet Manager basic node listing works with older SSM Agent
+      versions. Advanced features — remote desktop, file system
+      browsing, performance counters, and OS-level operations —
+      require SSM Agent 3.0 or later. Older agents will show the
+      node but advanced feature tabs will be unavailable or error.
+    common_false_claim: "All Fleet Manager features work with any SSM Agent version."
+    correct_action: "Check agent version with describe-instance-information. Update to 3.0+ for full Fleet Manager features."
+
+  - id: P3-hybrid-instance-profile
+    trigger_words: ["hybrid", "on-premises", "instance profile", "mi-"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest attaching IAM instance profiles to hybrid
+      (on-premises) nodes. Hybrid nodes use service roles from
+      activations, not instance profiles.
+    actual_behavior: >
+      Hybrid managed nodes (mi-* IDs) use the IAM service role
+      specified during activation creation. They do NOT use IAM
+      instance profiles — that is an EC2-only concept. The service
+      role is specified with --iam-role when creating the activation
+      via aws ssm create-activation.
+    common_false_claim: "Attach an IAM instance profile to your on-premises server for SSM access."
+    correct_action: "Create an SSM activation with --iam-role specifying the service role for hybrid nodes."
+
+  - id: P4-performance-counters-linux
+    trigger_words: ["performance counters", "Linux", "CPU metrics", "memory usage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using Fleet Manager performance counters on Linux
+      instances. This feature is Windows-only.
+    actual_behavior: >
+      Fleet Manager performance counters are available exclusively
+      for Windows managed nodes. They display Windows Performance
+      Monitor counters (CPU, memory, disk, network). Linux nodes
+      do not have this feature. For Linux monitoring, use CloudWatch
+      Agent, SSM Run Command with top/vmstat, or third-party tools.
+    common_false_claim: "Use Fleet Manager performance counters to monitor your Linux instance CPU and memory."
+    correct_action: "For Linux monitoring, install CloudWatch Agent or use SSM Run Command with system commands."
+
+  - id: P5-single-vpc-endpoint
+    trigger_words: ["VPC endpoint", "private subnet", "SSM endpoint"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a single VPC endpoint for SSM. Three
+      separate endpoints are required for full functionality.
+    actual_behavior: >
+      SSM requires three VPC endpoints for instances in private
+      subnets: com.amazonaws.<region>.ssm (SSM API), com.amazonaws.
+      <region>.ssmmessages (Session Manager), and com.amazonaws.
+      <region>.ec2messages (Run Command). Missing any one endpoint
+      causes specific feature failures. S3 and KMS endpoints may
+      also be needed for certain operations.
+    common_false_claim: "Create a VPC endpoint for SSM to enable private connectivity."
+    correct_action: "Create all three VPC endpoints: ssm, ssmmessages, and ec2messages. Add S3 gateway endpoint if needed."
+
+  - id: P6-auto-update-default
+    trigger_words: ["SSM Agent", "auto-update", "latest version", "automatic"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SSM Agent auto-updates are enabled by default
+      everywhere. Auto-update behavior varies by platform and AMI.
+    actual_behavior: >
+      SSM Agent auto-update is managed via the service setting
+      ssm/managed-instance/activation-tier. On Amazon Linux 2 and
+      newer Windows AMIs, auto-update is typically enabled. On
+      custom AMIs, older platforms, or hybrid nodes, auto-update
+      may not be configured. The setting must be explicitly verified
+      and enabled if needed.
+    common_false_claim: "SSM Agent automatically updates to the latest version on all instances."
+    correct_action: "Check auto-update status with get-service-setting. Enable explicitly if needed. Verify per-platform behavior."
+
+  - id: P7-fleet-manager-cross-region
+    trigger_words: ["all instances", "cross-region", "global view", "every region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Fleet Manager shows all instances across all
+      regions in a single view. It is regional.
+    actual_behavior: >
+      Fleet Manager is regional — it only shows managed nodes
+      registered in the current region. To see nodes across regions,
+      you must switch regions in the console or use Systems Manager
+      Explorer with Resource Data Sync for cross-region aggregation.
+      There is no single global Fleet Manager view.
+    common_false_claim: "Fleet Manager shows all your managed nodes across all regions."
+    correct_action: "Check each region separately or use Systems Manager Explorer for cross-region visibility."
+
+  - id: P8-managed-instance-limit
+    trigger_words: ["registration limit", "too many instances", "1000 limit", "standard tier"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse the standard tier limit for on-premises instances
+      with EC2 instance limits. EC2 instances have no SSM registration
+      limit.
+    actual_behavior: >
+      The standard tier allows up to 1,000 on-premises (hybrid)
+      managed instances per account per region at no additional cost.
+      EC2 instances registered via IAM instance profiles have no
+      such limit. The advanced tier removes the on-premises limit
+      but charges per instance. This limit only applies to mi-*
+      prefixed hybrid nodes.
+    common_false_claim: "You can only register 1,000 instances with SSM per region."
+    correct_action: "The 1,000 limit applies only to on-premises hybrid nodes on standard tier. EC2 nodes are unlimited."
+
+remediation_hallucinations:
+
+  - id: R1-delete-and-recreate-agent
+    trigger_words: ["reinstall agent", "delete SSM Agent", "fresh install"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Reinstalling SSM Agent on a running instance can cause loss of
+      the managed instance registration, active sessions, and pending
+      command executions. It should be a last resort, not a first step.
+    correct_approach: >
+      First restart the SSM Agent service (systemctl restart amazon-ssm-agent
+      on Linux, Restart-Service AmazonSSMAgent on Windows). Check agent
+      logs at /var/log/amazon/ssm/ (Linux) or %PROGRAMDATA%\Amazon\SSM\Logs
+      (Windows). Only reinstall if restart and log analysis fail.
+
+  - id: R2-open-all-outbound
+    trigger_words: ["open all ports", "allow all outbound", "0.0.0.0/0"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Opening all outbound traffic to troubleshoot SSM connectivity
+      creates unnecessary security exposure. SSM requires specific
+      HTTPS (443) outbound to SSM endpoints only.
+    correct_approach: >
+      Allow outbound HTTPS (443) to SSM service endpoints only:
+      ssm.<region>.amazonaws.com, ssmmessages.<region>.amazonaws.com,
+      ec2messages.<region>.amazonaws.com. Use VPC endpoints for
+      private subnets instead of NAT gateways with broad outbound rules.

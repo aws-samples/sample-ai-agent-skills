@@ -1,0 +1,156 @@
+# =============================================================================
+# AMP "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about AMP behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-self-hosted-prometheus-features
+    trigger_words: ["TSDB", "WAL", "config reload", "prometheus.yml reload", "/-/reload", "SIGHUP"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on self-hosted Prometheus documentation suggest
+      accessing TSDB files, WAL segments, or triggering config reloads.
+      AMP is a fully managed service — there is no server to access.
+    actual_behavior: >
+      AMP is a managed remote storage backend. There is no Prometheus
+      server process, no TSDB directory, no WAL files, and no config
+      reload endpoint. You interact with AMP exclusively through the
+      remote write API (ingestion) and query API (reads). Configuration
+      is managed via AWS API calls (put-alert-manager-definition,
+      put-rule-groups-namespace).
+    common_false_claim: >
+      "Check the Prometheus TSDB status page at /-/tsdb-status."
+    correct_action: "Check workspace status via aws amp describe-workspace and CloudWatch metrics for ActiveSeries and IngestionRate."
+
+  - id: P2-basic-auth-remote-write
+    trigger_words: ["basic_auth", "bearer_token", "password", "api_key", "authorization header"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on Prometheus remote write documentation suggest
+      basic_auth or bearer_token configuration. AMP only supports
+      SigV4 authentication — no other auth method works.
+    actual_behavior: >
+      AMP requires AWS Signature Version 4 (SigV4) for all requests.
+      The remote_write section in Prometheus must use sigv4 config
+      block with region and service name. ADOT Collector uses the
+      sigv4auth extension. Basic auth, bearer tokens, and API keys
+      are rejected with 403 Forbidden.
+    common_false_claim: >
+      "Configure basic_auth with your AMP username and password."
+    correct_action: "Configure SigV4 signing: in Prometheus use sigv4.region and sigv4.service, in ADOT use extensions.sigv4auth."
+
+  - id: P3-configurable-retention
+    trigger_words: ["retention", "storage.tsdb.retention", "retention period", "data lifecycle"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs associate Prometheus with configurable retention via
+      --storage.tsdb.retention.time flag. AMP has fixed 150-day
+      retention with no configuration option.
+    actual_behavior: >
+      AMP retains all ingested metrics for exactly 150 days. This
+      is a fixed service parameter — there is no API, console setting,
+      or support request that can change it. Data older than 150 days
+      is automatically purged.
+    common_false_claim: >
+      "Set --storage.tsdb.retention.time=1y to keep metrics for one year."
+    correct_action: "Accept 150-day retention. For longer retention, export data to S3 via a separate pipeline."
+
+  - id: P4-prometheus-ui-available
+    trigger_words: ["Prometheus UI", "expression browser", "targets page", "/graph", "/-/targets"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Prometheus always has a web UI for querying and
+      viewing targets. AMP has no UI — it is a headless API service.
+    actual_behavior: >
+      AMP provides only API endpoints — there is no web UI, no
+      expression browser, no targets page, no TSDB status page.
+      To visualize and query metrics, use Amazon Managed Grafana,
+      self-hosted Grafana with the Prometheus data source (configured
+      with SigV4), or curl/API calls to the query endpoint.
+    common_false_claim: >
+      "Open the Prometheus UI at https://aps-workspaces.../graph to run queries."
+    correct_action: "Use Grafana with AMP as a Prometheus data source, or query via curl with --aws-sigv4."
+
+  - id: P5-unlimited-series
+    trigger_words: ["unlimited metrics", "no limit", "infinite series", "scale automatically"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may describe AMP as having unlimited capacity because it
+      is a managed service. AMP has per-workspace active series limits
+      and ingestion rate quotas.
+    actual_behavior: >
+      Each AMP workspace has a default active series limit (typically
+      around 10 million, varies by account) and an ingestion rate
+      limit in samples per second. Exceeding these returns HTTP 429
+      errors. Limits can be increased via AWS Service Quotas, but
+      they are not infinite. High cardinality is the primary cause
+      of hitting series limits.
+    common_false_claim: >
+      "AMP automatically scales to handle any number of time series."
+    correct_action: "Check current limits via Service Quotas. Monitor ActiveSeries in CloudWatch. Reduce cardinality if approaching limits."
+
+  - id: P6-alertmanager-direct-routing
+    trigger_words: ["slack_configs", "email_configs", "pagerduty_configs", "webhook_configs", "receiver"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs trained on AlertManager documentation suggest configuring
+      Slack, email, or PagerDuty receivers directly. AMP alert manager
+      only supports SNS as a receiver type.
+    actual_behavior: >
+      AMP alert manager definition supports SNS receivers only. The
+      alert manager YAML uses sns_configs with topic_arn, not
+      slack_configs, email_configs, or webhook_configs. To reach
+      Slack, PagerDuty, or email, configure SNS subscriptions that
+      fan out to those channels (via Lambda, Chatbot, email
+      subscription, etc.).
+    common_false_claim: >
+      "Add a slack_configs receiver to the AMP alert manager definition."
+    correct_action: "Use sns_configs in alert manager definition, then configure SNS subscriptions for downstream notifications."
+
+  - id: P7-local-storage-access
+    trigger_words: ["local storage", "data directory", "chunks", "blocks", "compaction"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on Prometheus internals suggest checking local
+      storage directories, chunk files, or compaction status. AMP
+      has no user-accessible storage layer.
+    actual_behavior: >
+      AMP manages storage internally. There are no user-accessible
+      data directories, chunk files, block files, or compaction
+      processes. Storage is fully managed by AWS. You cannot inspect,
+      backup, or restore the underlying storage. The only way to
+      access data is through the query API.
+    common_false_claim: >
+      "Check the data directory at /prometheus/data for corruption."
+    correct_action: "Use the query API to verify data availability. Check CloudWatch IngestionRate to confirm data is being ingested."
+
+  - id: P8-prometheus-operator-compatibility
+    trigger_words: ["Prometheus Operator", "ServiceMonitor", "PodMonitor", "PrometheusRule CRD"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest using Prometheus Operator CRDs (ServiceMonitor,
+      PodMonitor) to configure AMP directly. AMP does not process
+      these CRDs — they configure a local Prometheus instance which
+      then remote-writes to AMP.
+    actual_behavior: >
+      Prometheus Operator CRDs (ServiceMonitor, PodMonitor) configure
+      scrape targets on a Prometheus server running in the cluster.
+      That Prometheus server then remote-writes to AMP. AMP itself
+      does not read or process these CRDs. PrometheusRule CRDs
+      configure local Prometheus rules — for AMP alerting, use
+      aws amp put-rule-groups-namespace to upload rules directly.
+    common_false_claim: >
+      "Create a ServiceMonitor to configure AMP to scrape your pods."
+    correct_action: "Use ServiceMonitor with a local Prometheus/ADOT that remote-writes to AMP. Upload alerting rules via aws amp put-rule-groups-namespace."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

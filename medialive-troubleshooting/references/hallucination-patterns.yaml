@@ -1,0 +1,126 @@
+# =============================================================================
+# AWS Elemental MediaLive "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-single-pipeline-failover
+    trigger_words: ["failover", "redundancy", "pipeline failure", "automatic failover"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume all MediaLive channels support automatic failover.
+      Only STANDARD class channels with two pipelines support failover.
+    actual_behavior: >
+      SINGLE_PIPELINE channels have no failover capability. STANDARD
+      channels have two pipelines and support automatic input failover
+      and pipeline failover. Channel class cannot be changed after creation.
+    common_false_claim: "Enable automatic failover on your MediaLive channel."
+    correct_action: "Verify channel class is STANDARD before configuring failover."
+
+  - id: P2-push-input-no-security-group
+    trigger_words: ["RTMP push", "input endpoint", "push input", "streaming to MediaLive"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs omit input security group configuration for PUSH inputs.
+      Without whitelisted CIDRs, packets are silently dropped.
+    actual_behavior: >
+      PUSH inputs require an input security group with whitelisted CIDR
+      ranges. If the source IP is not whitelisted, MediaLive silently
+      drops all incoming packets with no error message or alert.
+    common_false_claim: "Create an RTMP push input and start streaming to the endpoint."
+    correct_action: "Create input security group with source CIDRs, then attach to input."
+
+  - id: P3-hot-encoding-changes
+    trigger_words: ["change encoding", "update codec", "modify resolution", "live change"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest encoding changes can be made on running channels.
+      Most encoding changes require stopping the channel.
+    actual_behavior: >
+      Codec, resolution, bitrate profile, and output group changes
+      require stopping the channel. Only specific parameters like
+      volume, image overlay, and SCTE-35 can be changed via schedule
+      actions on a running channel.
+    common_false_claim: "Update the encoding profile while the channel is running."
+    correct_action: "Stop channel, update encoding settings, restart channel."
+
+  - id: P4-pull-input-credentials
+    trigger_words: ["pull input", "HLS pull", "source URL", "input credentials"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest putting credentials directly in the input URL.
+      MediaLive requires credentials in SSM Parameter Store.
+    actual_behavior: >
+      PULL input authentication credentials must be stored in AWS
+      Systems Manager Parameter Store as SecureString parameters.
+      The input configuration references the SSM parameter name,
+      not the actual credentials. Inline credentials are not supported.
+    common_false_claim: "Add username:password to the pull input URL."
+    correct_action: "Store credentials in SSM Parameter Store, reference parameter name in input config."
+
+  - id: P5-schedule-action-modify
+    trigger_words: ["modify schedule", "update action", "change schedule", "edit action"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying existing schedule actions. Executed
+      actions are immutable.
+    actual_behavior: >
+      Schedule actions cannot be modified once executed. Future actions
+      can be deleted and recreated. To change an upcoming action, delete
+      it and create a new one. The batch-update-schedule API adds and
+      deletes actions atomically.
+    common_false_claim: "Update the existing schedule action to change the switch time."
+    correct_action: "Delete the future action and create a new one with batch-update-schedule."
+
+  - id: P6-output-group-segment-gop
+    trigger_words: ["segment duration", "HLS segments", "GOP size", "segment length"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs set segment duration without considering GOP alignment.
+      Misaligned values cause variable segment durations.
+    actual_behavior: >
+      HLS/DASH segment duration must be a multiple of the GOP size.
+      If GOP is 2 seconds, segment duration should be 2, 4, 6, etc.
+      Misalignment causes segments of varying duration, which can
+      cause playback stuttering and CDN caching issues.
+    common_false_claim: "Set segment duration to 6 seconds with any GOP size."
+    correct_action: "Ensure segment duration is an exact multiple of GOP size in seconds."
+
+  - id: P7-input-loss-behavior
+    trigger_words: ["input loss", "signal loss", "black screen", "no input"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume MediaLive stops output on input loss. Default
+      behavior continues output with configurable fill.
+    actual_behavior: >
+      MediaLive has configurable input loss behavior: emit black frames,
+      repeat last frame, or use a slate image. Default is to emit black
+      frames. The input loss threshold (ms) determines when input loss
+      is declared. This is configured per input, not globally.
+    common_false_claim: "MediaLive stops the channel when input is lost."
+    correct_action: "Configure InputLossBehavior in channel settings with appropriate fill type."
+
+  - id: P8-channel-start-time
+    trigger_words: ["start channel", "channel startup", "how long to start"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest channels start instantly. Channel startup takes
+      time to allocate resources.
+    actual_behavior: >
+      MediaLive channel startup typically takes 30-120 seconds depending
+      on complexity. The channel transitions through STARTING state
+      before reaching RUNNING. During startup, MediaLive allocates
+      encoding resources and establishes input/output connections.
+    common_false_claim: "Start the channel and it will be running immediately."
+    correct_action: "Allow 1-2 minutes for channel startup. Monitor state transitions."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

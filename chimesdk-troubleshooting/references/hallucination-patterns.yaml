@@ -1,0 +1,127 @@
+# =============================================================================
+# Amazon Chime SDK "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-meeting-reuse
+    trigger_words: ["meeting ID", "reuse meeting", "persistent meeting", "meeting room"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest reusing meeting IDs like room codes. Meetings are
+      ephemeral and expire after all attendees leave.
+    actual_behavior: >
+      Each meeting is a unique ephemeral resource. When all attendees
+      leave (or after 5 min inactivity), the meeting ends and the ID
+      becomes invalid. A new CreateMeeting call is needed for each session.
+    common_false_claim: "Store the meeting ID and reuse it for recurring meetings."
+    correct_action: "Call CreateMeeting for each new session. Use ExternalMeetingId for your own tracking."
+
+  - id: P2-client-side-create
+    trigger_words: ["create meeting", "join meeting", "client SDK", "browser create"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs call CreateMeeting/CreateAttendee from client code.
+      These require AWS credentials and must be server-side.
+    actual_behavior: >
+      CreateMeeting and CreateAttendee are server-side APIs requiring
+      AWS credentials. The server creates the meeting and attendee,
+      then passes the JoinInfo to the client. The client SDK only
+      handles the WebRTC session, not resource creation.
+    common_false_claim: "Call CreateMeeting from the browser using the Chime SDK."
+    correct_action: "Create meeting/attendee server-side, pass JoinInfo to client SDK."
+
+  - id: P3-single-chime-api
+    trigger_words: ["chime API", "aws chime", "chime command"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs use the legacy aws chime namespace. Chime SDK has separate
+      service-specific namespaces.
+    actual_behavior: >
+      Use service-specific CLI namespaces: chime-sdk-meetings for meetings,
+      chime-sdk-messaging for messaging, chime-sdk-voice for voice/SIP,
+      chime-sdk-identity for identity, chime-sdk-media-pipelines for
+      recording/transcription.
+    common_false_claim: "Use aws chime create-meeting to create a meeting."
+    correct_action: "Use aws chime-sdk-meetings create-meeting for meetings."
+
+  - id: P4-sip-without-lambda
+    trigger_words: ["SIP media", "SIP application", "phone call", "PSTN"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs configure SIP media applications without Lambda functions.
+      Lambda is required for call control logic.
+    actual_behavior: >
+      SIP media applications require a Lambda function that handles
+      call events (NEW_INBOUND_CALL, ACTION_SUCCESSFUL, etc.) and
+      returns actions (PlayAudio, JoinChimeMeeting, etc.). Without
+      Lambda, incoming calls are immediately dropped.
+    common_false_claim: "Create a SIP media application to handle calls directly."
+    correct_action: "Create Lambda function for call logic, then create SIP media app pointing to it."
+
+  - id: P5-messaging-iam-users
+    trigger_words: ["messaging user", "chat user", "send message", "channel member"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs use IAM users for Chime SDK Messaging. It uses app
+      instance users which are a separate identity model.
+    actual_behavior: >
+      Chime SDK Messaging uses app instance users created via
+      CreateAppInstanceUser API. These are not IAM users. Each
+      user has a unique ARN within the app instance. Users must
+      be created before they can participate in channels.
+    common_false_claim: "Use IAM user ARN to send messages in Chime SDK."
+    correct_action: "Create app instance users via chime-sdk-identity, use their ARNs for messaging."
+
+  - id: P6-udp-not-needed
+    trigger_words: ["firewall", "network requirements", "ports", "connectivity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest only HTTPS is needed. WebRTC requires UDP for
+      optimal audio/video quality.
+    actual_behavior: >
+      Chime SDK meetings use WebRTC which needs UDP on port 3478
+      for media transport. HTTPS (443) is used for signaling and
+      as TURN fallback. Blocking UDP forces TURN relay which adds
+      latency and reduces quality. Corporate firewalls often block UDP.
+    common_false_claim: "Chime SDK only needs HTTPS port 443."
+    correct_action: "Allow UDP 3478 and TCP/TLS 443 to Chime media endpoints."
+
+  - id: P7-media-region-any
+    trigger_words: ["media region", "meeting region", "closest region"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest any AWS region works as media region. Only
+      specific media regions are available.
+    actual_behavior: >
+      Chime SDK media regions are a subset of AWS regions optimized
+      for real-time media. Not all AWS regions are media regions.
+      The control plane region (where CreateMeeting is called) can
+      differ from the media region (where media is processed).
+    common_false_claim: "Set media region to any AWS region."
+    correct_action: "Use ListAvailableMediaRegions or check docs for valid media regions."
+
+  - id: P8-recording-automatic
+    trigger_words: ["record meeting", "meeting recording", "capture audio"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest meetings are automatically recorded. Recording
+      requires explicit media pipeline creation.
+    actual_behavior: >
+      Meeting recording requires creating a media capture pipeline
+      via chime-sdk-media-pipelines API after the meeting starts.
+      The pipeline captures audio/video to S3. It's not automatic
+      and requires separate IAM permissions and S3 bucket configuration.
+    common_false_claim: "Enable recording when creating the meeting."
+    correct_action: "Create media capture pipeline after meeting creation using chime-sdk-media-pipelines."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

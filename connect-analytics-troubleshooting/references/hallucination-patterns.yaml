@@ -1,0 +1,158 @@
+# =============================================================================
+# Amazon Connect Contact Lens & Wisdom "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-contact-lens-auto-enabled
+    trigger_words: ["Contact Lens automatic", "enabled by default", "auto-enable analytics"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Contact Lens is automatically enabled when
+      creating a Connect instance. It requires explicit enablement
+      at both instance and contact flow levels.
+    actual_behavior: >
+      Contact Lens is NOT enabled by default. It must be explicitly
+      enabled at the instance level AND configured in each contact
+      flow using the "Set recording and analytics behavior" block.
+      Without both configurations, no transcription, sentiment, or
+      category analysis is performed.
+    common_false_claim: "Contact Lens is automatically enabled for all new Connect instances."
+    correct_action: "Enable Contact Lens at instance level and add analytics block to each contact flow."
+
+  - id: P2-real-time-historical
+    trigger_words: ["real-time transcript after call", "real-time analytics history", "replay real-time"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse real-time and post-contact analytics APIs.
+      Real-time data is only available during active calls.
+    actual_behavior: >
+      Real-time analytics (list-realtime-contact-analysis-segments)
+      are available ONLY during active calls. After the call ends,
+      real-time data is no longer accessible via the real-time API.
+      Post-contact analytics are stored in S3 and accessed via
+      different APIs or the Connect console.
+    common_false_claim: "Use the real-time API to get the transcript of yesterday's call."
+    correct_action: "Use post-contact analytics from S3 or the Connect console for completed contacts."
+
+  - id: P3-sentiment-percentage
+    trigger_words: ["sentiment percentage", "90% positive", "sentiment score 0-100"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs invent percentage-based sentiment scores. Contact Lens
+      uses a -5 to +5 scale.
+    actual_behavior: >
+      Contact Lens sentiment scores range from -5 (most negative)
+      to +5 (most positive). Scores are NOT percentages. Each
+      conversation turn gets a score, and an overall score is
+      calculated for the entire contact. A score of 0 indicates
+      neutral sentiment.
+    common_false_claim: "The sentiment score is 85% positive."
+    correct_action: "Report sentiment on the -5 to +5 scale. Example: overall sentiment +2.3 (moderately positive)."
+
+  - id: P4-wisdom-auto-recommendations
+    trigger_words: ["Wisdom automatic answers", "auto-resolve", "Wisdom answers customer"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Wisdom automatically answers customer questions.
+      Wisdom provides recommendations to agents, not customers.
+    actual_behavior: >
+      Wisdom provides real-time knowledge recommendations to
+      AGENTS during calls. It does NOT interact with customers
+      directly, auto-resolve issues, or provide automated
+      responses. Agents see recommended articles and must
+      decide how to use the information.
+    common_false_claim: "Wisdom will automatically answer the customer's question."
+    correct_action: "Wisdom surfaces relevant articles to agents. Agents use the information to assist customers."
+
+  - id: P5-transcription-all-languages
+    trigger_words: ["any language", "all languages supported", "universal transcription"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate language support for Contact Lens
+      transcription. Only specific languages are supported.
+    actual_behavior: >
+      Contact Lens transcription supports specific languages
+      including English (US, UK, AU), Spanish, French, German,
+      Italian, Japanese, Korean, Portuguese, and others. Not all
+      languages are supported. Language must be configured in the
+      contact flow. Unsupported languages produce no transcription.
+    common_false_claim: "Contact Lens transcribes calls in any language automatically."
+    correct_action: "Check supported languages in AWS documentation. Configure language in the contact flow analytics block."
+
+  - id: P6-category-rules-instant
+    trigger_words: ["instant categorization", "real-time categories immediate", "zero latency"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest category rules are evaluated instantly with
+      zero latency. Real-time rules have processing delay.
+    actual_behavior: >
+      Real-time category rules are evaluated with processing
+      latency (seconds to tens of seconds). Post-contact rules
+      are evaluated after the call ends during analytics
+      processing. Rules must be in PUBLISHED status to be
+      evaluated. Draft rules are never applied.
+    common_false_claim: "Category rules trigger instantly when the keyword is spoken."
+    correct_action: "Expect seconds of latency for real-time rules. Ensure rules are PUBLISHED."
+
+  - id: P7-wisdom-any-source
+    trigger_words: ["connect any data source", "any CRM", "universal connector"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Wisdom can connect to any data source.
+      Only specific connectors are supported.
+    actual_behavior: >
+      Wisdom supports specific knowledge source connectors:
+      Amazon S3, ServiceNow, Salesforce, Microsoft SharePoint,
+      and Zendesk. Custom connectors are not available. Content
+      must be in supported formats (HTML, PDF, Word, text).
+      Unsupported sources require exporting content to S3 first.
+    common_false_claim: "Connect Wisdom to your custom database for agent recommendations."
+    correct_action: "Use supported connectors (S3, ServiceNow, Salesforce, SharePoint, Zendesk). Export other sources to S3."
+
+  - id: P8-screen-recording-all-agents
+    trigger_words: ["all agents recorded", "automatic screen recording", "screen capture default"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest screen recording is enabled by default for
+      all agents. It requires explicit configuration.
+    actual_behavior: >
+      Screen recording must be explicitly enabled in the contact
+      flow and configured for specific agent groups or routing
+      profiles. It is NOT enabled by default. Screen recording
+      requires agent desktop configuration, S3 storage setup,
+      and appropriate IAM permissions. It is separate from call
+      recording.
+    common_false_claim: "Screen recording is automatically enabled for all agents."
+    correct_action: "Enable screen recording in contact flow, configure agent desktop, and set up S3 storage."
+
+remediation_hallucinations:
+
+  - id: R1-retranscribe-contact
+    trigger_words: ["retranscribe", "re-analyze", "reprocess contact"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest re-running Contact Lens analysis on a
+      completed contact. This is not a standard capability.
+    actual_behavior: >
+      Contact Lens analytics are processed once after the contact
+      ends. There is no standard API to re-trigger analysis on
+      a completed contact. If the initial analysis failed or
+      produced incorrect results, the contact cannot be easily
+      reprocessed. Custom vocabulary changes apply to future
+      contacts only.
+    correct_action: "Verify Contact Lens configuration for future contacts. Custom vocabulary changes apply to new contacts only."
+
+  - id: R2-edit-transcript
+    trigger_words: ["edit transcript", "fix transcription", "correct transcript"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest editing Contact Lens transcripts directly.
+      Transcripts are immutable analytics output.
+    actual_behavior: >
+      Contact Lens transcripts are generated automatically and
+      stored as immutable analytics output. They cannot be edited,
+      corrected, or modified after generation. To improve future
+      transcription accuracy, use custom vocabulary. The original
+      transcript remains unchanged.
+    correct_action: "Add custom vocabulary for frequently misrecognized terms. Transcripts for past contacts cannot be changed."

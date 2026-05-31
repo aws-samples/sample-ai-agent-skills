@@ -1,0 +1,150 @@
+# =============================================================================
+# ElastiCache "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-redis-vs-memcached-persistence
+    trigger_words: ["Memcached backup", "Memcached snapshot", "Memcached persistence", "Memcached replication"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate Redis and Memcached capabilities. Redis supports
+      persistence (RDB/AOF), replication, and backups. Memcached is
+      purely in-memory with none of these features.
+    actual_behavior: >
+      Memcached has NO persistence, NO replication, NO failover, NO
+      backups, and NO snapshots. Data is lost on node restart or
+      replacement. Memcached scales by adding nodes with client-side
+      consistent hashing. Only Redis supports these durability features
+      in ElastiCache.
+    common_false_claim: "Enable backups on your Memcached cluster to prevent data loss."
+    correct_action: "If durability is needed, migrate to Redis. Memcached is cache-only with no persistence."
+
+  - id: P2-cluster-mode-resharding-online
+    trigger_words: ["resharding", "add shards", "cluster mode", "online scaling", "slot migration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may claim resharding is seamless with zero impact. While
+      online resharding avoids downtime, it can cause transient errors
+      for multi-key operations on migrating slots.
+    actual_behavior: >
+      Online resharding moves hash slots between shards without downtime.
+      However, during slot migration, multi-key commands (MGET, MSET,
+      pipeline) on keys in migrating slots may receive MOVED or ASK
+      redirections. Clients must handle these redirections. Resharding
+      large shards with many keys can take hours. Monitor ReplicationLag
+      during resharding.
+    common_false_claim: "Resharding is completely transparent to applications with zero errors."
+    correct_action: "Ensure clients handle MOVED/ASK redirections. Monitor for increased latency during resharding."
+
+  - id: P3-memcached-no-replication
+    trigger_words: ["Memcached replica", "Memcached failover", "Memcached Multi-AZ", "Memcached replication"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume all ElastiCache engines support replication because
+      Redis does. Memcached has a fundamentally different architecture
+      with no replication support.
+    actual_behavior: >
+      Memcached does not support replication, read replicas, Multi-AZ
+      failover, or any form of data redundancy. Each Memcached node is
+      independent. If a node fails, its data is lost. The application
+      must handle cache misses gracefully. Node replacement creates an
+      empty node.
+    common_false_claim: "Enable Multi-AZ on your Memcached cluster for high availability."
+    correct_action: "Design applications to handle Memcached node failures gracefully. Use Redis if replication is required."
+
+  - id: P4-eviction-equals-data-loss
+    trigger_words: ["eviction", "evicted keys", "data loss", "eviction policy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat evictions as catastrophic data loss. For cache
+      workloads, evictions are normal and expected behavior when
+      memory is full.
+    actual_behavior: >
+      Evictions are normal for cache workloads — they remove less
+      frequently/recently used keys to make room for new data. This is
+      by design. Evictions become a problem only when the eviction rate
+      is so high that cache hit ratio drops significantly, causing
+      excessive origin/database load. The eviction policy (allkeys-lru,
+      volatile-lru, etc.) determines which keys are evicted.
+    common_false_claim: "Evictions indicate a critical problem — you must immediately scale up."
+    correct_action: "Monitor eviction rate alongside cache hit ratio. Scale only if hit ratio degrades unacceptably."
+
+  - id: P5-maxmemory-reserved-purpose
+    trigger_words: ["maxmemory-reserved", "reserved memory", "memory overhead", "OOM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse maxmemory-reserved with maxmemory or assume it
+      reduces available cache memory unnecessarily. It serves a
+      critical purpose for operational stability.
+    actual_behavior: >
+      maxmemory-reserved sets aside memory for non-data overhead:
+      replication output buffers, client output buffers, Lua scripts,
+      pub/sub buffers, and internal data structures. AWS recommends 25%
+      of maxmemory. Without sufficient reservation, heavy replication
+      sync or pub/sub fan-out can cause OOM even when used_memory
+      appears below maxmemory. This is a parameter group setting.
+    common_false_claim: "Set maxmemory-reserved to 0 to maximize available cache memory."
+    correct_action: "Keep maxmemory-reserved at 25% of maxmemory. Increase if using heavy pub/sub or Lua scripts."
+
+  - id: P6-auth-token-vs-iam-auth
+    trigger_words: ["AUTH token", "Redis AUTH", "IAM authentication", "RBAC", "Redis ACL"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Redis AUTH tokens (password-based) with IAM
+      authentication and Redis ACLs. These are different authentication
+      mechanisms with different capabilities.
+    actual_behavior: >
+      Redis AUTH token is a single password for the entire cluster
+      (pre-Redis 6.x). Redis 6.x+ supports ACLs with multiple users
+      and per-command permissions. IAM authentication (supported in
+      ElastiCache 7.0+) uses IAM credentials for authentication,
+      eliminating password management. AUTH token rotation uses
+      modify-replication-group with SET or ROTATE strategy. ROTATE
+      allows both old and new tokens during transition.
+    common_false_claim: "Use IAM authentication with Redis 5.x ElastiCache clusters."
+    correct_action: "Check Redis version. IAM auth requires 7.0+. Use AUTH tokens for older versions. Use ACLs for 6.x+."
+
+  - id: P7-backup-memcached
+    trigger_words: ["Memcached backup", "Memcached snapshot", "Memcached restore", "Memcached RDB"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs apply Redis backup concepts to Memcached. Memcached has
+      no persistence mechanism whatsoever.
+    actual_behavior: >
+      Memcached does NOT support backups, snapshots, RDB files, AOF,
+      or any form of persistence. All data exists only in memory. When
+      a Memcached node is restarted, replaced, or removed, all data on
+      that node is permanently lost. There is no way to back up or
+      restore Memcached data through ElastiCache.
+    common_false_claim: "Create a snapshot of your Memcached cluster before maintenance."
+    correct_action: "Memcached has no backup capability. Ensure the application can repopulate the cache from the source of truth."
+
+  - id: P8-serverless-limits
+    trigger_words: ["ElastiCache Serverless", "serverless Redis", "serverless Memcached", "ECPU"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume ElastiCache Serverless has the same capabilities and
+      limits as provisioned clusters. Serverless has distinct limits
+      and a different pricing model.
+    actual_behavior: >
+      ElastiCache Serverless automatically scales compute and memory
+      but has different limits: maximum data storage, connection limits,
+      and some Redis commands may not be supported. Pricing is based on
+      data stored (GB-hours) and ElastiCache Processing Units (ECPUs),
+      not node-hours. Serverless does not expose individual nodes —
+      you interact through a single endpoint. Check current AWS
+      documentation for specific Serverless limits as they evolve.
+    common_false_claim: "ElastiCache Serverless supports all Redis commands and has no limits."
+    correct_action: "Check AWS documentation for current Serverless limits. Verify command support before migrating."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

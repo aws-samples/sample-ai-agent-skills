@@ -1,0 +1,167 @@
+# =============================================================================
+# AWS Signer "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-modify-signing-profile
+    trigger_words: ["modify profile", "update profile", "change signing profile"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying existing signing profiles to change
+      platforms or parameters. Signing profiles are immutable.
+    actual_behavior: >
+      Signing profiles are immutable once created. You cannot
+      change the platform ID, signing parameters, or key
+      configuration of an existing profile. To use different
+      settings, you must create a new signing profile. The old
+      profile remains valid and can still be used for signing.
+      Existing signatures made with the old profile remain valid.
+    common_false_claim: "Update your signing profile to use a different platform."
+    correct_action: "Create a new signing profile with the desired settings. Update references to use the new profile."
+
+  - id: P2-revoke-is-reversible
+    trigger_words: ["revoke profile", "undo revocation", "restore profile"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest profile revocation can be undone or that it
+      only affects future signatures. Revocation is permanent
+      and retroactive.
+    actual_behavior: >
+      Revoking a signing profile is PERMANENT and IRREVERSIBLE.
+      It invalidates ALL signatures ever made with that profile,
+      including those on currently deployed Lambda functions and
+      IoT firmware. There is no way to un-revoke a profile.
+      Revocation takes effect immediately across all regions
+      where the signatures are validated.
+    common_false_claim: "Revoke the profile and restore it later if needed."
+    correct_action: "Before revoking, audit all deployments using the profile. Create a new profile and re-sign artifacts first."
+
+  - id: P3-bring-your-own-key
+    trigger_words: ["import key", "own key", "custom key", "BYOK"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest importing custom signing keys into AWS Signer.
+      Signer manages keys internally via KMS.
+    actual_behavior: >
+      AWS Signer manages signing keys internally using AWS KMS.
+      For most platforms, you cannot import, export, or directly
+      access the signing key. The key is created automatically
+      when the signing profile is created and is tied to the
+      profile's lifecycle. You can specify a KMS key for
+      encryption of signing artifacts, but not the signing key
+      itself.
+    common_false_claim: "Import your existing code signing certificate into AWS Signer."
+    correct_action: "Use AWS Signer's managed keys. For custom certificates, use ACM Private CA with manual signing workflows."
+
+  - id: P4-lambda-iot-same-platform
+    trigger_words: ["Lambda signing", "IoT signing", "code signing platform"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using the same signing platform for Lambda
+      and IoT. They use different platforms with different
+      algorithms.
+    actual_behavior: >
+      Lambda code signing uses the AWSLambda-SHA384-ECDSA
+      platform. IoT code signing uses platform IDs like
+      AmazonFreeRTOS-TI-CC3220SF or AWSIoTDeviceManagement-
+      SHA256-ECDSA. Using a Lambda platform for IoT signing
+      (or vice versa) will fail. Each platform has specific
+      artifact format and signature requirements.
+    common_false_claim: "Use the same signing profile for both Lambda and IoT code signing."
+    correct_action: "Create separate profiles with the correct platform for each use case. Use list-signing-platforms to see options."
+
+  - id: P5-signing-is-synchronous
+    trigger_words: ["sign code", "signing result", "immediate signing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest signing is synchronous and returns the signed
+      artifact immediately. Signing is asynchronous.
+    actual_behavior: >
+      StartSigningJob returns immediately with a job ID. The
+      actual signing process runs asynchronously and may take
+      seconds to minutes depending on artifact size. You must
+      poll with DescribeSigningJob or configure SNS notifications
+      to know when signing completes. The signed artifact is
+      written to the specified S3 destination.
+    common_false_claim: "Call StartSigningJob and use the signed artifact immediately."
+    correct_action: "Start the job, then poll DescribeSigningJob until status is Succeeded. Then retrieve from S3 destination."
+
+  - id: P6-code-signing-prevents-all-attacks
+    trigger_words: ["code signing security", "prevent tampering", "secure deployment"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate code signing's security guarantees. It
+      verifies integrity and origin, not code safety.
+    actual_behavior: >
+      Code signing verifies that code has not been tampered with
+      since signing and that it was signed by a trusted profile.
+      It does NOT verify that the code is free of vulnerabilities,
+      malware, or security issues. A signed malicious package is
+      still malicious. Code signing is one layer of defense, not
+      a complete security solution.
+    common_false_claim: "Enable code signing to prevent all malicious code deployments."
+    correct_action: "Use code signing for integrity verification. Combine with code review, scanning, and runtime protection."
+
+  - id: P7-expired-signatures-auto-renew
+    trigger_words: ["signature expired", "renew signature", "extend validity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest expired signatures can be renewed or extended.
+      Expired signatures require re-signing with a valid profile.
+    actual_behavior: >
+      Signing profiles have a signature validity period. Once a
+      signature expires, it cannot be renewed or extended. The
+      artifact must be re-signed using a valid (non-expired,
+      non-revoked) signing profile. Lambda functions with expired
+      signatures may fail code signing validation depending on
+      the enforcement mode.
+    common_false_claim: "Renew the expired signature to extend its validity period."
+    correct_action: "Re-sign the artifact with a valid signing profile. Update the deployment with the newly signed artifact."
+
+  - id: P8-signer-supports-all-languages
+    trigger_words: ["sign Python", "sign Java", "sign container", "sign any code"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest AWS Signer can sign any type of code or
+      artifact. It supports specific platforms and formats.
+    actual_behavior: >
+      AWS Signer supports specific platforms: Lambda deployment
+      packages (ZIP), Lambda layers, IoT firmware for specific
+      hardware platforms, and container images (via Notation).
+      It does not sign arbitrary files, executables, or code
+      packages. Each platform has specific artifact format
+      requirements. Use list-signing-platforms to see supported
+      platforms.
+    common_false_claim: "Use AWS Signer to sign your Docker images and Python packages."
+    correct_action: "Check supported platforms with list-signing-platforms. For containers, use Notation with Signer plugin."
+
+remediation_hallucinations:
+
+  - id: R1-revoke-to-fix-validation
+    trigger_words: ["revoke and recreate", "revoke profile", "fix validation"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Revoking a signing profile to fix validation issues
+      permanently invalidates ALL existing signatures. This can
+      cause widespread deployment failures for Lambda functions
+      and IoT devices using those signatures.
+    correct_approach: >
+      Create a new signing profile with correct settings. Re-sign
+      artifacts with the new profile. Update code signing configs
+      to reference the new profile. Only revoke the old profile
+      after all deployments are migrated to the new profile.
+
+  - id: R2-disable-enforcement-permanently
+    trigger_words: ["disable code signing", "remove enforcement", "skip validation"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Permanently disabling code signing enforcement removes a
+      critical security control. It allows unsigned or tampered
+      code to be deployed without any verification.
+    correct_approach: >
+      Temporarily switch from Enforce to Warn mode while
+      investigating. Fix the signing issue (expired profile,
+      wrong profile, missing signature). Re-enable Enforce mode
+      after the issue is resolved. Never leave enforcement
+      disabled in production.

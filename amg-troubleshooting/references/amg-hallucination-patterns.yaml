@@ -1,0 +1,139 @@
+# =============================================================================
+# Amazon Managed Grafana "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-local-user-creation
+    trigger_words: ["create user", "add user", "local user", "username password", "grafana admin password"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on self-hosted Grafana documentation suggest creating
+      local users with username/password. AMG does not support local
+      authentication — all users must come through SSO or SAML.
+    actual_behavior: >
+      AMG requires IAM Identity Center (AWS SSO) or SAML 2.0 for
+      authentication. Users are provisioned through the identity provider.
+      You cannot create local Grafana accounts. User management is done
+      via aws grafana update-permissions or the AWS Console.
+    common_false_claim: "Go to Grafana Admin > Users > New User to create a local account."
+    correct_action: "Add users through IAM Identity Center or SAML IdP, then assign permissions via AWS API or Console."
+
+  - id: P2-grafana-cli-plugins
+    trigger_words: ["grafana-cli", "install plugin", "community plugin", "plugin install"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs reference self-hosted Grafana plugin installation via
+      grafana-cli. AMG does not provide CLI access and only supports
+      plugins from the AWS-approved catalog.
+    actual_behavior: >
+      Plugins in AMG are managed through the workspace configuration
+      API or the AWS Console. Only plugins in the AWS-approved catalog
+      are available. You cannot run grafana-cli, upload plugin ZIPs,
+      or install from the Grafana community registry.
+    common_false_claim: "Run grafana-cli plugins install <plugin-name> to add the plugin."
+    correct_action: "Check the AMG plugin catalog via describe-workspace-configuration. Enable approved plugins through the AWS API or Console."
+
+  - id: P3-grafana-ini-configuration
+    trigger_words: ["grafana.ini", "configuration file", "server config", "restart grafana"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest editing grafana.ini or restarting the Grafana server
+      based on self-hosted documentation. AMG is fully managed with no
+      server-level access.
+    actual_behavior: >
+      AMG configuration is managed through the AWS API
+      (update-workspace, update-workspace-configuration) or the AWS
+      Console. There is no access to grafana.ini, the file system, or
+      the ability to restart the service. Configuration changes are
+      applied through API calls.
+    common_false_claim: "Edit /etc/grafana/grafana.ini and restart the Grafana service."
+    correct_action: "Use aws grafana update-workspace or update-workspace-configuration to modify settings."
+
+  - id: P4-version-upgrade-manual
+    trigger_words: ["upgrade grafana", "downgrade", "pin version", "grafana version"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manual version management based on self-hosted
+      Grafana practices. AMG version is managed by AWS.
+    actual_behavior: >
+      AWS manages the Grafana version lifecycle for AMG workspaces.
+      You can request a version upgrade through the AWS API
+      (update-workspace with grafanaVersion), but you cannot downgrade
+      or pin a specific minor version. AWS may auto-upgrade workspaces
+      on their schedule.
+    common_false_claim: "Download Grafana 10.x and install it to upgrade your workspace."
+    correct_action: "Use aws grafana update-workspace --grafana-version to request an upgrade. Check available versions via describe-workspace."
+
+  - id: P5-legacy-alerting
+    trigger_words: ["dashboard alert", "alert tab", "legacy alert", "alert condition"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs reference legacy Grafana dashboard-based alerting which is
+      not supported in AMG. AMG uses unified alerting only.
+    actual_behavior: >
+      AMG uses Grafana unified alerting (Grafana 8+). Alert rules are
+      created in the Alerting section, not on dashboard panels. Rules
+      support multi-dimensional queries, multiple evaluation groups,
+      and notification policies with routing. Legacy alert tab on
+      panels does not exist.
+    common_false_claim: "Go to the panel edit view and click the Alert tab to create an alert."
+    correct_action: "Navigate to Alerting > Alert Rules > New Alert Rule. Define the query, conditions, and notification policy."
+
+  - id: P6-vpc-not-needed
+    trigger_words: ["data source connection", "cannot connect", "timeout", "private subnet"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not consider that AMG workspaces need explicit VPC
+      configuration to reach private resources. Without VPC config,
+      the workspace only has public internet access.
+    actual_behavior: >
+      AMG workspaces without VPC configuration can only reach publicly
+      accessible endpoints. To connect to resources in a VPC (private
+      Prometheus, OpenSearch, databases), the workspace must be
+      configured with VPC subnets and security groups. This is set
+      via update-workspace with vpcConfiguration.
+    common_false_claim: "The Grafana workspace should be able to reach your VPC resources by default."
+    correct_action: "Configure VPC connectivity on the workspace with appropriate subnets and security groups."
+
+  - id: P7-both-auth-modes
+    trigger_words: ["SSO and SAML", "both authentication", "multiple auth", "switch auth"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest configuring both SSO and SAML on the same
+      workspace. AMG only supports one authentication mode at a time.
+    actual_behavior: >
+      An AMG workspace can use either IAM Identity Center (SSO) or
+      SAML 2.0, but not both simultaneously. Switching authentication
+      modes requires updating the workspace authentication configuration
+      and may affect existing user access and permissions.
+    common_false_claim: "Configure SSO for internal users and SAML for external users on the same workspace."
+    correct_action: "Choose one authentication mode per workspace. Use separate workspaces if both SSO and SAML are needed."
+
+  - id: P8-data-source-iam-confusion
+    trigger_words: ["data source permission", "access denied", "query failed", "RBAC"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs conflate Grafana RBAC permissions with AWS IAM permissions.
+      A Grafana Admin can still get access denied on data source queries
+      if the workspace IAM role lacks permissions.
+    actual_behavior: >
+      Two independent permission layers exist: Grafana RBAC (controls
+      UI actions like creating dashboards) and the workspace IAM role
+      (controls AWS service access for data source queries). Both must
+      be correctly configured. A user with Grafana Admin role but a
+      workspace IAM role missing cloudwatch:GetMetricData will fail
+      CloudWatch queries.
+    common_false_claim: "Grant the user Grafana Admin role to fix data source access denied errors."
+    correct_action: "Check the workspace IAM role policies for the required AWS service permissions. Grafana RBAC and IAM are separate."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

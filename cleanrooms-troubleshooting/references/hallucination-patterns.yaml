@@ -1,0 +1,121 @@
+# =============================================================================
+# Clean Rooms "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-single-account-collab
+    trigger_words: ["create collaboration", "clean rooms setup", "test collaboration"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a collaboration with a single account for
+      testing. Collaborations require at least two member accounts.
+    actual_behavior: >
+      A Clean Rooms collaboration must have at least two member accounts.
+      The creator is the first member. A second account must be invited
+      and accept membership before the collaboration is functional.
+    common_false_claim: "Create a collaboration in your account to test Clean Rooms."
+    correct_action: "Use two separate AWS accounts. Invite the second account as a member."
+
+  - id: P2-query-without-analysis-rule
+    trigger_words: ["query configured table", "run query clean rooms", "select from table"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest querying tables without mentioning analysis rules.
+      Analysis rules are required before any query can execute.
+    actual_behavior: >
+      Every configured table must have an analysis rule (AGGREGATION,
+      LIST, or CUSTOM) before it can be queried. Without an analysis
+      rule, queries referencing the table fail.
+    common_false_claim: "Configure the table and start querying immediately."
+    correct_action: "Create an analysis rule for each configured table before querying."
+
+  - id: P3-data-copied-between-accounts
+    trigger_words: ["data sharing", "copy data", "transfer data clean rooms"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest Clean Rooms copies data between accounts.
+      Raw data never leaves the owner's account.
+    actual_behavior: >
+      Clean Rooms processes queries in place without moving raw data.
+      Only aggregated or filtered results are shared with the receiving
+      member. This is a fundamental privacy guarantee of the service.
+    common_false_claim: "Clean Rooms copies the data to a shared location for querying."
+    correct_action: "Data stays in the owner's account. Only processed results are shared."
+
+  - id: P4-unlimited-dp-queries
+    trigger_words: ["differential privacy", "privacy budget", "dp queries"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention the finite privacy budget for differential
+      privacy. Each query consumes budget.
+    actual_behavior: >
+      Differential privacy uses a finite epsilon budget. Each query
+      consumes part of the budget. When exhausted, no more queries
+      can run until the budget refreshes (typically monthly).
+    common_false_claim: "Enable differential privacy and run unlimited queries."
+    correct_action: "Monitor privacy budget consumption. Plan queries to stay within budget."
+
+  - id: P5-crypto-existing-data
+    trigger_words: ["cryptographic computing", "encrypt clean rooms", "c3r encryption"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling cryptographic computing on existing tables.
+      Data must be pre-encrypted with C3R before upload.
+    actual_behavior: >
+      Cryptographic computing requires client-side encryption using
+      the C3R encryption client before uploading to S3. Existing
+      unencrypted data must be re-encrypted and re-uploaded.
+    common_false_claim: "Enable cryptographic computing on your existing configured table."
+    correct_action: "Encrypt data with C3R client, upload to S3, then configure in Clean Rooms."
+
+  - id: P6-any-member-receives
+    trigger_words: ["query results", "receive results", "output clean rooms"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume any member can receive query results. Only members
+      with CAN_RECEIVE_RESULTS ability can.
+    actual_behavior: >
+      Only members with the CAN_RECEIVE_RESULTS ability can receive
+      query output. The output S3 bucket must be in the receiving
+      member's account. Other members can contribute data but not
+      see results.
+    common_false_claim: "Any collaboration member can view query results."
+    correct_action: "Ensure the receiving member has CAN_RECEIVE_RESULTS ability and an output S3 bucket."
+
+  - id: P7-glue-not-needed
+    trigger_words: ["configured table", "add table clean rooms", "table setup"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may omit the Glue Data Catalog prerequisite for configured
+      tables. Tables must be in Glue first.
+    actual_behavior: >
+      Configured tables reference AWS Glue Data Catalog tables. The
+      Glue database and table must exist in the same account and region
+      before creating a configured table in Clean Rooms.
+    common_false_claim: "Point Clean Rooms directly at your S3 data."
+    correct_action: "Register data in Glue Data Catalog first, then create configured table."
+
+  - id: P8-aggregation-no-threshold
+    trigger_words: ["aggregation rule", "aggregate query", "count distinct"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not mention minimum aggregation thresholds in
+      AGGREGATION analysis rules.
+    actual_behavior: >
+      AGGREGATION analysis rules enforce minimum aggregation thresholds.
+      Queries returning groups with fewer rows than the threshold are
+      filtered out. This prevents re-identification of individuals.
+    common_false_claim: "AGGREGATION rules allow any aggregate query."
+    correct_action: "Configure appropriate aggregation thresholds. Expect small groups to be filtered."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

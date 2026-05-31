@@ -1,0 +1,139 @@
+# =============================================================================
+# Amazon Lightsail "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-security-groups-confusion
+    trigger_words: ["security group", "firewall", "port rules", "inbound rules"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using EC2 security group commands for Lightsail
+      instances. Lightsail has its own firewall system.
+    actual_behavior: >
+      Lightsail instances use a built-in firewall managed through
+      the Lightsail API, NOT EC2 security groups. Use
+      aws lightsail put-instance-public-ports to configure firewall
+      rules. Default rules allow SSH (22) and HTTP (80). The Lightsail
+      firewall controls inbound traffic only. EC2 security group
+      commands (aws ec2 authorize-security-group-ingress) do NOT
+      affect Lightsail instance firewalls.
+    common_false_claim: "Modify the security group attached to your Lightsail instance."
+    correct_action: "Use aws lightsail put-instance-public-ports to manage Lightsail firewall rules."
+
+  - id: P2-rds-features-on-lightsail-db
+    trigger_words: ["Lightsail database", "managed database", "Multi-AZ", "read replica"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs apply RDS knowledge to Lightsail databases, suggesting
+      features that don't exist in Lightsail.
+    actual_behavior: >
+      Lightsail managed databases support MySQL and PostgreSQL only.
+      They do NOT support: Multi-AZ deployments, read replicas, IAM
+      database authentication, Performance Insights, Enhanced Monitoring,
+      Aurora compatibility, or custom parameter groups. Backup retention
+      is 7 days automatic. For these features, use RDS instead.
+    common_false_claim: "Enable Multi-AZ on your Lightsail database for high availability."
+    correct_action: "Lightsail databases don't support Multi-AZ. For HA, migrate to RDS."
+
+  - id: P3-custom-container-resources
+    trigger_words: ["container CPU", "container memory", "container resources", "container size"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest specifying custom CPU and memory for Lightsail
+      containers like ECS or Kubernetes. Lightsail uses fixed tiers.
+    actual_behavior: >
+      Lightsail container services use predefined power levels:
+      Nano (0.25 vCPU, 512 MB), Micro (0.5 vCPU, 1 GB), Small
+      (1 vCPU, 2 GB), Medium (2 vCPU, 4 GB), Large (4 vCPU, 8 GB),
+      XLarge (8 vCPU, 16 GB). You cannot specify custom values.
+      Scale is 1-20 nodes. Choose the tier that fits your workload.
+    common_false_claim: "Set the container CPU to 1.5 vCPU and memory to 3 GB."
+    correct_action: "Choose from predefined power levels. Custom CPU/memory is not supported."
+
+  - id: P4-static-ip-always-free
+    trigger_words: ["static IP", "elastic IP", "fixed IP", "permanent IP"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim Lightsail static IPs are always free, confusing
+      with the attached-to-running-instance condition.
+    actual_behavior: >
+      Lightsail static IPs are free ONLY when attached to a running
+      instance. Unattached static IPs cost $0.005/hour (~$3.60/month).
+      Static IPs on stopped instances also incur charges. Maximum 5
+      static IPs per region per account. Lightsail static IPs are
+      NOT the same as EC2 Elastic IPs.
+    common_false_claim: "Lightsail static IPs are always free."
+    correct_action: "Static IPs are free only when attached to running instances. Release unused static IPs."
+
+  - id: P5-vpc-peering-bidirectional
+    trigger_words: ["VPC peering", "VPC access", "private network", "connect to VPC"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume VPC peering is bidirectional, allowing VPC
+      resources to connect to Lightsail instances.
+    actual_behavior: >
+      Lightsail VPC peering is ONE-WAY: Lightsail instances can
+      access VPC resources using private IPs, but VPC resources
+      CANNOT initiate connections to Lightsail instances through
+      the peering. Peering connects to the default VPC only.
+      Peering must be enabled in Lightsail Account settings.
+    common_false_claim: "Enable VPC peering so your EC2 instances can connect to Lightsail."
+    correct_action: "VPC peering is one-way (Lightsail → VPC only). VPC resources cannot initiate to Lightsail."
+
+  - id: P6-bundle-downgrade
+    trigger_words: ["downgrade", "smaller plan", "reduce resources", "change bundle"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest downgrading Lightsail instance bundles directly.
+      You can only upgrade, not downgrade in-place.
+    actual_behavior: >
+      Lightsail instances can only be upgraded to larger bundles,
+      not downgraded. To move to a smaller bundle: create a snapshot,
+      launch a new instance from the snapshot with the smaller bundle,
+      reassign the static IP, and delete the old instance. Direct
+      in-place downgrade is not supported.
+    common_false_claim: "Downgrade your instance to a smaller plan to save costs."
+    correct_action: "Create snapshot, launch new instance with smaller bundle, migrate static IP, delete old instance."
+
+  - id: P7-lightsail-dns-alias
+    trigger_words: ["DNS alias", "alias record", "weighted routing", "DNS routing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Route 53 features for Lightsail DNS zones.
+      Lightsail DNS has limited record type support.
+    actual_behavior: >
+      Lightsail DNS zones support A, AAAA, CNAME, MX, NS, SRV,
+      and TXT records only. They do NOT support alias records,
+      weighted routing, latency-based routing, geolocation routing,
+      failover routing, or health checks. For these features, use
+      Route 53 hosted zones instead of Lightsail DNS.
+    common_false_claim: "Create an alias record in your Lightsail DNS zone."
+    correct_action: "Lightsail DNS doesn't support alias records. Use Route 53 for advanced DNS features."
+
+  - id: P8-burstable-cpu
+    trigger_words: ["CPU throttling", "CPU credits", "burst", "sustained CPU"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention that smaller Lightsail plans have burstable
+      CPU, similar to EC2 T-class instances.
+    actual_behavior: >
+      Smaller Lightsail plans ($3.50, $5, $10) have burstable CPU
+      performance. Sustained high CPU usage depletes burst capacity
+      and results in throttling to baseline performance. Larger plans
+      ($20+) provide dedicated CPU resources. Check the Sustainable
+      zone and Burstable zone in Lightsail metrics. If CPU is
+      consistently in the burstable zone, upgrade to a larger plan.
+    common_false_claim: "Your Lightsail instance has dedicated CPU resources."
+    correct_action: "Check if your plan has burstable CPU. Monitor burst capacity. Upgrade if consistently throttled."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

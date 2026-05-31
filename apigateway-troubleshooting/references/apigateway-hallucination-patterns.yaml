@@ -1,0 +1,138 @@
+# =============================================================================
+# API Gateway "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-timeout-configurable-beyond-29s
+    trigger_words: ["timeout", "29 seconds", "integration timeout", "504", "timeout limit"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest increasing the integration timeout beyond 29 seconds for
+      REST API. This is a hard service limit that cannot be changed.
+    actual_behavior: >
+      REST API has a hard limit of 29 seconds for integration timeout.
+      HTTP API has a 30-second limit. Neither can be increased. For
+      long-running operations, use asynchronous patterns: Lambda async
+      invocation, Step Functions, or SQS queuing.
+    common_false_claim: "Increase the integration timeout to 60 seconds to handle slow backends."
+    correct_action: "Use async patterns (Step Functions, SQS) for operations exceeding 29 seconds."
+
+  - id: P2-api-keys-for-auth
+    trigger_words: ["API key", "x-api-key", "authentication", "secure API", "protect API"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs recommend API keys as an authentication mechanism. API keys
+      are for identification and usage tracking only, not security.
+    actual_behavior: >
+      API keys are sent in the x-api-key header and associated with
+      usage plans for throttling and quota management. They provide
+      identification, not authentication. Anyone with the key can call
+      the API. Use Lambda authorizers, Cognito, or IAM for auth.
+    common_false_claim: "Add an API key to secure your API endpoint."
+    correct_action: "Use Lambda authorizers, Cognito user pool authorizers, or IAM authorization for authentication."
+
+  - id: P3-cors-automatic
+    trigger_words: ["CORS", "cross-origin", "Access-Control", "preflight", "OPTIONS"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim enabling CORS in the console handles everything. For
+      REST API, CORS requires both OPTIONS method setup AND actual
+      method response headers.
+    actual_behavior: >
+      REST API CORS requires: (1) OPTIONS method with MOCK integration
+      returning CORS headers, (2) actual methods returning
+      Access-Control-Allow-Origin in responses, (3) gateway responses
+      also need CORS headers for error responses. The console "Enable
+      CORS" button creates the OPTIONS method but you must still handle
+      headers in integration responses. HTTP API has built-in CORS config.
+    common_false_claim: "Just enable CORS in the API Gateway console and it will work."
+    correct_action: "Configure OPTIONS method, integration response headers, AND gateway response headers for REST API."
+
+  - id: P4-changes-auto-deploy
+    trigger_words: ["deploy", "deployment", "changes not working", "update not visible"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume REST API changes are live immediately after modification,
+      like HTTP API with auto-deploy. REST API requires explicit deployment.
+    actual_behavior: >
+      REST API changes to methods, integrations, authorizers, models,
+      and gateway responses require creating a new deployment to take
+      effect. HTTP API has automatic deployments via the $default stage
+      by default. Forgetting to deploy is the most common cause of
+      "my changes aren't working" for REST API.
+    common_false_claim: "Your API changes are now live after updating the method."
+    correct_action: "Create a new deployment after REST API changes: aws apigateway create-deployment --rest-api-id <id> --stage-name <stage>"
+
+  - id: P5-lambda-proxy-any-response
+    trigger_words: ["Lambda proxy", "proxy integration", "502", "malformed", "internal server error"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim Lambda can return any JSON with proxy integration.
+      The response format is strict: statusCode, headers, body (string).
+    actual_behavior: >
+      Lambda proxy integration requires: { statusCode: <number>,
+      headers: { ... }, body: "<string>" }. The body MUST be a string
+      (JSON.stringify for objects). Missing statusCode causes 502.
+      Non-string body causes 502. Returning a raw object without
+      statusCode causes "Malformed Lambda proxy response."
+    common_false_claim: "Just return a JSON object from your Lambda function."
+    correct_action: "Return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }."
+
+  - id: P6-http-api-same-as-rest
+    trigger_words: ["HTTP API", "REST API", "API type", "v1 vs v2", "which API"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate REST API and HTTP API features. They have different
+      capabilities, limits, and pricing.
+    actual_behavior: >
+      REST API supports: request validation, WAF, resource policies,
+      usage plans, API keys, caching, custom gateway responses, VTL
+      mapping templates. HTTP API supports: OIDC/OAuth2 natively,
+      automatic deployments, lower latency, lower cost, but lacks
+      WAF, caching, request validation, and usage plans. WebSocket
+      API is a separate type for bidirectional communication.
+    common_false_claim: "Enable WAF on your HTTP API to block malicious requests."
+    correct_action: "Check API type first. For WAF with HTTP API, put CloudFront in front. Use REST API for native WAF support."
+
+  - id: P7-websocket-stateless
+    trigger_words: ["WebSocket", "$connect", "$disconnect", "connection", "real-time"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs treat WebSocket API like REST API. WebSocket has unique
+      connection lifecycle, route selection, and callback URL patterns.
+    actual_behavior: >
+      WebSocket API maintains persistent connections. $connect is
+      invoked on connection (auth happens here). $disconnect on
+      close. $default for unmatched routes. Messages are routed
+      via route selection expression (default: $request.body.action).
+      Backend sends messages via callback URL:
+      https://<api-id>.execute-api.<region>.amazonaws.com/<stage>/@connections/<connection-id>
+    common_false_claim: "WebSocket API works like REST API with request/response pairs."
+    correct_action: "Understand connection lifecycle: $connect for auth, route selection for messages, callback URL for server-push."
+
+  - id: P8-throttling-per-api
+    trigger_words: ["throttling", "rate limit", "429", "too many requests", "burst"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs claim throttling is per-API. Account-level throttling is
+      shared across ALL APIs in the account/region.
+    actual_behavior: >
+      Account-level limit (10,000 rps, 5,000 burst) is shared across
+      ALL APIs in the account and region. Stage and method overrides
+      can only reduce, not increase beyond account limits. Usage plans
+      provide per-client throttling via API keys. A single high-traffic
+      API can consume the entire account quota, throttling other APIs.
+    common_false_claim: "Each API has its own 10,000 rps limit."
+    correct_action: "Check account-level limits first. Use stage/method overrides and usage plans for granular control."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

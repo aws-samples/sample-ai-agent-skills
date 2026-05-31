@@ -1,0 +1,153 @@
+# =============================================================================
+# AWS CloudShell "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-persistent-storage-everywhere
+    trigger_words: ["CloudShell", "persistent", "install packages", "save files"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest files saved anywhere in CloudShell persist across
+      sessions. Only $HOME directory has persistent storage.
+    actual_behavior: >
+      CloudShell provides 1 GB of persistent storage ONLY in the
+      $HOME directory. Files in /tmp, /var, /usr/local, or any
+      other system directory are ephemeral and lost when the
+      session ends or restarts. System packages installed via
+      yum or apt do not persist.
+    common_false_claim: "Install the package with yum and it will be available next time you open CloudShell."
+    correct_action: "Install tools in $HOME directory. Use pip install --user or download binaries to $HOME/bin."
+
+  - id: P2-vpc-internet-access
+    trigger_words: ["VPC environment", "internet", "public subnet", "CloudShell VPC"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume VPC CloudShell environments have internet access
+      like EC2 instances in public subnets.
+    actual_behavior: >
+      VPC-connected CloudShell environments do NOT have internet
+      access by default, even in public subnets. CloudShell VPC
+      environments require a NAT gateway in the subnet's route
+      table for internet access. Public subnets with internet
+      gateways do NOT provide internet to CloudShell.
+    common_false_claim: "Place CloudShell in a public subnet for internet access."
+    correct_action: "Use a private subnet with NAT gateway, or configure VPC endpoints for AWS services."
+
+  - id: P3-separate-iam-role
+    trigger_words: ["CloudShell role", "CloudShell credentials", "CloudShell IAM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CloudShell has its own IAM role or credentials
+      separate from the console user.
+    actual_behavior: >
+      CloudShell inherits the IAM credentials of the signed-in
+      console user. There is no separate CloudShell execution
+      role. Permission errors in CloudShell are the same as
+      permission errors for the IAM user/role in the console.
+      The AWSCloudShellFullAccess managed policy controls access
+      to CloudShell itself, not what you can do inside it.
+    common_false_claim: "Attach a role to your CloudShell environment for additional permissions."
+    correct_action: "Modify the IAM user/role permissions that you use to sign into the console."
+
+  - id: P4-unlimited-session-time
+    trigger_words: ["long running", "background process", "always on", "keep alive"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CloudShell can run indefinitely or be used
+      for long-running background processes.
+    actual_behavior: >
+      CloudShell sessions time out after 20 minutes of inactivity
+      (no keyboard/mouse input). Sessions have a maximum lifetime
+      of 12 hours regardless of activity. Background processes
+      are terminated when the session ends. CloudShell is not
+      designed for persistent compute workloads.
+    common_false_claim: "Run your script in the background and it will keep running after you close the tab."
+    correct_action: "Use EC2, ECS, Lambda, or Step Functions for long-running processes. Use screen/tmux for session persistence during active use."
+
+  - id: P5-all-regions-available
+    trigger_words: ["any region", "all regions", "switch region", "CloudShell region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume CloudShell is available in every AWS region
+      like most core services.
+    actual_behavior: >
+      CloudShell is NOT available in all AWS regions. It is
+      available in most commercial regions but not in all
+      GovCloud regions, China regions, or newer regions. The
+      CloudShell icon will not appear in the console for
+      unsupported regions.
+    common_false_claim: "Open CloudShell in any region to manage your resources."
+    correct_action: "Check AWS regional services list for CloudShell availability. Use a supported region and configure CLI to target other regions."
+
+  - id: P6-unlimited-storage
+    trigger_words: ["storage", "disk space", "save data", "large files"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs do not mention the 1 GB storage limit or suggest
+      CloudShell can store large amounts of data.
+    actual_behavior: >
+      CloudShell persistent storage is limited to 1 GB per
+      region in the $HOME directory. Exceeding this limit
+      prevents new file creation and can cause environment
+      issues. File upload/download via the web interface is
+      limited to 1 GB per file.
+    common_false_claim: "Download the dataset to CloudShell for processing."
+    correct_action: "Use S3 for large file storage. Stream data through CloudShell rather than storing it locally."
+
+  - id: P7-custom-ami-support
+    trigger_words: ["custom image", "custom AMI", "Docker", "container"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CloudShell supports custom AMIs or Docker
+      containers like other compute services.
+    actual_behavior: >
+      CloudShell uses a managed Amazon Linux 2 environment.
+      You cannot use custom AMIs, Docker images, or change
+      the base operating system. Customization is limited to
+      installing tools in $HOME and configuring shell profiles
+      (.bashrc, .bash_profile).
+    common_false_claim: "Use a custom Docker image in CloudShell for your development environment."
+    correct_action: "Customize via $HOME/.bashrc and $HOME/bin. For custom environments, use Cloud9 or EC2."
+
+  - id: P8-root-access
+    trigger_words: ["sudo", "root", "admin", "system configuration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using sudo for system-level changes in
+      CloudShell without noting limitations.
+    actual_behavior: >
+      CloudShell provides limited sudo access. While some
+      sudo commands work (like yum install), system-level
+      changes do NOT persist across sessions. The environment
+      resets to the managed base image on each new session.
+      Root-level changes are ephemeral.
+    common_false_claim: "Use sudo to permanently configure the system."
+    correct_action: "Use sudo for temporary session needs only. Persist configurations in $HOME/.bashrc or scripts."
+
+remediation_hallucinations:
+
+  - id: R1-delete-environment-to-fix
+    trigger_words: ["delete environment", "recreate", "fresh start"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a CloudShell environment permanently removes all
+      persistent storage including scripts, configurations, and
+      SSH keys stored in $HOME.
+    correct_approach: >
+      Back up $HOME contents to S3 first: aws s3 sync $HOME
+      s3://backup-bucket/cloudshell-backup/. Then delete and
+      recreate if necessary. Many issues can be resolved by
+      stopping and restarting the environment without deletion.
+
+  - id: R2-disable-safe-paste
+    trigger_words: ["disable safe paste", "paste warning", "clipboard"]
+    hallucination_risk: MEDIUM
+    why_dangerous: >
+      Disabling safe paste removes protection against clipboard
+      injection attacks where malicious hidden commands are
+      pasted along with visible text.
+    correct_approach: >
+      Review pasted content carefully before confirming execution.
+      If safe paste is disabled for convenience, re-enable it
+      when working with untrusted content sources.

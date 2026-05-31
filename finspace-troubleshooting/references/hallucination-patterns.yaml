@@ -1,0 +1,124 @@
+# =============================================================================
+# Amazon FinSpace "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-single-finspace-product
+    trigger_words: ["FinSpace", "financial data", "time series"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs describe FinSpace as a single product. It has two distinct
+      features: managed datasets and managed kdb Insights.
+    actual_behavior: >
+      FinSpace managed datasets provide a data catalog for financial
+      data with views and permissions. Managed kdb Insights provides
+      kdb+ database clusters for high-performance time-series analytics.
+      They have different APIs, pricing, and use cases.
+    common_false_claim: "FinSpace is a managed kdb+ database service."
+    correct_action: "Clarify which FinSpace feature: managed datasets or managed kdb Insights."
+
+  - id: P2-kdb-auto-scale
+    trigger_words: ["scale cluster", "auto-scale", "increase capacity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest kdb clusters auto-scale. They have fixed capacity.
+    actual_behavior: >
+      kdb clusters have fixed node types and counts configured at
+      creation. They do not auto-scale. To change capacity, create
+      a new cluster with different configuration and migrate workload.
+    common_false_claim: "kdb clusters automatically scale based on query load."
+    correct_action: "Plan capacity upfront. Create new cluster for different capacity needs."
+
+  - id: P3-changeset-modify
+    trigger_words: ["update changeset", "modify data", "edit changeset"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying existing changesets. Changesets are
+      immutable once created.
+    actual_behavior: >
+      Changesets are immutable append-only records. Once created and
+      processed, they cannot be modified or deleted. To correct data,
+      create a new changeset with the corrected data. The changeset
+      history provides an audit trail.
+    common_false_claim: "Update the changeset to fix the data error."
+    correct_action: "Create a new changeset with corrected data. Old changesets remain in history."
+
+  - id: P4-any-region
+    trigger_words: ["region", "create environment", "availability"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest FinSpace is available in all regions. It's
+      available in limited regions only.
+    actual_behavior: >
+      FinSpace is available in select AWS regions. Managed kdb
+      Insights may have different region availability than managed
+      datasets. Check AWS documentation for current availability.
+    common_false_claim: "Create a FinSpace environment in any AWS region."
+    correct_action: "Check FinSpace region availability before creating environments."
+
+  - id: P5-instant-environment
+    trigger_words: ["create environment", "setup FinSpace", "get started"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest environments are created instantly. Creation
+      takes 15-30 minutes.
+    actual_behavior: >
+      FinSpace environment creation provisions VPC infrastructure,
+      compute resources, and storage. This takes 15-30 minutes.
+      The environment transitions through CREATING state before
+      becoming ACTIVE.
+    common_false_claim: "Create the environment and start using it immediately."
+    correct_action: "Create environment and wait 15-30 minutes for ACTIVE state."
+
+  - id: P6-kdb-cluster-types
+    trigger_words: ["kdb cluster", "cluster type", "HDB", "RDB"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs use wrong cluster types or mix up their purposes.
+    actual_behavior: >
+      HDB clusters serve historical data from disk. RDB clusters
+      handle real-time streaming data in memory. Gateway clusters
+      route queries across HDB and RDB. GP clusters handle mixed
+      workloads. Each type is optimized differently.
+    common_false_claim: "Use an HDB cluster for real-time data ingestion."
+    correct_action: "Use RDB for real-time, HDB for historical, Gateway for routing, GP for mixed."
+
+  - id: P7-superuser-daily-use
+    trigger_words: ["superuser", "admin access", "full access"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest using superuser for regular operations.
+      Superuser should be used sparingly.
+    actual_behavior: >
+      Superuser has unrestricted access and should only be used for
+      initial setup and emergency access. Create regular users with
+      appropriate permission groups for day-to-day operations.
+      Rotate superuser credentials regularly.
+    common_false_claim: "Use the superuser account for all FinSpace operations."
+    correct_action: "Create regular users with permission groups. Reserve superuser for admin tasks."
+
+  - id: P8-direct-data-load
+    trigger_words: ["load data", "ingest data", "import data"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest direct data loading. Data goes through S3
+      and changesets.
+    actual_behavior: >
+      Data ingestion into kdb databases uses changesets that reference
+      S3 objects. Upload data to S3 first, then create a changeset
+      pointing to the S3 path. The service processes the changeset
+      and loads data into the database.
+    common_false_claim: "Load data directly into the kdb database."
+    correct_action: "Upload to S3, create changeset referencing S3 path, wait for processing."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

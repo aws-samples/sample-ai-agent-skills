@@ -1,0 +1,159 @@
+# =============================================================================
+# AWS IoT Device Defender "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-metric-collection
+    trigger_words: ["Device Defender", "collect metrics", "automatic monitoring", "device metrics"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Device Defender automatically collects device
+      metrics without device-side configuration.
+    actual_behavior: >
+      Device Defender Detect requires devices to publish metrics
+      to the reserved MQTT topic $aws/things/{thingName}/defender/
+      metrics/json. AWS-side metrics (cloud-side metrics like
+      message size, authorization failures) are collected
+      automatically, but device-side metrics (listening ports,
+      bytes in/out, TCP connections) must be reported by the
+      device using the Device Defender agent or custom code.
+    common_false_claim: "Enable Device Defender and it will automatically monitor all device metrics."
+    correct_action: "Install Device Defender agent on devices or implement custom metric reporting via MQTT."
+
+  - id: P2-ml-detect-instant
+    trigger_words: ["ML Detect", "machine learning", "anomaly detection", "enable ML"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest ML Detect starts detecting anomalies
+      immediately after configuration.
+    actual_behavior: >
+      ML Detect requires a minimum 14-day training period with
+      sufficient data points from monitored devices. During
+      training, the model learns normal behavior patterns and
+      establishes baselines. No violations are generated during
+      training. After training, the model needs ongoing data to
+      maintain accuracy.
+    common_false_claim: "Enable ML Detect and it will immediately detect anomalous device behavior."
+    correct_action: "Configure ML Detect and wait 14+ days for training. Ensure devices report metrics during training."
+
+  - id: P3-audit-real-time
+    trigger_words: ["audit", "real-time audit", "continuous audit", "live audit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest audit checks run continuously in real-time.
+      Audits are scheduled or on-demand point-in-time checks.
+    actual_behavior: >
+      Audit checks run on a schedule (daily) or on-demand. They
+      are point-in-time assessments of IoT account configuration.
+      Between audit runs, configuration changes are not detected.
+      Audit findings represent the state at the time of the audit,
+      not the current state.
+    common_false_claim: "Device Defender audit continuously monitors your IoT configuration."
+    correct_action: "Schedule daily audits and run on-demand audits after configuration changes."
+
+  - id: P4-custom-mitigation
+    trigger_words: ["mitigation action", "custom action", "Lambda mitigation", "auto-remediate"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating custom Lambda-based mitigation
+      actions. Mitigation actions are pre-defined templates.
+    actual_behavior: >
+      Device Defender mitigation actions are pre-defined action
+      types: ADD_THINGS_TO_THING_GROUP, ENABLE_IOT_LOGGING,
+      PUBLISH_FINDING_TO_SNS, REPLACE_DEFAULT_POLICY_VERSION,
+      UPDATE_CA_CERTIFICATE, UPDATE_DEVICE_CERTIFICATE. Custom
+      Lambda functions are NOT supported as mitigation actions.
+      For custom remediation, use PUBLISH_FINDING_TO_SNS and
+      trigger a Lambda from the SNS topic.
+    common_false_claim: "Create a custom Lambda mitigation action to auto-remediate findings."
+    correct_action: "Use PUBLISH_FINDING_TO_SNS mitigation action and trigger Lambda from the SNS topic."
+
+  - id: P5-global-alert-target
+    trigger_words: ["alert target", "notification", "global alert", "all profiles"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest configuring a global alert target that
+      applies to all security profiles.
+    actual_behavior: >
+      Alert targets (SNS topics) are configured per security
+      profile, not globally. Each security profile can have its
+      own alert target. A security profile without an alert
+      target records violations but does NOT send notifications.
+      There is no global alert target configuration.
+    common_false_claim: "Configure one alert target and all security profiles will send notifications."
+    correct_action: "Configure alert targets on each security profile individually."
+
+  - id: P6-detect-all-protocols
+    trigger_words: ["detect", "all protocols", "HTTP monitoring", "protocol analysis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Device Defender monitors all network
+      protocols and application-layer traffic.
+    actual_behavior: >
+      Device Defender Detect monitors specific metrics: MQTT
+      messages, authorization failures, connection attempts,
+      disconnects, and device-reported metrics (TCP connections,
+      listening ports, bytes in/out). It does NOT perform deep
+      packet inspection, HTTP traffic analysis, or application-
+      layer protocol monitoring.
+    common_false_claim: "Device Defender monitors all network traffic from IoT devices."
+    correct_action: "Use Device Defender for IoT-specific metrics. Use VPC Flow Logs or network monitoring for broader traffic analysis."
+
+  - id: P7-audit-auto-remediate
+    trigger_words: ["audit finding", "auto-fix", "automatic remediation", "self-healing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest audit findings are automatically remediated.
+      Mitigation actions must be explicitly applied.
+    actual_behavior: >
+      Audit findings are reported but NOT automatically
+      remediated. Mitigation actions must be explicitly applied
+      to findings via start-audit-mitigation-actions-task. There
+      is no auto-remediation capability. Findings persist until
+      the underlying issue is fixed and a new audit confirms
+      resolution.
+    common_false_claim: "Device Defender automatically fixes audit findings."
+    correct_action: "Review findings, apply mitigation actions explicitly, then re-run audit to verify."
+
+  - id: P8-dimension-auto-discovery
+    trigger_words: ["dimension", "auto-discover", "topic filter", "automatic grouping"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest dimensions automatically discover and group
+      devices based on behavior.
+    actual_behavior: >
+      Dimensions are manually configured topic filters that
+      scope which MQTT topics a security profile monitors. They
+      do NOT auto-discover devices or topics. Dimensions must
+      be explicitly created with specific topic filter patterns
+      and attached to security profile behaviors.
+    common_false_claim: "Dimensions automatically group devices by their communication patterns."
+    correct_action: "Create dimensions with explicit topic filter patterns and attach to security profile behaviors."
+
+remediation_hallucinations:
+
+  - id: R1-disable-all-checks
+    false_fix: "Disable all audit checks to stop getting findings."
+    why_wrong: >
+      Disabling audit checks removes security visibility. Findings
+      indicate real configuration issues that should be addressed,
+      not suppressed. Disabling checks creates a false sense of
+      security.
+    correct_approach: >
+      Review and remediate findings. Suppress specific findings
+      only if they are accepted risks with documented justification.
+      Use mitigation actions to address findings systematically.
+
+  - id: R2-delete-security-profile
+    false_fix: "Delete the security profile to stop violation alerts."
+    why_wrong: >
+      Deleting a security profile removes all monitoring for
+      attached devices. Violations indicate potential security
+      issues that should be investigated, not silenced by
+      removing monitoring.
+    correct_approach: >
+      Investigate violations to determine if they are true
+      positives or false positives. Adjust thresholds or
+      behaviors in the security profile. Use dimensions to
+      scope monitoring more precisely.

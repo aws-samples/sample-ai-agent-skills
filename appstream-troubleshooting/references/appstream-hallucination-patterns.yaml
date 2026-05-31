@@ -1,0 +1,141 @@
+# =============================================================================
+# Amazon AppStream 2.0 "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-fleet-instances-are-ec2
+    trigger_words: ["fleet instance", "SSH", "RDP to fleet", "install on fleet", "modify instance"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest SSHing into or directly modifying fleet instances
+      because they appear similar to EC2 instances. Fleet instances
+      are managed by AppStream and cannot be accessed directly.
+    actual_behavior: >
+      Fleet instances are created from images and managed entirely by
+      AppStream 2.0. You cannot SSH, RDP, or directly access them.
+      All software installation and configuration must be done through
+      image builders. Fleet instances are immutable — to change software,
+      create a new image and update the fleet.
+    common_false_claim: "SSH into the fleet instance to install the missing application."
+    correct_action: "Create an image builder, install the application, create a new image, update the fleet."
+
+  - id: P2-rdp-streaming
+    trigger_words: ["RDP", "Remote Desktop", "VNC", "remote access", "streaming protocol"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using RDP or VNC to connect to AppStream because
+      these are common remote desktop protocols. AppStream uses NICE DCV.
+    actual_behavior: >
+      AppStream 2.0 uses NICE DCV (Desktop Cloud Visualization) for
+      streaming, not RDP or VNC. NICE DCV uses HTTPS (port 443) and
+      optionally UDP 8433. Users connect through a web browser or the
+      AppStream client application. Do not configure RDP ports or
+      suggest RDP connections for AppStream.
+    common_false_claim: "Open RDP port 3389 to allow users to connect to AppStream."
+    correct_action: "Ensure HTTPS (443) and optionally UDP 8433 are allowed for NICE DCV streaming."
+
+  - id: P3-image-builder-production
+    trigger_words: ["image builder", "production", "always running", "builder for users"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest keeping image builders running for production use
+      because they look like streaming instances. Image builders are
+      for image creation only.
+    actual_behavior: >
+      Image builders are temporary instances for installing applications
+      and creating images. They are NOT for production streaming. Only
+      one user can connect to an image builder at a time. They cost
+      money while running. Create the image, then delete the builder.
+      Use fleets for production streaming.
+    common_false_claim: "Keep the image builder running for users to connect to."
+    correct_action: "Use image builders only for image creation. Use fleets for production streaming."
+
+  - id: P4-user-pool-saml-together
+    trigger_words: ["user pool", "SAML", "authentication", "federation", "identity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using both user pool and SAML on the same stack
+      for different user groups. They are mutually exclusive per stack.
+    actual_behavior: >
+      A stack uses either the AppStream user pool OR SAML federation,
+      not both simultaneously. User pool provides built-in email-based
+      user management. SAML integrates with external IdPs. To support
+      both, create separate stacks with different authentication types.
+    common_false_claim: "Configure SAML for corporate users and user pool for external users on the same stack."
+    correct_action: "Create separate stacks: one with SAML for corporate users, one with user pool for external."
+
+  - id: P5-ebs-storage
+    trigger_words: ["EBS", "persistent storage", "disk", "volume", "storage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest EBS volumes for persistent storage because that's
+      common for EC2. AppStream uses S3 for home folders and app settings.
+    actual_behavior: >
+      AppStream 2.0 uses S3 for persistent storage, not EBS. Home
+      folders are S3-backed and persist across sessions. App settings
+      persistence also uses S3. Fleet instances have local storage
+      that is ephemeral — it's lost when the session ends. Do not
+      suggest attaching EBS volumes to AppStream instances.
+    common_false_claim: "Attach an EBS volume to the fleet instance for persistent storage."
+    correct_action: "Enable home folders on the stack for S3-backed persistent storage."
+
+  - id: P6-scaling-instant
+    trigger_words: ["scaling", "auto-scale", "capacity", "scale up", "scale out"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs imply fleet scaling is instant like Lambda. AppStream
+      instances take time to provision and become available.
+    actual_behavior: >
+      Fleet scaling is not instant. On-demand instances take 1-2
+      minutes to start. Always-on instances are pre-provisioned but
+      scaling up still takes time. Scaling policies have cooldown
+      periods. Plan minimum capacity for expected baseline usage.
+      InsufficientCapacityError occurs when all instances are in use
+      and scaling hasn't caught up.
+    common_false_claim: "Set minimum capacity to 0 and scale up instantly when users connect."
+    correct_action: "Set minimum capacity based on expected baseline. Allow time for scaling. Use always-on for instant access."
+
+  - id: P7-any-app-works
+    trigger_words: ["install application", "any application", "Linux app", "application compatibility"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any application can run on AppStream without
+      considering compatibility requirements.
+    actual_behavior: >
+      AppStream 2.0 runs Windows or Linux applications depending on
+      the image type. Windows images support most Windows desktop
+      applications. Linux images support Linux GUI applications.
+      Applications must be installed on the image builder and tested.
+      Some applications with hardware requirements (GPU) need specific
+      instance types. Applications requiring specific drivers or
+      kernel modules may not work.
+    common_false_claim: "Any desktop application will work on AppStream without modification."
+    correct_action: "Test applications on an image builder first. Use appropriate instance types for GPU needs."
+
+  - id: P8-free-tier-unlimited
+    trigger_words: ["cost", "pricing", "free", "charges", "billing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs underestimate AppStream costs by not accounting for all
+      cost components: instance hours, user fees, and storage.
+    actual_behavior: >
+      AppStream 2.0 costs include: (1) streaming instance hours
+      (running or stopped for always-on), (2) user fees (monthly per
+      user), (3) S3 storage for home folders and app settings, (4)
+      image builder instance hours while running. Always-on fleets
+      incur costs even when no users are connected. Stop or delete
+      resources when not needed.
+    common_false_claim: "AppStream only charges when users are actively streaming."
+    correct_action: "Always-on fleets charge continuously. On-demand charges when running. Account for user fees and storage."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

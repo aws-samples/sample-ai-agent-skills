@@ -1,0 +1,136 @@
+# =============================================================================
+# AWS Resilience Hub "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-remediation
+    trigger_words: ["Resilience Hub", "auto-fix", "automatic remediation", "self-healing"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Resilience Hub automatically fixes resilience
+      issues. It only assesses and recommends — never remediates.
+    actual_behavior: >
+      Resilience Hub is an assessment and recommendation service.
+      It evaluates your architecture against RTO/RPO targets and
+      provides recommendations. It does NOT make any changes to
+      your infrastructure. All remediation must be done manually
+      or through separate automation.
+    common_false_claim: "Resilience Hub will automatically improve your application's resilience."
+    correct_action: "Run assessments to identify gaps, then manually implement recommendations."
+
+  - id: P2-auto-discovery
+    trigger_words: ["discover resources", "scan infrastructure", "find all resources"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Resilience Hub scans your entire AWS account.
+      It only discovers resources from explicit sources.
+    actual_behavior: >
+      Resilience Hub discovers resources only from CloudFormation
+      stacks, Resource Groups, AppRegistry applications, or
+      Terraform state files. Resources created manually or through
+      other tools are not discovered unless added to one of these
+      sources. There is no account-wide resource scanning.
+    common_false_claim: "Resilience Hub will discover all your AWS resources automatically."
+    correct_action: "Add resources to CFN stacks, Resource Groups, or provide Terraform state files for discovery."
+
+  - id: P3-continuous-monitoring
+    trigger_words: ["continuous monitoring", "real-time", "always watching"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Resilience Hub continuously monitors resilience.
+      Assessments are point-in-time evaluations.
+    actual_behavior: >
+      Assessments are point-in-time evaluations, not continuous
+      monitoring. Drift detection can be scheduled but is also
+      point-in-time. For continuous resilience monitoring, you
+      need CloudWatch alarms and other monitoring tools.
+      Resilience Hub complements but does not replace monitoring.
+    common_false_claim: "Resilience Hub continuously monitors your application's resilience posture."
+    correct_action: "Schedule regular assessments and drift detection. Use CloudWatch for continuous monitoring."
+
+  - id: P4-rto-rpo-single-value
+    trigger_words: ["RTO", "RPO", "recovery time", "recovery point"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat RTO/RPO as single values. Resilience Hub defines
+      separate targets per disruption type.
+    actual_behavior: >
+      Resiliency policies define separate RTO and RPO targets for
+      four disruption types: Software, Hardware, AZ, and Region.
+      An application may meet its AZ RTO/RPO but fail Region
+      RTO/RPO. Each disruption type is evaluated independently.
+    common_false_claim: "Set your RTO to 4 hours and RPO to 1 hour."
+    correct_action: "Define RTO/RPO for each disruption type: Software, Hardware, AZ, and Region."
+
+  - id: P5-sop-ready-to-use
+    trigger_words: ["SOP", "runbook", "recovery procedure", "automated recovery"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest generated SOPs are ready to execute immediately.
+      They are templates requiring customization.
+    actual_behavior: >
+      Generated SOPs are SSM document templates based on best
+      practices. They contain placeholder values and generic
+      procedures that must be customized with your specific
+      account IDs, resource names, and environment details.
+      Executing uncustomized SOPs can cause errors or unintended
+      changes.
+    common_false_claim: "Use the generated SOPs to automatically recover your application."
+    correct_action: "Review and customize generated SOPs before execution. Test in non-production first."
+
+  - id: P6-free-service
+    trigger_words: ["Resilience Hub cost", "pricing", "free tier"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not accurately describe Resilience Hub pricing.
+      Pricing is based on number of application components assessed.
+    actual_behavior: >
+      Resilience Hub charges per application component per
+      assessment. Costs depend on the number of components in
+      your application and how frequently you run assessments.
+      Drift detection also incurs charges. Check current pricing
+      on the AWS Resilience Hub pricing page.
+    common_false_claim: "Resilience Hub is free to use."
+    correct_action: "Check AWS pricing page for current Resilience Hub costs per component per assessment."
+
+  - id: P7-all-services-supported
+    trigger_words: ["supported services", "any AWS service", "all resources"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Resilience Hub supports all AWS services.
+      Only specific services are supported for assessment.
+    actual_behavior: >
+      Resilience Hub supports a specific set of AWS services for
+      resilience assessment. Not all AWS services are supported.
+      Unsupported services are discovered but may not be fully
+      assessed for resilience. Check documentation for the
+      current list of supported services.
+    common_false_claim: "Resilience Hub can assess any AWS service for resilience."
+    correct_action: "Check the supported services list before creating applications. Unsupported services need manual resilience evaluation."
+
+  - id: P8-replaces-dr-testing
+    trigger_words: ["DR testing", "disaster recovery test", "replace drills"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Resilience Hub replaces DR testing. It
+      complements but does not replace actual DR drills.
+    actual_behavior: >
+      Resilience Hub assesses architecture for resilience but
+      does NOT perform actual failover testing. It cannot verify
+      that recovery procedures work in practice. Actual DR drills
+      (using DRS, FIS, or manual procedures) are still required
+      to validate recovery capabilities.
+    common_false_claim: "Use Resilience Hub instead of DR drills to validate resilience."
+    correct_action: "Use Resilience Hub for architecture assessment. Continue DR drills for operational validation."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

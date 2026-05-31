@@ -1,0 +1,147 @@
+# =============================================================================
+# AWS Organizations "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-management-account-scp
+    trigger_words: ["management account", "master account", "SCP", "service control policy"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest testing SCPs from the management account or claim
+      SCPs apply to the management account. The management account is
+      always exempt from SCPs.
+    actual_behavior: >
+      The management account is NEVER affected by SCPs. This is a
+      fundamental design decision to prevent organizational lockout.
+      SCPs only apply to member accounts. Testing SCP behavior from
+      the management account will always show full access, giving a
+      false impression that the SCP is not working.
+    common_false_claim: "Attach the SCP to the root to restrict all accounts including the management account."
+    correct_action: "Test SCPs from a member account. The management account is always exempt."
+
+  - id: P2-scp-grants-permissions
+    trigger_words: ["SCP allow", "SCP grant", "SCP permission", "SCP authorize"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs describe SCP Allow statements as granting permissions.
+      SCPs are deny filters — Allow only permits actions to be
+      potentially allowed by IAM policies.
+    actual_behavior: >
+      SCPs define the maximum permissions boundary. An SCP Allow
+      statement does NOT grant any permission — it only allows the
+      action to pass through the SCP filter. The actual permission
+      must still be granted by an IAM policy. An SCP Deny blocks
+      the action regardless of IAM policies. Effective permissions
+      are the intersection of SCP allows and IAM grants.
+    common_false_claim: "Create an SCP that allows s3:PutObject to grant S3 write access to all accounts."
+    correct_action: "SCPs filter permissions. Use IAM policies to grant access. SCPs only define the boundary."
+
+  - id: P3-account-immediate-deletion
+    trigger_words: ["close account", "delete account", "remove account", "account closure"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest account closure is immediate and permanent. There
+      is a 90-day recovery period during which the account can be
+      reopened.
+    actual_behavior: >
+      After calling close-account, the account enters a suspended
+      state for 90 days. During this period, the account can be
+      reopened. Resources continue to exist but are inaccessible.
+      Some charges may still accrue. After 90 days, the account is
+      permanently closed and all resources are deleted. The account
+      email becomes available for reuse after permanent closure.
+    common_false_claim: "Close the account to immediately delete all resources and stop all charges."
+    correct_action: "Close the account. Resources persist for 90 days. Manually delete resources first to stop charges."
+
+  - id: P4-scp-override-deny
+    trigger_words: ["override SCP", "bypass SCP", "SCP exception", "exempt from SCP"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest ways to override or bypass SCP deny statements
+      from within a member account. SCP denies cannot be overridden
+      by any IAM policy in the member account.
+    actual_behavior: >
+      An SCP Deny statement is absolute for member accounts. No IAM
+      policy, resource policy, or permission boundary in the member
+      account can override it. The only ways to change SCP behavior
+      are: modify the SCP from the management account, detach the
+      SCP, or move the account to a different OU. The management
+      account is the only account exempt from SCPs.
+    common_false_claim: "Add an IAM policy with explicit Allow to override the SCP Deny."
+    correct_action: "Modify or detach the SCP from the management account. Member accounts cannot override SCPs."
+
+  - id: P5-ou-unlimited-nesting
+    trigger_words: ["OU hierarchy", "nested OU", "OU structure", "organizational unit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating deeply nested OU hierarchies without
+      mentioning the 5-level nesting limit.
+    actual_behavior: >
+      OUs can be nested up to 5 levels deep below the root. The
+      maximum path is Root → OU1 → OU2 → OU3 → OU4 → OU5. Creating
+      a 6th level fails with a ConstraintViolationException. Each
+      OU can contain up to 1,000 accounts directly. The total number
+      of OUs per organization is limited to 1,000.
+    common_false_claim: "Create a detailed OU hierarchy with 8 levels for granular organizational control."
+    correct_action: "Design the OU hierarchy within 5 levels. Use tags and SCPs for additional granularity."
+
+  - id: P6-consolidated-billing-separate
+    trigger_words: ["consolidated billing", "separate billing", "billing account", "payer account"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest member accounts can have separate billing or
+      that consolidated billing can be disabled for specific accounts
+      while remaining in the organization.
+    actual_behavior: >
+      All member accounts in an organization use consolidated billing
+      through the management account. Individual accounts cannot opt
+      out of consolidated billing while remaining in the organization.
+      To have separate billing, the account must be removed from the
+      organization. RI and SP sharing can be disabled per account,
+      but the billing relationship remains.
+    common_false_claim: "Disable consolidated billing for a specific member account."
+    correct_action: "Remove the account from the organization for separate billing. RI/SP sharing can be toggled."
+
+  - id: P7-delegated-admin-all-services
+    trigger_words: ["delegated administrator", "delegated admin", "delegate management"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest delegated administration works for all AWS services
+      or that a single delegation covers all services.
+    actual_behavior: >
+      Delegated administration must be enabled per service. Not all
+      services support delegation. Each service has its own delegation
+      model and capabilities. A maximum of 5 accounts can be delegated
+      administrators for a single service (varies by service). The
+      management account must explicitly register each delegated admin
+      per service.
+    common_false_claim: "Register an account as delegated administrator to manage all organizational services."
+    correct_action: "Register delegated admin per service. Check service documentation for delegation support."
+
+  - id: P8-feature-set-downgrade
+    trigger_words: ["all features", "consolidated billing only", "downgrade organization", "feature set"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest downgrading from "all features" to "consolidated
+      billing only" mode. This is not possible.
+    actual_behavior: >
+      Once an organization is upgraded to "all features" mode (which
+      enables SCPs, tag policies, backup policies, etc.), it CANNOT
+      be downgraded to "consolidated billing only." The only way to
+      revert is to delete the organization entirely (removing all
+      member accounts first) and recreate it in consolidated billing
+      mode. This is a one-way upgrade.
+    common_false_claim: "Downgrade the organization to consolidated billing only to remove SCP enforcement."
+    correct_action: "All features mode is permanent. Detach SCPs if you don't want enforcement."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

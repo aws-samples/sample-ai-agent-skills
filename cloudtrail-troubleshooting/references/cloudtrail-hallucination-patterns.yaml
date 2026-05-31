@@ -1,0 +1,143 @@
+# =============================================================================
+# AWS CloudTrail "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-realtime-logs
+    trigger_words: ["real-time", "immediate", "instant", "live events", "CloudTrail stream"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs claim CloudTrail provides real-time event logging.
+      CloudTrail has a 5-15 minute delivery delay to S3.
+    actual_behavior: >
+      CloudTrail delivers log files to S3 approximately every
+      5-15 minutes. For near-real-time, use CloudWatch Logs
+      integration (1-2 min delay) or EventBridge (near-real-time
+      for supported events). The Event History in the console
+      also has a delay. Do not rely on CloudTrail for immediate
+      event detection.
+    common_false_claim: "Check CloudTrail for real-time event monitoring."
+    correct_action: "Use EventBridge for near-real-time. CloudTrail S3 logs have 5-15 min delay."
+
+  - id: P2-data-events-free
+    trigger_words: ["data events", "S3 logging", "object-level", "Lambda invocation logging"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling data events without mentioning cost.
+      Data events are always paid and can be very expensive for
+      high-volume buckets or functions.
+    actual_behavior: >
+      Management events: first copy is free per region. Data
+      events: always paid per event ($0.10 per 100,000 events).
+      S3 object-level logging on active buckets can generate
+      millions of events/day. Lambda invocation logging generates
+      one event per invocation. Always estimate cost before
+      enabling data events.
+    common_false_claim: "Enable S3 data events to log all object access — it's included with CloudTrail."
+    correct_action: "Data events are paid. Estimate volume and cost. Use advanced selectors to filter."
+
+  - id: P3-all-events-logged
+    trigger_words: ["all events", "every API call", "complete audit", "full logging"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim CloudTrail logs every AWS API call by default.
+      Only management events are logged by default. Data events
+      and Insights must be explicitly enabled.
+    actual_behavior: >
+      By default, CloudTrail logs management events (control
+      plane operations). Data events (S3 GetObject, Lambda
+      Invoke, DynamoDB GetItem) are NOT logged unless explicitly
+      enabled. Some services have events that are not logged
+      by CloudTrail at all. Check the CloudTrail supported
+      services documentation.
+    common_false_claim: "CloudTrail logs all API calls automatically."
+    correct_action: "Management events are logged by default. Enable data events explicitly for data plane operations."
+
+  - id: P4-event-history-unlimited
+    trigger_words: ["event history", "past events", "historical events", "old events"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Event History has unlimited retention.
+      It retains only 90 days of management events.
+    actual_behavior: >
+      CloudTrail Event History retains the last 90 days of
+      management events. It does NOT include data events.
+      For longer retention, create a trail to deliver to S3
+      or use CloudTrail Lake. Events older than 90 days are
+      only available in S3 logs or Lake event data stores.
+    common_false_claim: "Search Event History for events from 6 months ago."
+    correct_action: "Event History has 90-day retention. Use S3 logs or CloudTrail Lake for older events."
+
+  - id: P5-lake-replaces-trails
+    trigger_words: ["CloudTrail Lake", "event data store", "SQL query", "Lake vs trail"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CloudTrail Lake replaces S3 trails. They
+      are complementary features with different use cases.
+    actual_behavior: >
+      CloudTrail Lake and S3 trails serve different purposes.
+      Lake provides SQL query capability with managed retention.
+      S3 trails provide raw JSON logs for custom analysis.
+      A trail can deliver to both simultaneously. Lake has
+      its own pricing (per GB ingested + per GB scanned).
+      S3 trails have S3 storage costs only.
+    common_false_claim: "Migrate from S3 trails to CloudTrail Lake for better logging."
+    correct_action: "Use Lake for SQL queries and S3 trails for raw logs. They complement each other."
+
+  - id: P6-org-trail-member-create
+    trigger_words: ["organization trail", "member account trail", "org-wide logging"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest member accounts can create organization trails.
+      Only the management account or delegated admin can.
+    actual_behavior: >
+      Organization trails must be created from the management
+      account or delegated administrator account. Member accounts
+      can see the organization trail but cannot modify or delete
+      it. Member accounts can create their own additional trails
+      for account-specific logging needs.
+    common_false_claim: "Create an organization trail from your member account."
+    correct_action: "Create organization trails from management account or delegated admin only."
+
+  - id: P7-insights-immediate
+    trigger_words: ["Insights", "anomaly detection", "unusual activity", "API anomaly"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Insights works immediately after enabling.
+      Insights requires a 7-day baseline period.
+    actual_behavior: >
+      CloudTrail Insights needs 7 days of normal API activity
+      to establish a baseline. During this period, anomalies
+      may not be detected. Insights analyzes management event
+      API call rates and error rates. It does not analyze
+      data events. Insights events have separate pricing.
+    common_false_claim: "Enable Insights and it will immediately detect anomalies."
+    correct_action: "Enable Insights and wait 7 days for baseline. Then anomaly detection begins."
+
+  - id: P8-validate-logs-automatic
+    trigger_words: ["log validation", "integrity", "tamper detection", "digest files"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume log file validation is automatic. It must
+      be explicitly enabled on the trail.
+    actual_behavior: >
+      Log file validation must be enabled when creating or
+      updating a trail (EnableLogFileValidation=true). When
+      enabled, CloudTrail creates hourly digest files with
+      SHA-256 hashes. Validation is performed using the
+      validate-logs CLI command. It is not automatic —
+      you must run the validation check yourself.
+    common_false_claim: "CloudTrail automatically validates log file integrity."
+    correct_action: "Enable log file validation on the trail. Run validate-logs to check integrity."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

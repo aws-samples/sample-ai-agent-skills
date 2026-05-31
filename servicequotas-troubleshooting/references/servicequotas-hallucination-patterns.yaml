@@ -1,0 +1,143 @@
+# =============================================================================
+# AWS Service Quotas "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-all-quotas-adjustable
+    trigger_words: ["increase quota", "raise limit", "request increase", "adjustable"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest requesting increases for all quotas without
+      checking if they are adjustable. Some quotas are hard limits.
+    actual_behavior: >
+      Not all quotas can be increased. The Adjustable field in
+      get-service-quota indicates if a quota can be changed.
+      Non-adjustable quotas are hard limits that require
+      architectural changes (multi-region, multi-account).
+      Requesting an increase for a non-adjustable quota will
+      fail or be denied.
+    common_false_claim: "Request a quota increase for any limit you're hitting."
+    correct_action: "Check Adjustable field first. Only request increases for adjustable quotas."
+
+  - id: P2-instant-approval
+    trigger_words: ["immediate increase", "instant approval", "automatic increase", "quick increase"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest quota increases are approved immediately.
+      Many require manual review and can take days.
+    actual_behavior: >
+      Some small increases within pre-approved limits are
+      automatic (minutes). Larger increases require manual
+      review by AWS service teams (1-5 business days). Very
+      large increases may require justification. Plan ahead
+      for production needs. Check request status regularly.
+    common_false_claim: "Request the increase and it will be approved immediately."
+    correct_action: "Submit request early. Check status. Plan for 1-5 day review for large increases."
+
+  - id: P3-default-equals-current
+    trigger_words: ["default quota", "default limit", "standard limit", "out of the box"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs cite default quota values as current limits. If
+      increases were previously granted, the applied value
+      is higher than the default.
+    actual_behavior: >
+      Default quota (get-aws-default-service-quota) shows what
+      new accounts get. Applied quota (get-service-quota) shows
+      the current effective limit for this account. They differ
+      if increases were previously granted. Always use
+      get-service-quota for the current limit.
+    common_false_claim: "The EC2 On-Demand vCPU limit is 5 (the default)."
+    correct_action: "Use get-service-quota for current applied limit, not default."
+
+  - id: P4-ec2-instance-count
+    trigger_words: ["EC2 limit", "instance limit", "how many instances", "EC2 quota"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs state EC2 limits in instance count. EC2 On-Demand
+      limits are vCPU-based per instance family, not per
+      instance count.
+    actual_behavior: >
+      EC2 On-Demand limits are measured in vCPUs per instance
+      family (Standard, Accelerated, etc.). A t3.micro has
+      2 vCPUs. Running 100 t3.micro uses 200 vCPUs from the
+      Standard family quota. Different instance families have
+      separate quotas. Spot and Reserved instances have
+      different limit mechanisms.
+    common_false_claim: "You can run up to 20 EC2 instances per region."
+    correct_action: "EC2 limits are vCPU-based per instance family. Check Running On-Demand Standard instances quota."
+
+  - id: P5-org-template-retroactive
+    trigger_words: ["organization template", "quota template", "apply to all accounts", "org-wide quota"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest organization quota templates apply to all
+      accounts. Templates only affect new accounts.
+    actual_behavior: >
+      Organization quota templates set default quotas for NEW
+      accounts joining the organization. They do NOT change
+      quotas in existing accounts. To change quotas in existing
+      accounts, submit individual increase requests per account.
+      Templates must be associated with the organization to
+      take effect.
+    common_false_claim: "Create a quota template to increase limits across all accounts."
+    correct_action: "Templates affect new accounts only. Request increases individually for existing accounts."
+
+  - id: P6-usage-metrics-all
+    trigger_words: ["usage metric", "CloudWatch quota", "utilization monitoring", "quota alarm"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CloudWatch Usage metrics exist for all quotas.
+      Only some services publish usage metrics.
+    actual_behavior: >
+      CloudWatch AWS/Usage namespace has metrics for some quotas
+      but not all. Check the UsageMetric field in get-service-quota
+      response. If no usage metric exists, calculate utilization
+      manually using service-specific APIs. Not all quotas can
+      be monitored with CloudWatch alarms.
+    common_false_claim: "Set up a CloudWatch alarm on any quota's usage metric."
+    correct_action: "Check UsageMetric field first. Use service APIs for quotas without CloudWatch metrics."
+
+  - id: P7-lambda-per-function
+    trigger_words: ["Lambda limit", "Lambda concurrency", "function limit", "Lambda quota"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Lambda concurrency limits are per-function.
+      The default concurrent execution quota is account-level.
+    actual_behavior: >
+      Lambda concurrent execution quota (default 1,000) is
+      shared across ALL functions in an account per region.
+      Reserved concurrency for one function reduces available
+      concurrency for others. Provisioned concurrency counts
+      against the total. Individual functions don't have
+      separate default limits — they share the account pool.
+    common_false_claim: "Each Lambda function can handle 1,000 concurrent executions."
+    correct_action: "Lambda concurrency is account-level per region. Reserve concurrency for critical functions."
+
+  - id: P8-support-ticket-only
+    trigger_words: ["support ticket", "contact support", "manual request", "old way"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all quota increases require support tickets.
+      Most can be done through Service Quotas API or console.
+    actual_behavior: >
+      Most quota increases can be requested through the Service
+      Quotas console or API (request-service-quota-increase).
+      Some services not yet integrated with Service Quotas may
+      still require support tickets. Check list-services to see
+      if the service is supported. The API is the preferred
+      method for automation.
+    common_false_claim: "Open a support ticket to increase your service quota."
+    correct_action: "Use Service Quotas API or console first. Use support tickets only for unsupported services."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

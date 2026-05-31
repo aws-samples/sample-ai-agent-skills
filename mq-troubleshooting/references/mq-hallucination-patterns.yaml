@@ -1,0 +1,145 @@
+# =============================================================================
+# Amazon MQ "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-engine-interchangeable
+    trigger_words: ["ActiveMQ", "RabbitMQ", "Amazon MQ", "message broker"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs treat ActiveMQ and RabbitMQ as interchangeable because
+      both are message brokers on Amazon MQ. They have fundamentally
+      different architectures, protocols, and configurations.
+    actual_behavior: >
+      ActiveMQ and RabbitMQ are separate engines with different
+      protocols (OpenWire/AMQP/STOMP/MQTT vs AMQP 0-9-1), different
+      configuration formats (XML vs Cuttlefish), different HA models
+      (active/standby vs cluster), and different monitoring metrics.
+      Troubleshooting steps for one engine do not apply to the other.
+    common_false_claim: "Configure the RabbitMQ broker's KahaDB storage settings."
+    correct_action: "Check engine type first. Apply engine-specific troubleshooting only."
+
+  - id: P2-change-deployment-mode
+    trigger_words: ["deployment mode", "single instance", "active standby", "cluster", "high availability"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest changing deployment mode to fix availability
+      issues. Deployment mode is immutable after broker creation.
+    actual_behavior: >
+      Deployment mode (single-instance, active/standby, cluster)
+      is set at creation time and cannot be changed. To change
+      deployment mode, you must create a new broker with the desired
+      mode and migrate messages/configuration. Active/standby is
+      ActiveMQ only. Cluster is RabbitMQ only.
+    common_false_claim: "Change the broker to active/standby mode for high availability."
+    correct_action: "Create a new broker with desired deployment mode and migrate. Cannot change existing broker."
+
+  - id: P3-config-instant-apply
+    trigger_words: ["configuration", "broker config", "settings change", "parameter"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest configuration changes take effect immediately.
+      Most changes require a broker reboot to apply.
+    actual_behavior: >
+      Configuration changes in Amazon MQ require: (1) creating a
+      new configuration revision, (2) applying the revision to the
+      broker, (3) rebooting the broker. Changes are NOT applied
+      until reboot. Reboot causes brief downtime. Some changes
+      may require creating an entirely new configuration.
+    common_false_claim: "Update the configuration and the changes will take effect immediately."
+    correct_action: "Create new config revision, apply to broker, then reboot. Changes apply after reboot."
+
+  - id: P4-unlimited-storage
+    trigger_words: ["storage", "disk full", "StorePercentUsage", "KahaDB"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs underestimate the impact of storage full conditions.
+      When storage reaches 100%, the broker stops accepting messages.
+    actual_behavior: >
+      StorePercentUsage at 100% causes the broker to reject new
+      messages. For ActiveMQ, this is the KahaDB store limit. For
+      RabbitMQ, this is disk space. Storage limits depend on instance
+      type and storage type (EBS vs EFS). EBS storage can be
+      increased but not decreased. Monitor at 80% threshold.
+      Purging old messages or expired messages can free space.
+    common_false_claim: "The broker will handle storage automatically — no need to monitor."
+    correct_action: "Monitor StorePercentUsage. Set alarm at 80%. Purge old messages or increase storage."
+
+  - id: P5-any-port-works
+    trigger_words: ["connection", "port", "security group", "firewall"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest generic ports or wrong ports for broker
+      connections. Each engine and protocol uses specific ports.
+    actual_behavior: >
+      ActiveMQ TLS ports: 61617 (OpenWire), 5671 (AMQP), 61614
+      (STOMP), 8883 (MQTT), 61619 (WebSocket), 8162 (Web Console).
+      RabbitMQ TLS ports: 5671 (AMQP), 443 (Management UI).
+      Non-TLS ports are available but not recommended. Security
+      groups must allow the specific ports used by your clients.
+    common_false_claim: "Open port 5672 for your RabbitMQ connection."
+    correct_action: "Use TLS ports: 5671 for RabbitMQ AMQP, 61617 for ActiveMQ OpenWire. Check engine-specific ports."
+
+  - id: P6-quorum-queue-classic
+    trigger_words: ["quorum queue", "mirrored queue", "HA queue", "queue replication"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest classic mirrored queues for RabbitMQ HA. Quorum
+      queues are the recommended replacement and have different
+      behavior.
+    actual_behavior: >
+      Quorum queues use Raft consensus for data safety and require
+      cluster deployment (3 nodes). They replace classic mirrored
+      queues. Quorum queues have higher latency but better data
+      safety. They don't support all classic queue features (per-
+      message TTL, some queue length limit behaviors differ).
+      Classic mirrored queues are deprecated in newer RabbitMQ
+      versions.
+    common_false_claim: "Configure ha-mode policy for mirrored queues on your RabbitMQ cluster."
+    correct_action: "Use quorum queues (x-queue-type: quorum) for HA. Requires cluster deployment."
+
+  - id: P7-maintenance-skip
+    trigger_words: ["maintenance window", "version update", "patch", "upgrade"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest maintenance can be skipped indefinitely or that
+      updates have no impact. Maintenance is mandatory and causes
+      brief downtime.
+    actual_behavior: >
+      Amazon MQ applies minor version updates and security patches
+      during the maintenance window automatically. This cannot be
+      permanently skipped. Single-instance brokers have brief
+      downtime during maintenance. Active/standby brokers failover.
+      Major version upgrades are manual. Plan for maintenance
+      window impact on applications.
+    common_false_claim: "Disable automatic maintenance to avoid any downtime."
+    correct_action: "Schedule maintenance window during low-traffic periods. Use active/standby for minimal impact."
+
+  - id: P8-network-of-brokers-auto
+    trigger_words: ["network of brokers", "broker mesh", "federated", "multi-broker"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest network of brokers is automatically configured
+      or works like a cluster. It requires explicit configuration
+      and has specific limitations.
+    actual_behavior: >
+      Network of brokers (ActiveMQ only) requires explicit network
+      connector configuration on each broker. Connectors define
+      which brokers communicate. Duplex=true creates bidirectional
+      connections. Message forwarding adds latency. Advisory messages
+      can cause storms. Each broker is independent — there is no
+      shared state. This is NOT the same as RabbitMQ clustering.
+    common_false_claim: "Amazon MQ automatically creates a network of brokers for scaling."
+    correct_action: "Manually configure network connectors between ActiveMQ brokers. Not available for RabbitMQ."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

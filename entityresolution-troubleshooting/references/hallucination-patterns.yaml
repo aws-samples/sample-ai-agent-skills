@@ -1,0 +1,118 @@
+# =============================================================================
+# AWS Entity Resolution "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-glue-etl-confusion
+    trigger_words: ["Entity Resolution job", "matching job", "entity matching"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse Entity Resolution with Glue ETL because both use
+      Glue Data Catalog. They suggest Glue ETL APIs or PySpark.
+    actual_behavior: >
+      Entity Resolution uses its own API (aws entityresolution) with
+      entityresolution: IAM actions. It is not a Glue ETL job.
+    common_false_claim: "Use aws glue start-job-run for entity matching."
+    correct_action: "Use aws entityresolution start-matching-job --workflow-name <name>."
+
+  - id: P2-custom-ml-model
+    trigger_words: ["train model", "custom ML", "fine-tune matching"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest training custom ML models for matching. Entity
+      Resolution uses pre-trained AWS models only.
+    actual_behavior: >
+      ML matching uses AWS-managed pre-trained models. You cannot
+      train, fine-tune, or bring custom models. For custom matching
+      logic, use rule-based matching with explicit rules.
+    common_false_claim: "Train a custom model on your labeled match data."
+    correct_action: "Use ML matching with pre-trained models or rule-based matching with custom rules."
+
+  - id: P3-direct-s3-input
+    trigger_words: ["S3 input", "read from S3", "input file"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest pointing Entity Resolution directly at S3 files.
+      It requires Glue Data Catalog tables as input.
+    actual_behavior: >
+      Schema mappings reference Glue Data Catalog tables, not S3
+      paths directly. Create Glue tables (via crawler or manually)
+      pointing to your S3 data, then create schema mappings.
+    common_false_claim: "Set the S3 path as input for the matching workflow."
+    correct_action: "Create a Glue Data Catalog table for your S3 data, then create a schema mapping referencing the table."
+
+  - id: P4-source-data-modified
+    trigger_words: ["update records", "modify source", "deduplicate in place"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Entity Resolution modifies source data. It only
+      produces output files with match results.
+    actual_behavior: >
+      Entity Resolution produces match output in S3 containing match
+      IDs and confidence scores. Source data is never modified. You
+      must implement your own merge/dedup logic using the output.
+    common_false_claim: "Entity Resolution will deduplicate your source table."
+    correct_action: "Use match output to implement your own deduplication logic downstream."
+
+  - id: P5-provider-included
+    trigger_words: ["provider service", "LiveRamp", "TransUnion", "ID mapping"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs imply provider services are included with Entity Resolution.
+      They require separate third-party subscriptions.
+    actual_behavior: >
+      Provider services (LiveRamp, TransUnion) require active
+      subscriptions with those providers. Entity Resolution provides
+      the integration framework but not the provider service itself.
+    common_false_claim: "Enable LiveRamp in Entity Resolution settings."
+    correct_action: "Subscribe to the provider service first, then configure the integration in Entity Resolution."
+
+  - id: P6-incremental-matching
+    trigger_words: ["incremental", "new records only", "delta matching"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest incremental matching capabilities. Entity Resolution
+      processes all input records each run.
+    actual_behavior: >
+      Matching workflows process all records from all input schema
+      mappings. There is no built-in incremental mode. Manage input
+      data partitioning externally for incremental-like behavior.
+    common_false_claim: "Configure incremental matching for new records."
+    correct_action: "Manage input data partitioning externally. Entity Resolution processes all input records each run."
+
+  - id: P7-rule-and-logic
+    trigger_words: ["match rules", "rule conditions", "all rules must match"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs confuse rule logic. Multiple rules create OR conditions,
+      not AND. Within a rule, attributes create AND conditions.
+    actual_behavior: >
+      Within a single rule, all specified attribute comparisons must
+      match (AND). Across rules, a match on ANY rule produces a match
+      (OR). This means rules are alternatives, not cumulative.
+    common_false_claim: "All rules must match for a record pair to be considered a match."
+    correct_action: "Rules are OR'd — matching ANY rule produces a match. Attributes within a rule are AND'd."
+
+  - id: P8-confidence-threshold
+    trigger_words: ["confidence score", "match threshold", "score filter"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest arbitrary confidence thresholds or misstate the range.
+    actual_behavior: >
+      ML matching confidence scores range from 0 to 1. The threshold
+      is configured on the matching workflow. Only matches above the
+      threshold appear in output. Default behavior includes all matches.
+    common_false_claim: "Set confidence threshold to 95%."
+    correct_action: "Set threshold as a decimal (0.95) on the matching workflow configuration."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

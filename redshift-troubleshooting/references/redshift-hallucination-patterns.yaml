@@ -1,0 +1,157 @@
+# =============================================================================
+# Redshift "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about Redshift behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-ssh-access-to-nodes
+    trigger_words: ["SSH", "ssh into", "node access", "OS level", "shell access", "login to node"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on general database documentation suggest SSH access
+      to database servers for troubleshooting. Redshift is fully managed
+      with no OS-level access to any node.
+    actual_behavior: >
+      Redshift nodes (leader and compute) are fully managed by AWS.
+      There is no SSH access, no OS shell, no file system access, and
+      no ability to install software on nodes. All troubleshooting is
+      done through SQL system tables (STL_, SVL_, SVV_, STV_),
+      CloudWatch metrics, AWS CLI, and the Redshift console.
+    common_false_claim: >
+      "SSH into the leader node to check the query log files."
+    correct_action: "Query system tables via psql or Redshift Data API. Use CloudWatch metrics for node-level monitoring."
+
+  - id: P2-insert-for-bulk-loading
+    trigger_words: ["INSERT INTO", "bulk insert", "insert values", "row by row"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs trained on traditional RDBMS documentation suggest INSERT
+      statements for data loading. In Redshift, INSERT is extremely
+      slow for bulk operations due to per-row commit overhead.
+    actual_behavior: >
+      COPY is the only efficient method for bulk loading data into
+      Redshift. COPY loads from S3, DynamoDB, EMR, or remote hosts
+      in parallel across all compute nodes. A single COPY command
+      loading 1 million rows is orders of magnitude faster than
+      1 million INSERT statements. Use INSERT only for small ad-hoc
+      operations (< 100 rows).
+    common_false_claim: >
+      "Use INSERT INTO ... SELECT to load data from the staging table."
+    correct_action: "Use COPY from S3 for bulk loading. For staging, COPY into staging table then INSERT INTO ... SELECT for transforms."
+
+  - id: P3-vacuum-unnecessary
+    trigger_words: ["no vacuum needed", "auto vacuum handles everything", "vacuum is automatic"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may oversimplify Redshift's auto-VACUUM capability,
+      claiming it handles all maintenance. Auto-VACUUM only handles
+      DELETE reclamation, not SORT maintenance for all cases.
+    actual_behavior: >
+      Auto-VACUUM runs VACUUM DELETE automatically to reclaim space
+      from deleted rows. However, VACUUM SORT (re-sorting unsorted
+      rows after bulk loads) may still require manual execution for
+      large tables with heavy insert activity. Tables with high
+      "unsorted" percentages in svv_table_info need manual VACUUM
+      SORT. VACUUM FULL (both delete and sort) is the most thorough
+      but also the most resource-intensive.
+    common_false_claim: >
+      "Redshift handles VACUUM automatically, you never need to run it manually."
+    correct_action: "Check svv_table_info for unsorted percentage. Run VACUUM SORT on tables with >5% unsorted rows."
+
+  - id: P4-unlimited-concurrency
+    trigger_words: ["unlimited queries", "no concurrency limit", "run as many queries"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may describe Redshift as having unlimited query concurrency
+      because it is a data warehouse. WLM strictly controls concurrency.
+    actual_behavior: >
+      WLM queues control query concurrency. Manual WLM defaults to
+      5 concurrent queries per queue. Auto WLM dynamically adjusts
+      but still has limits based on cluster resources. Queries
+      exceeding the concurrency limit wait in the queue. Concurrency
+      scaling can add transient clusters for burst read workloads,
+      but it is not unlimited and only handles reads.
+    common_false_claim: >
+      "Redshift can handle unlimited concurrent queries automatically."
+    correct_action: "Check WLM configuration via stv_wlm_service_class_config. Use Auto WLM and enable concurrency scaling for burst reads."
+
+  - id: P5-spectrum-loads-data
+    trigger_words: ["Spectrum loads", "Spectrum imports", "Spectrum copies data", "Spectrum ingests"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Spectrum's S3 querying capability with data loading.
+      Spectrum queries S3 data in-place without loading it into
+      Redshift storage.
+    actual_behavior: >
+      Redshift Spectrum creates external tables that reference data
+      in S3. When you query an external table, Spectrum reads data
+      directly from S3, processes it on compute nodes, and returns
+      results. Data never moves into Redshift managed storage. To
+      actually load data, use COPY or CREATE TABLE AS SELECT from
+      the external table.
+    common_false_claim: >
+      "Use Spectrum to load your S3 data into Redshift automatically."
+    correct_action: "Spectrum queries S3 in-place. To load data, use COPY from S3 or CTAS from the external table."
+
+  - id: P6-serverless-has-nodes
+    trigger_words: ["Serverless node type", "Serverless node count", "resize Serverless", "Serverless instances"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs trained on provisioned Redshift documentation apply node
+      concepts to Serverless. Serverless uses RPUs, not nodes.
+    actual_behavior: >
+      Redshift Serverless uses Redshift Processing Units (RPUs) as
+      the compute abstraction. There are no node types, no node
+      counts, and no resize operations. You configure base RPU
+      capacity (minimum 8, increments of 8) and pay for RPU-seconds
+      of compute time. Serverless automatically scales compute
+      resources based on workload demand.
+    common_false_claim: >
+      "Change the Serverless node type to ra3.xlplus for better performance."
+    correct_action: "Adjust base RPU capacity via aws redshift-serverless update-workgroup --base-capacity <rpus>."
+
+  - id: P7-cross-database-writes
+    trigger_words: ["INSERT cross-database", "write to other database", "cross-database update"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may assume cross-database queries support full CRUD
+      operations. Cross-database queries in Redshift are read-only.
+    actual_behavior: >
+      Cross-database queries using three-part notation
+      (database.schema.table) support only SELECT operations. You
+      cannot INSERT, UPDATE, DELETE, or CREATE objects in another
+      database. To move data between databases, you must connect
+      to the target database and use COPY or INSERT ... SELECT
+      from a datashare or unloaded S3 data.
+    common_false_claim: >
+      "Use INSERT INTO db2.schema.table SELECT * FROM db1.schema.table."
+    correct_action: "Connect to the target database directly. Use UNLOAD/COPY via S3 or data sharing for cross-database data movement."
+
+  - id: P8-classic-resize-instant
+    trigger_words: ["resize instantly", "quick resize", "resize takes seconds", "immediate resize"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not distinguish between classic and elastic resize.
+      Classic resize takes hours; elastic resize takes minutes.
+    actual_behavior: >
+      Classic resize creates a new cluster, migrates all data, and
+      can take hours depending on data volume. The cluster is in
+      read-only mode during migration. Elastic resize adds or removes
+      nodes in minutes by redistributing data slices, but has
+      constraints on supported node type changes. For RA3 nodes,
+      elastic resize is very fast because data is in managed storage.
+    common_false_claim: >
+      "Resize your cluster — it only takes a few seconds."
+    correct_action: "Use elastic resize for quick node changes. For node type changes, use classic resize and plan for hours of read-only downtime."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

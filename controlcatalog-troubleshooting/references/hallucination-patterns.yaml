@@ -1,0 +1,135 @@
+# =============================================================================
+# AWS Control Catalog "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-enables-controls
+    trigger_words: ["Control Catalog", "enable control", "enforce", "implement"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Control Catalog enables or enforces controls.
+      It is a read-only information service.
+    actual_behavior: >
+      Control Catalog is a read-only service that provides
+      information about available controls — descriptions,
+      objectives, domains, and regional availability. It does
+      NOT enable, disable, or enforce any controls. To implement
+      controls, use Control Tower, AWS Config, or service-specific
+      configurations.
+    common_false_claim: "Use Control Catalog to enable security controls in your account."
+    correct_action: "Use Control Catalog to discover available controls. Use Control Tower or Config to enable them."
+
+  - id: P2-comprehensive-catalog
+    trigger_words: ["all controls", "complete list", "every control"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the catalog contains all AWS controls.
+      The catalog is continuously expanding and may not be complete.
+    actual_behavior: >
+      Control Catalog is continuously expanding. Not all controls
+      from all AWS services are listed. New controls are added
+      over time. The absence of a control in the catalog doesn't
+      mean it doesn't exist as a capability — it may not yet be
+      cataloged.
+    common_false_claim: "Control Catalog lists every available AWS control."
+    correct_action: "Use Control Catalog as a starting point. Check service-specific documentation for additional controls."
+
+  - id: P3-custom-controls
+    trigger_words: ["custom control", "create control", "add control"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating custom controls in the catalog.
+      The catalog contains only AWS-defined controls.
+    actual_behavior: >
+      Control Catalog contains only AWS-defined controls and
+      common controls. You cannot add custom controls to the
+      catalog. For custom controls, use AWS Config custom rules,
+      Control Tower custom controls, or other service-specific
+      mechanisms.
+    common_false_claim: "Add your custom controls to the Control Catalog."
+    correct_action: "Use Config custom rules or Control Tower custom controls for custom requirements. Catalog is AWS-defined only."
+
+  - id: P4-replaces-control-tower
+    trigger_words: ["replace Control Tower", "instead of Control Tower", "alternative"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Control Catalog replaces Control Tower.
+      They are complementary services.
+    actual_behavior: >
+      Control Catalog and Control Tower are complementary.
+      Catalog provides information about available controls
+      (discovery). Control Tower enables and enforces controls
+      (implementation). You need both — Catalog to find controls
+      and Control Tower to implement them.
+    common_false_claim: "Use Control Catalog instead of Control Tower."
+    correct_action: "Use Control Catalog for discovery and Control Tower for implementation. They work together."
+
+  - id: P5-real-time-compliance
+    trigger_words: ["compliance status", "real-time", "compliance check"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Control Catalog shows compliance status.
+      It only shows available controls, not compliance.
+    actual_behavior: >
+      Control Catalog does NOT show compliance status. It shows
+      what controls are available, not whether they're enabled
+      or compliant in your environment. For compliance status,
+      use Control Tower, Config, or Security Hub.
+    common_false_claim: "Check Control Catalog to see your compliance status."
+    correct_action: "Use Control Tower for control enablement status. Use Config or Security Hub for compliance status."
+
+  - id: P6-all-regions
+    trigger_words: ["all regions", "global", "every region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all controls are available in all regions.
+      Regional availability varies.
+    actual_behavior: >
+      Control availability varies by region. Some controls are
+      only available in specific regions. Check control details
+      for regional support. The Control Catalog API itself may
+      also have regional availability limitations.
+    common_false_claim: "All controls in the catalog are available in every AWS region."
+    correct_action: "Check control details for regional availability before planning implementation."
+
+  - id: P7-framework-compliance
+    trigger_words: ["compliance framework", "PCI", "SOC", "HIPAA"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest implementing catalog controls achieves
+      framework compliance. Controls are building blocks, not
+      complete compliance solutions.
+    actual_behavior: >
+      Common controls in the catalog map to compliance frameworks
+      but implementing them alone does not achieve compliance.
+      Compliance requires additional organizational, procedural,
+      and technical controls beyond what's in the catalog.
+    common_false_claim: "Implement all catalog controls mapped to PCI DSS to become PCI compliant."
+    correct_action: "Use catalog controls as building blocks. Compliance requires additional controls, processes, and auditing."
+
+  - id: P8-automatic-mapping
+    trigger_words: ["automatic mapping", "auto-map", "control mapping"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest Control Catalog automatically maps controls
+      to your environment. Mapping is informational only.
+    actual_behavior: >
+      Control Catalog provides mappings between controls,
+      objectives, and domains. These mappings are informational
+      — they show relationships but don't automatically configure
+      anything in your environment. You must manually select and
+      implement relevant controls.
+    common_false_claim: "Control Catalog automatically maps and applies relevant controls to your environment."
+    correct_action: "Use catalog mappings to identify relevant controls. Manually implement using Control Tower or Config."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

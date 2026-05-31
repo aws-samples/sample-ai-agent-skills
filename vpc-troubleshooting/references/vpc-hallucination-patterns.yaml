@@ -1,0 +1,121 @@
+# =============================================================================
+# VPC "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about VPC networking
+# =============================================================================
+
+patterns:
+
+  - id: P1-sg-deny-rules
+    trigger_words: ["deny rule", "block IP", "security group deny"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs know firewalls have deny rules. They assume security groups
+      work the same way. Security groups ONLY have allow rules.
+    actual_behavior: >
+      Security groups have ALLOW rules only. Default is deny-all-inbound,
+      allow-all-outbound. To block specific IPs, use NACLs.
+    common_false_claim: >
+      "Add a deny rule to the security group to block that IP."
+    correct_action: "Use a NACL deny rule to block specific IPs."
+
+  - id: P2-nacl-stateful
+    trigger_words: ["NACL", "return traffic", "stateful", "stateless"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs sometimes apply security group stateful behavior to NACLs.
+      NACLs are stateless — return traffic is NOT automatically allowed.
+    actual_behavior: >
+      NACLs require explicit rules for BOTH directions. Inbound allow
+      does NOT automatically allow outbound return traffic. Ephemeral
+      ports (1024-65535) must be explicitly allowed.
+    common_false_claim: >
+      "The NACL allows inbound on port 443, so HTTPS responses will work."
+    correct_action: "Add outbound rule for ephemeral ports 1024-65535."
+
+  - id: P3-peering-transitive
+    trigger_words: ["peering", "transitive", "hop", "chain"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume network connectivity is transitive. VPC peering is
+      explicitly non-transitive by design.
+    actual_behavior: >
+      A↔B peering and B↔C peering does NOT allow A↔C traffic.
+      Each pair needs direct peering or use Transit Gateway.
+    common_false_claim: >
+      "Since VPC-A is peered with VPC-B and VPC-B with VPC-C, VPC-A can reach VPC-C."
+
+  - id: P4-public-subnet-attribute
+    trigger_words: ["public subnet", "subnet type", "make subnet public"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs think there's a subnet attribute that makes it public.
+      It's determined entirely by the route table.
+    actual_behavior: >
+      A subnet is public if its route table has 0.0.0.0/0 → IGW.
+      The "auto-assign public IP" setting is separate and doesn't
+      make a subnet public by itself.
+    common_false_claim: >
+      "Set the subnet to public in the subnet settings."
+    correct_action: "Add 0.0.0.0/0 → IGW route to the subnet's route table."
+
+  - id: P5-flow-log-rule-identification
+    trigger_words: ["flow log", "which rule", "blocked by"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim flow logs show which SG or NACL rule blocked traffic.
+      Flow logs only show ACCEPT/REJECT, not the source of the decision.
+    actual_behavior: >
+      Flow logs show the final verdict (ACCEPT/REJECT) at ENI level.
+      They do NOT indicate whether SG or NACL caused the REJECT.
+      You must check both independently.
+    common_false_claim: >
+      "The flow log shows the security group blocked this traffic."
+
+  - id: P6-jumbo-frames-everywhere
+    trigger_words: ["jumbo frames", "MTU 9001", "large packets"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs know AWS supports jumbo frames and overgeneralize to all paths.
+      Jumbo frames only work within the same VPC.
+    actual_behavior: >
+      MTU 9001 only within same VPC. Clamped to 1500 through: IGW,
+      NAT gateway, VPN, VPC peering, Transit Gateway.
+    common_false_claim: >
+      "Enable jumbo frames for better performance across VPC peering."
+
+  - id: P7-nat-in-private-subnet
+    trigger_words: ["NAT gateway", "private subnet", "internet access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs sometimes place NAT gateway in a private subnet because
+      "private instances need NAT." NAT must be in a PUBLIC subnet.
+    actual_behavior: >
+      NAT gateway must be in a public subnet (with IGW route) to
+      function. Private subnets route 0.0.0.0/0 → NAT gateway.
+    common_false_claim: >
+      "Create a NAT gateway in the private subnet for internet access."
+    correct_action: "Create NAT in a public subnet, route private subnet 0.0.0.0/0 → NAT."
+
+  - id: P8-gateway-vs-interface-endpoint
+    trigger_words: ["VPC endpoint", "S3 endpoint", "interface endpoint"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs confuse gateway endpoints (route-based, free) with interface
+      endpoints (ENI-based, paid). They have different mechanisms.
+    actual_behavior: >
+      Gateway endpoints (S3, DynamoDB): route table prefix list, free.
+      Interface endpoints: ENI in subnet, DNS override, costs per hour + GB.
+    common_false_claim: >
+      "Create an interface endpoint for S3 to save on NAT costs."
+    correct_action: "Use a gateway endpoint for S3 (free). Interface endpoints cost money."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,144 @@
+# =============================================================================
+# Amazon WorkDocs "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-s3-confusion
+    trigger_words: ["WorkDocs", "S3", "bucket", "object storage"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse WorkDocs with S3 or suggest S3 APIs for WorkDocs
+      content management. They are completely different services.
+    actual_behavior: >
+      WorkDocs is a managed document collaboration service with its
+      own API. Documents are stored in WorkDocs-managed storage, not
+      in customer S3 buckets. WorkDocs APIs (get-document, create-folder)
+      are used for content management, not S3 APIs.
+    common_false_claim: "Use aws s3 cp to upload files to WorkDocs."
+    correct_action: "Use WorkDocs API (initiate-document-version-upload) or the web/sync client to upload files."
+
+  - id: P2-no-directory-needed
+    trigger_words: ["create site", "setup WorkDocs", "standalone"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest WorkDocs can be set up without a directory.
+      A Directory Service directory is always required.
+    actual_behavior: >
+      WorkDocs requires an AWS Directory Service directory (Simple AD,
+      AD Connector, or AWS Managed Microsoft AD). The directory provides
+      user authentication and management. Without a directory, WorkDocs
+      cannot be activated.
+    common_false_claim: "Create a WorkDocs site using just IAM users."
+    correct_action: "First create a Directory Service directory, then activate WorkDocs on that directory."
+
+  - id: P3-cross-region-access
+    trigger_words: ["access from another region", "global", "cross-region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest WorkDocs content is globally accessible or can
+      be replicated across regions.
+    actual_behavior: >
+      WorkDocs sites are regional. Content is stored in the region
+      where the site was created. There is no cross-region replication
+      or global access feature. Users access content through the
+      regional endpoint.
+    common_false_claim: "WorkDocs automatically replicates content across regions for global access."
+    correct_action: "Access WorkDocs through the regional endpoint. For multi-region needs, create separate sites."
+
+  - id: P4-unlimited-storage
+    trigger_words: ["storage", "unlimited", "quota", "space"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention storage quotas or suggest WorkDocs
+      has unlimited storage.
+    actual_behavior: >
+      WorkDocs has per-user storage quotas based on user type.
+      Default storage varies by plan and user type. Exceeding
+      the quota blocks uploads for that user. Admins can adjust
+      quotas within plan limits.
+    common_false_claim: "WorkDocs provides unlimited storage for all users."
+    correct_action: "Check user storage quotas. Upgrade user type or adjust quotas if storage is insufficient."
+
+  - id: P5-real-time-collaboration
+    trigger_words: ["real-time editing", "simultaneous editing", "Google Docs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate WorkDocs real-time collaboration capabilities
+      by comparing it to Google Docs or Office 365.
+    actual_behavior: >
+      WorkDocs supports document sharing, commenting, and version
+      control. It provides a web-based editor for simple documents.
+      For Office documents, it integrates with Hancom ThinkFree
+      for online editing. It does NOT provide Google Docs-style
+      real-time simultaneous editing by multiple users.
+    common_false_claim: "Multiple users can edit the same document simultaneously in real-time like Google Docs."
+    correct_action: "Use WorkDocs for version-controlled collaboration with commenting. Use document locking for edit control."
+
+  - id: P6-automatic-migration
+    trigger_words: ["migrate", "import", "move from", "transfer"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest simple one-click migration to WorkDocs from
+      other platforms. Migration requires planning and tooling.
+    actual_behavior: >
+      Migration to WorkDocs requires the Amazon WorkDocs Migration
+      Service or custom API-based migration scripts. Large migrations
+      need bandwidth planning and API rate limit consideration.
+      Metadata, permissions, and folder structures may not transfer
+      automatically depending on the source system.
+    common_false_claim: "Simply import your files from SharePoint/Dropbox with one click."
+    correct_action: "Plan migration using WorkDocs Migration Service. Test with a subset before full migration."
+
+  - id: P7-permanent-deletion
+    trigger_words: ["delete", "remove", "permanently", "gone"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deleted content is immediately and permanently
+      gone. WorkDocs has a Recycle Bin with recovery window.
+    actual_behavior: >
+      Deleted documents go to the user's Recycle Bin and can be
+      recovered within the retention period (60 days by default).
+      Only content explicitly purged from the Recycle Bin or past
+      the retention period is permanently deleted.
+    common_false_claim: "The deleted document is permanently gone and cannot be recovered."
+    correct_action: "Check the user's Recycle Bin first. Content can be restored within the retention period."
+
+  - id: P8-api-iam-only
+    trigger_words: ["API", "authentication", "token", "credentials"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all WorkDocs API calls use IAM credentials.
+      User-level operations require authentication tokens.
+    actual_behavior: >
+      WorkDocs API uses two authentication methods. Administrative
+      operations use IAM credentials. User-level operations require
+      an authentication token header. The token is obtained through
+      the WorkDocs console or CreateNotificationSubscription API.
+    common_false_claim: "All WorkDocs API calls work with standard IAM credentials."
+    correct_action: "Use IAM for admin operations. Obtain authentication tokens for user-level API calls."
+
+remediation_hallucinations:
+
+  - id: R1-delete-directory-to-fix
+    trigger_words: ["delete directory", "recreate directory"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Deleting the Directory Service directory destroys the WorkDocs
+      site and ALL content permanently. This cannot be undone.
+    correct_approach: >
+      Never delete the directory to fix WorkDocs issues. Troubleshoot
+      the directory separately. If directory recreation is truly needed,
+      migrate all WorkDocs content first.
+
+  - id: R2-deactivate-all-users
+    trigger_words: ["deactivate users", "disable all users"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deactivating users removes their access and may trigger
+      content cleanup policies. Reactivating users does not
+      guarantee content restoration.
+    correct_approach: >
+      Deactivate individual users only when confirmed necessary.
+      Never bulk-deactivate users as a troubleshooting step.
+      Verify content retention policies before deactivation.

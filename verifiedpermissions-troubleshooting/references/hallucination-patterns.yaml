@@ -1,0 +1,120 @@
+# =============================================================================
+# Amazon Verified Permissions "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-iam-policy-confusion
+    trigger_words: ["Verified Permissions policy", "authorization policy", "access policy"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to IAM JSON policy syntax when discussing AWS authorization.
+      Verified Permissions uses Cedar, a completely different language.
+    actual_behavior: >
+      Verified Permissions policies are written in Cedar with permit/forbid
+      statements. Example: permit(principal == MyApp::User::"alice",
+      action == MyApp::Action::"viewDocument", resource);
+    common_false_claim: "Create an IAM policy with Effect: Allow for Verified Permissions."
+    correct_action: "Write a Cedar policy in the policy store using permit/forbid syntax."
+
+  - id: P2-schema-is-iam
+    trigger_words: ["schema", "entity types", "action definitions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse the Verified Permissions schema with IAM service
+      namespaces or JSON Schema. The schema defines YOUR app's model.
+    actual_behavior: >
+      The schema defines your application's entity types (User, Document),
+      actions (viewDocument, editDocument), and their relationships using
+      Cedar schema format. It is NOT an AWS service namespace.
+    common_false_claim: "Use s3:GetObject as an action in your schema."
+    correct_action: "Define custom actions for your app: MyApp::Action::viewDocument."
+
+  - id: P3-is-authorized-checks-iam
+    trigger_words: ["is-authorized", "authorization check", "permission check"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest is-authorized evaluates IAM policies. It only
+      evaluates Cedar policies in the policy store.
+    actual_behavior: >
+      is-authorized evaluates Cedar policies in the specified policy store.
+      IAM permissions only control who can CALL the is-authorized API.
+      The authorization decision is based entirely on Cedar policies.
+    common_false_claim: "is-authorized checks both IAM and Cedar policies."
+    correct_action: "is-authorized evaluates ONLY Cedar policies. IAM controls API access, not authorization decisions."
+
+  - id: P4-template-runtime-variables
+    trigger_words: ["policy template", "template variable", "dynamic policy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat policy templates as runtime-parameterized policies.
+      Templates use placeholders filled at policy creation time.
+    actual_behavior: >
+      Policy templates have ?principal and ?resource placeholders.
+      Template-linked policies provide concrete entity values for these
+      placeholders when created. Values are fixed, not dynamic at runtime.
+    common_false_claim: "Pass template variables at authorization time."
+    correct_action: "Create template-linked policies with concrete values. Templates are instantiated, not parameterized at runtime."
+
+  - id: P5-global-policy-store
+    trigger_words: ["global policy", "cross-region", "multi-region authorization"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume policy stores are global like IAM. They are regional.
+    actual_behavior: >
+      Policy stores are regional resources. Each exists in one AWS region.
+      For multi-region apps, create policy stores in each region and
+      synchronize policies. There is no built-in replication.
+    common_false_claim: "Your policy store is available in all regions."
+    correct_action: "Create policy stores in each region your app operates. Sync policies via CI/CD."
+
+  - id: P6-cognito-auto-mapping
+    trigger_words: ["Cognito integration", "identity source", "token mapping"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Cognito tokens are automatically understood by
+      Verified Permissions without identity source configuration.
+    actual_behavior: >
+      You must create an identity source linking the Cognito user pool
+      to the policy store. The identity source configuration defines
+      how token claims map to Cedar entity types and attributes.
+      Without this, is-authorized-with-token fails.
+    common_false_claim: "Just pass the Cognito token to is-authorized."
+    correct_action: "Create an identity source first, then use is-authorized-with-token with the Cognito token."
+
+  - id: P7-batch-unlimited
+    trigger_words: ["batch authorization", "bulk check", "batch-is-authorized"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs don't mention the 30-request limit for batch authorization.
+    actual_behavior: >
+      batch-is-authorized accepts a maximum of 30 requests per call.
+      Each request is independently evaluated. For more than 30 checks,
+      make multiple batch calls.
+    common_false_claim: "Send all your authorization checks in one batch call."
+    correct_action: "Limit batch calls to 30 requests. Split larger sets into multiple calls."
+
+  - id: P8-cedar-namespace-format
+    trigger_words: ["entity type", "namespace", "Cedar type"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs use incorrect Cedar entity type formats, omitting namespaces
+      or using wrong separators.
+    actual_behavior: >
+      Cedar entity types use Namespace::Type format (e.g., MyApp::User).
+      Entity UIDs use Type::"id" format (e.g., MyApp::User::"alice").
+      Actions use Namespace::Action::"name" format. Double colons are
+      required separators.
+    common_false_claim: "Use User as the entity type."
+    correct_action: "Use fully qualified types: MyApp::User, MyApp::Action::\"viewDocument\"."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,155 @@
+# =============================================================================
+# Amazon Lookout for Metrics "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-instant-detection
+    trigger_words: ["Lookout for Metrics", "real-time", "instant anomaly", "immediate detection"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Lookout for Metrics detects anomalies immediately
+      after activation. It requires a 1–2 week learning period.
+    actual_behavior: >
+      After activation, the detector enters a learning phase lasting
+      1–2 weeks where it builds a baseline model of normal behavior.
+      During this period, no anomalies are reported. Only after the
+      learning period completes does the detector begin producing
+      anomaly results. The learning period cannot be skipped.
+    common_false_claim: "Activate the detector and it will immediately start detecting anomalies."
+    correct_action: "Activate the detector and wait 1–2 weeks for the learning period to complete before expecting results."
+
+  - id: P2-auto-remediation
+    trigger_words: ["auto-fix", "automatic remediation", "self-healing", "auto-correct"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Lookout for Metrics can automatically fix detected
+      anomalies. It only detects and alerts — remediation is manual.
+    actual_behavior: >
+      Lookout for Metrics detects anomalies and sends alerts via SNS
+      or Lambda. It does NOT take any remediation action. The service
+      identifies what is anomalous and provides severity scores, but
+      all corrective actions must be implemented by the operator or
+      through custom Lambda functions triggered by alerts.
+    common_false_claim: "Lookout for Metrics will automatically correct anomalous metrics."
+    correct_action: "Configure alerts to trigger Lambda functions that implement custom remediation logic."
+
+  - id: P3-any-data-format
+    trigger_words: ["any format", "any data", "automatic parsing", "schema detection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Lookout for Metrics accepts any data format.
+      It requires specific CSV or JSON formats with strict schema.
+    actual_behavior: >
+      S3 data sources must be in CSV or JSON Lines format with a
+      specific folder structure using date-partitioned paths. The
+      timestamp column must match the configured format exactly.
+      Measures must be numeric. Dimensions must be string values.
+      The service does not auto-detect schema or parse arbitrary formats.
+    common_false_claim: "Just point Lookout for Metrics at your S3 bucket and it will figure out the format."
+    correct_action: "Prepare data in CSV/JSON Lines format with proper partitioning and configure the exact schema in the metric set."
+
+  - id: P4-unlimited-metrics
+    trigger_words: ["unlimited", "any number of metrics", "no limit", "scale"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest no limits on metrics or dimensions. Service
+      quotas apply to measures, dimensions, and metric sets.
+    actual_behavior: >
+      Lookout for Metrics has service quotas: up to 5 metric sets
+      per detector, up to 5 measures per metric set, and up to 5
+      dimensions per metric set. The total number of unique time
+      series (measure × dimension combinations) also has limits.
+      Exceeding quotas causes creation or activation failures.
+    common_false_claim: "Add as many metrics and dimensions as you need to a single detector."
+    correct_action: "Check service quotas. Design metric sets within limits. Use multiple detectors for large-scale monitoring."
+
+  - id: P5-modify-active-detector
+    trigger_words: ["update detector", "modify active", "change configuration", "edit running"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest detectors can be modified while active. Most
+      configuration changes require deactivation first.
+    actual_behavior: >
+      Active detectors cannot have their metric sets, data sources,
+      or frequency modified. You must deactivate the detector, make
+      changes, and reactivate. Reactivation resets the learning
+      period entirely, requiring another 1–2 weeks before results.
+      Only alert configurations can be modified on active detectors.
+    common_false_claim: "Update the metric set configuration while the detector is running."
+    correct_action: "Deactivate the detector, modify configuration, reactivate, and plan for the learning period reset."
+
+  - id: P6-s3-any-structure
+    trigger_words: ["S3 bucket", "any folder", "flat structure", "single file"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest S3 data can be in any folder structure. A
+      specific date-partitioned path template is required.
+    actual_behavior: >
+      S3 data sources require files organized in date-partitioned
+      folders matching the configured path template. For example,
+      with 5-minute frequency: s3://bucket/prefix/20250101/0500/.
+      Files must be placed in the correct partition before the
+      detector's next evaluation. Missing partitions are treated
+      as missing data, not errors.
+    common_false_claim: "Upload your CSV files to any S3 location and configure the bucket path."
+    correct_action: "Organize data in date-partitioned folders matching the path template. Ensure files arrive before each evaluation."
+
+  - id: P7-cloudwatch-wildcard
+    trigger_words: ["CloudWatch wildcard", "all metrics", "pattern match", "regex metrics"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CloudWatch data sources support wildcards or
+      pattern matching. Exact metric specifications are required.
+    actual_behavior: >
+      CloudWatch data sources require exact namespace, metric name,
+      and dimension name/value pairs. Wildcards, regex, or partial
+      matches are not supported. Each metric must be individually
+      specified. To monitor multiple metrics, add them as separate
+      measures in the metric set.
+    common_false_claim: "Use a wildcard to monitor all EC2 CPUUtilization metrics across instances."
+    correct_action: "Specify each metric exactly with namespace, name, and dimensions. Use dimensions to scope to specific resources."
+
+  - id: P8-backtest-equals-live
+    trigger_words: ["back-test", "backtest", "historical test", "test mode"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest back-test results perfectly predict live
+      detection performance. They can differ significantly.
+    actual_behavior: >
+      Back-test mode evaluates historical data with the full
+      dataset available, which gives the model more context than
+      live detection. Live detection processes data incrementally
+      as it arrives. Back-test may show better or different results
+      than live detection. Use back-test for validation, not as
+      a guarantee of live performance.
+    common_false_claim: "If back-test detects the anomaly, live detection will too."
+    correct_action: "Use back-test for initial validation. Monitor live detection separately and tune sensitivity based on live results."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-detector
+    false_advice: "Delete and recreate the detector to fix detection issues."
+    why_dangerous: >
+      Deleting a detector destroys the learned model and all
+      historical anomaly data. Recreation requires another full
+      learning period of 1–2 weeks. This should be a last resort.
+    correct_approach: >
+      First check data quality metrics, verify data source
+      connectivity, and adjust sensitivity threshold. Deactivation
+      and reactivation (which also resets learning) should only be
+      done after exhausting other options. Deletion is only
+      appropriate if the detector configuration is fundamentally wrong.
+
+  - id: R2-increase-sensitivity-for-accuracy
+    false_advice: "Increase sensitivity to 100 for the most accurate detection."
+    why_dangerous: >
+      Maximum sensitivity (100) detects the most anomalies but
+      generates the most false positives. This overwhelms operators
+      with noise and reduces trust in the system.
+    correct_approach: >
+      Start with a moderate sensitivity (50) and adjust based on
+      results. Lower sensitivity for fewer, higher-confidence
+      anomalies. Higher sensitivity for catching subtle changes.
+      The optimal value depends on the specific use case and
+      acceptable false positive rate.

@@ -1,0 +1,136 @@
+# =============================================================================
+# AWS Supply Chain "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-instant-forecasts
+    trigger_words: ["demand forecast", "instant prediction", "immediate forecast", "real-time planning"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest demand planning produces instant forecasts.
+      Models require historical data and training time.
+    actual_behavior: >
+      Demand planning models require weeks to months of historical
+      data to produce accurate forecasts. New instances with limited
+      data produce low-confidence results. Model training is not
+      instant — it requires data ingestion, processing, and model
+      fitting. There is no real-time forecast generation.
+    common_false_claim: "Set up demand planning and get accurate forecasts immediately."
+    correct_action: "Ingest sufficient historical data (3-6 months recommended). Allow model training time. Validate forecast accuracy before relying on results."
+
+  - id: P2-custom-schemas
+    trigger_words: ["custom schema", "create schema", "modify schema", "custom data model"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest users can create arbitrary custom schemas in
+      the data lake. Schemas are predefined by the service.
+    actual_behavior: >
+      The Supply Chain data lake uses predefined schemas organized
+      by namespace. The 'asc' namespace contains AWS-managed schemas.
+      Custom data must conform to existing schemas or use the
+      'default' namespace with supported formats. Arbitrary schema
+      creation is not supported.
+    common_false_claim: "Create a custom schema in the data lake to match your data model."
+    correct_action: "Map your data to existing predefined schemas. Use data transformation in integration flows to conform to expected formats."
+
+  - id: P3-real-time-inventory
+    trigger_words: ["real-time inventory", "live inventory", "instant visibility", "real-time tracking"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest inventory visibility provides real-time data.
+      It aggregates data with eventual consistency.
+    actual_behavior: >
+      Inventory visibility aggregates data from multiple sources
+      through data integration flows. Updates are not real-time —
+      they depend on flow execution frequency and data source
+      update intervals. There can be minutes to hours of delay
+      between source changes and visibility updates.
+    common_false_claim: "Get real-time inventory levels across all warehouses instantly."
+    correct_action: "Configure data integration flows with appropriate frequency. Understand propagation delays. Use source systems for real-time queries."
+
+  - id: P4-automatic-optimization
+    trigger_words: ["auto-optimize", "automatic supply chain", "self-optimizing", "autonomous planning"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Supply Chain automatically optimizes operations.
+      It provides insights and recommendations that require human action.
+    actual_behavior: >
+      AWS Supply Chain generates insights and recommendations based
+      on data analysis. It does NOT automatically execute changes
+      to supply chain operations. Recommendations must be reviewed
+      and acted upon by supply chain professionals. There is no
+      autonomous optimization loop.
+    common_false_claim: "Supply Chain automatically optimizes your inventory levels and reorder points."
+    correct_action: "Review generated insights and recommendations. Implement changes through your operational systems based on Supply Chain guidance."
+
+  - id: P5-universal-connectors
+    trigger_words: ["connect any system", "universal connector", "any ERP", "all systems"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Supply Chain connects to any system. Only
+      specific connector types are supported.
+    actual_behavior: >
+      AWS Supply Chain supports specific connector types: SAP,
+      EDI, and S3-based custom integrations. Each connector has
+      specific configuration requirements. Not all ERP systems
+      or data sources have native connectors. Unsupported systems
+      require custom ETL to S3 as an intermediary.
+    common_false_claim: "Connect any ERP or warehouse management system directly to Supply Chain."
+    correct_action: "Check supported connector types. For unsupported systems, build custom ETL pipelines to S3 and use S3-based data integration."
+
+  - id: P6-cross-region-instances
+    trigger_words: ["cross-region", "multi-region", "global instance", "any region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Supply Chain instances work across regions.
+      Instances are regional resources.
+    actual_behavior: >
+      Supply Chain instances are regional. Data, configurations,
+      and operations are scoped to the region where the instance
+      is created. Cross-region data access is not supported.
+      The service is available in limited regions only.
+    common_false_claim: "Create one Supply Chain instance to manage global operations across all regions."
+    correct_action: "Create instances in supported regions. Aggregate cross-region data through S3 replication or custom ETL before ingestion."
+
+  - id: P7-unlimited-data-volume
+    trigger_words: ["unlimited data", "any volume", "no limits", "big data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not account for service quotas and data volume
+      limits in Supply Chain.
+    actual_behavior: >
+      Supply Chain has service quotas for data volume, number of
+      integration flows, datasets, and API request rates. Large
+      data volumes may require quota increases. Data integration
+      flows have execution time limits. Very large datasets may
+      need to be partitioned.
+    common_false_claim: "Ingest unlimited data into the Supply Chain data lake."
+    correct_action: "Check service quotas. Partition large datasets. Request quota increases for large-scale deployments."
+
+  - id: P8-instant-insights
+    trigger_words: ["instant insights", "immediate recommendations", "quick analysis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest insights are generated instantly after data
+      ingestion. Analysis requires processing time.
+    actual_behavior: >
+      Insights and recommendations are generated after data
+      processing and analysis, which takes time proportional to
+      data volume and complexity. New data must be ingested,
+      validated, and analyzed before insights appear. There is
+      no instant insight generation.
+    common_false_claim: "Get supply chain insights immediately after uploading data."
+    correct_action: "Allow processing time after data ingestion. Monitor data integration flow completion before expecting insights."
+
+remediation_hallucinations:
+
+  - id: R1-modify-predefined-schema
+    false_fix: "Use update-dataset-schema to modify the predefined Supply Chain schema."
+    why_wrong: "Predefined schemas in the 'asc' namespace cannot be modified. There is no update-dataset-schema API."
+    correct_fix: "Transform your data to match predefined schemas using data integration flow transformations."
+
+  - id: R2-real-time-connector
+    false_fix: "Configure the connector for real-time streaming data ingestion."
+    why_wrong: "Connectors use batch-based data integration, not real-time streaming."
+    correct_fix: "Configure data integration flow execution frequency to meet near-real-time requirements. Use S3 event-driven flows for faster updates."

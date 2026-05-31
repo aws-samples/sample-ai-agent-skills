@@ -1,0 +1,125 @@
+# =============================================================================
+# AWS Server Migration Service "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-sms-current-service
+    trigger_words: ["server migration", "migrate servers", "VM migration"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs recommend SMS as the current migration service. It's legacy
+      and being replaced by Application Migration Service (MGN).
+    actual_behavior: >
+      SMS is legacy. AWS recommends Application Migration Service (MGN)
+      for new server migrations. MGN provides continuous replication,
+      automated testing, and cutover. SMS is maintained for existing
+      migrations only.
+    common_false_claim: "Use AWS SMS to migrate your servers to AWS."
+    correct_action: "Use Application Migration Service (MGN) for new migrations. SMS for existing only."
+
+  - id: P2-no-connector-needed
+    trigger_words: ["start replication", "replicate server", "migration setup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs skip connector deployment. SMS requires a connector VM
+      in the source environment.
+    actual_behavior: >
+      SMS requires the SMS Connector (a FreeBSD VM) deployed in the
+      source VMware or Hyper-V environment. The connector handles
+      communication between the hypervisor and AWS. Without it,
+      no server discovery or replication is possible.
+    common_false_claim: "Start replicating servers directly from the AWS console."
+    correct_action: "Deploy SMS Connector first, configure vCenter/SCVMM access, then start replication."
+
+  - id: P3-unlimited-replication
+    trigger_words: ["replication duration", "how long", "continuous replication"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SMS replication runs indefinitely. Jobs have
+      a 90-day maximum duration.
+    actual_behavior: >
+      SMS replication jobs expire after 90 days. After expiration,
+      you must create a new replication job. Plan your migration
+      cutover within the 90-day window. MGN doesn't have this limit.
+    common_false_claim: "Keep replicating until you're ready to cut over."
+    correct_action: "Plan cutover within 90 days. For longer timelines, use MGN instead."
+
+  - id: P4-physical-server-support
+    trigger_words: ["physical server", "bare metal", "non-virtual"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SMS works with physical servers. It only works
+      with VMware and Hyper-V virtual machines.
+    actual_behavior: >
+      SMS only supports VMware vSphere and Microsoft Hyper-V/SCVMM
+      virtual machines. Physical servers cannot be migrated with SMS.
+      For physical servers, use Application Migration Service (MGN)
+      or CloudEndure Migration.
+    common_false_claim: "Use SMS to migrate physical servers to AWS."
+    correct_action: "Use MGN for physical servers. SMS only supports VMware and Hyper-V VMs."
+
+  - id: P5-atomic-app-migration
+    trigger_words: ["application migration", "migrate together", "coordinated"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SMS application migration is atomic. Each server
+      replicates independently.
+    actual_behavior: >
+      SMS application migration groups servers logically for coordinated
+      launch ordering. However, each server replicates independently.
+      There's no atomic cutover — servers are launched in the specified
+      order but replication timing varies.
+    common_false_claim: "SMS migrates all application servers atomically."
+    correct_action: "Use app migration for launch ordering. Plan cutover window for all servers."
+
+  - id: P6-ami-during-replication
+    trigger_words: ["AMI", "create image", "machine image"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest AMIs are created during replication. AMI generation
+      is a separate step after replication run completes.
+    actual_behavior: >
+      Replication runs copy data to AWS as EBS snapshots. AMI generation
+      is a separate step that creates an AMI from the latest snapshot.
+      You can generate AMIs from any completed replication run.
+    common_false_claim: "Each replication run automatically creates an AMI."
+    correct_action: "AMIs are generated after replication. Configure auto-AMI or generate manually."
+
+  - id: P7-any-hypervisor
+    trigger_words: ["hypervisor", "KVM", "Xen", "virtualization"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest SMS works with any hypervisor. Only VMware
+      and Hyper-V are supported.
+    actual_behavior: >
+      SMS Connector supports VMware vSphere (via vCenter) and
+      Microsoft Hyper-V (via SCVMM). KVM, Xen, and other
+      hypervisors are not supported. Use MGN for broader support.
+    common_false_claim: "Deploy SMS Connector for your KVM environment."
+    correct_action: "SMS supports VMware and Hyper-V only. Use MGN for other platforms."
+
+  - id: P8-free-service
+    trigger_words: ["cost", "pricing", "free", "charges"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs say SMS is completely free. While the service itself is
+      free, underlying resources have costs.
+    actual_behavior: >
+      SMS service is free, but you pay for underlying AWS resources:
+      S3 storage for replication data, EBS snapshots, EC2 instances
+      when launched, and data transfer. The connector VM also uses
+      resources in the source environment.
+    common_false_claim: "SMS is completely free to use."
+    correct_action: "SMS service is free but S3, EBS, EC2, and data transfer costs apply."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

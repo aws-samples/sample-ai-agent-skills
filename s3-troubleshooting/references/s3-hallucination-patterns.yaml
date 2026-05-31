@@ -1,0 +1,114 @@
+# =============================================================================
+# S3 "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-versioning-disable
+    trigger_words: ["disable versioning", "turn off versioning", "remove versioning"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume versioning is a toggle. Once enabled, it can only be
+      suspended, not disabled. Existing versions are retained.
+    actual_behavior: >
+      Versioning has three states: unversioned (never enabled), enabled,
+      suspended. You cannot go back to unversioned. Suspension stops new
+      versions but keeps existing ones.
+    common_false_claim: "Disable versioning to stop storing old versions."
+    correct_action: "Suspend versioning and use lifecycle rules to expire old versions."
+
+  - id: P2-replication-existing-objects
+    trigger_words: ["replication", "replicate existing", "copy existing"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume enabling replication copies everything. It only
+      replicates new objects written after the rule is created.
+    actual_behavior: >
+      Replication only applies to new objects. Use S3 Batch Replication
+      to copy existing objects. Delete markers are optionally replicated.
+    common_false_claim: "Enable replication and all existing objects will be copied."
+    correct_action: "Use S3 Batch Replication for existing objects."
+
+  - id: P3-block-public-access-bucket-only
+    trigger_words: ["block public access", "public bucket", "make public"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs focus on bucket-level settings and forget account-level
+      Block Public Access overrides everything.
+    actual_behavior: >
+      Account-level Block Public Access settings override bucket-level.
+      Both must allow public access for a bucket to be public.
+    common_false_claim: "Remove Block Public Access from the bucket to make it public."
+    correct_action: "Check BOTH account-level and bucket-level Block Public Access settings."
+
+  - id: P4-delete-marker-data-loss
+    trigger_words: ["delete marker", "deleted object", "recover deleted"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may claim deleting a versioned object permanently removes it.
+      It only creates a delete marker; previous versions remain.
+    actual_behavior: >
+      Deleting a versioned object creates a delete marker. Previous
+      versions still exist and can be restored by deleting the marker.
+    common_false_claim: "The object was deleted and cannot be recovered."
+    correct_action: "Check for previous versions. Delete the delete marker to restore."
+
+  - id: P5-cross-account-one-side
+    trigger_words: ["cross-account", "access denied", "other account"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may only fix one side of cross-account access (IAM or bucket
+      policy) and miss the other.
+    actual_behavior: >
+      Cross-account access requires BOTH: IAM policy in the requesting
+      account AND bucket policy in the bucket account. Missing either
+      side causes access denied.
+    common_false_claim: "Add the bucket policy and cross-account access will work."
+    correct_action: "Configure BOTH the IAM policy and the bucket policy."
+
+  - id: P6-kms-s3-only
+    trigger_words: ["KMS", "encryption", "SSE-KMS", "access denied encrypted"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs fix S3 permissions but forget KMS key permissions are
+      separate and also required for SSE-KMS encrypted objects.
+    actual_behavior: >
+      SSE-KMS requires BOTH S3 permissions AND KMS key permissions.
+      Reader needs kms:Decrypt. Writer needs kms:GenerateDataKey.
+    common_false_claim: "Fix the bucket policy to resolve the access denied on encrypted objects."
+    correct_action: "Check BOTH S3 permissions and KMS key policy."
+
+  - id: P7-lifecycle-small-objects
+    trigger_words: ["lifecycle", "transition", "storage class", "IA"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs don't mention the 128 KB minimum for IA transitions.
+    actual_behavior: >
+      Objects smaller than 128 KB are NOT transitioned to Standard-IA,
+      One Zone-IA, or Intelligent-Tiering. They remain in Standard.
+    common_false_claim: "All objects will transition to IA after 30 days."
+    correct_action: "Objects < 128 KB stay in Standard. Only larger objects transition."
+
+  - id: P8-sequential-keys-throttling
+    trigger_words: ["sequential keys", "key naming", "partition", "throttling"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs repeat outdated advice about adding random prefixes. S3
+      automatically partitions by prefix since 2018.
+    actual_behavior: >
+      S3 automatically handles key distribution. Sequential key naming
+      no longer causes hot partitions. Rate limits are per-prefix:
+      5,500 GET and 3,500 PUT per second per prefix.
+    common_false_claim: "Add random prefixes to avoid hot partitions."
+    correct_action: "S3 handles partitioning automatically. Focus on spreading across prefixes only if hitting per-prefix limits."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

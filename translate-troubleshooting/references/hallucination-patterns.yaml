@@ -1,0 +1,113 @@
+# =============================================================================
+# Amazon Translate "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-unlimited-text
+    trigger_words: ["translate text", "real-time translation", "TranslateText"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention the 10KB text limit for real-time translation.
+    actual_behavior: >
+      TranslateText accepts up to 10,000 bytes UTF-8. Larger text
+      must use batch translation with S3 input.
+    common_false_claim: "Pass your entire document to TranslateText."
+    correct_action: "Check text size. Use batch translation for large documents."
+
+  - id: P2-all-language-pairs
+    trigger_words: ["language pair", "translate to", "source language", "target language"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume all language pairs are supported.
+    actual_behavior: >
+      Not all language pairs are directly supported. Some pairs
+      use English as pivot. Check ListLanguages for supported pairs.
+    common_false_claim: "Translate between any two languages."
+    correct_action: "Check supported language pairs. Use English as intermediate if needed."
+
+  - id: P3-terminology-case-insensitive
+    trigger_words: ["custom terminology", "terminology", "term matching"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume terminology matching is case-insensitive.
+      It's case-sensitive by default.
+    actual_behavior: >
+      Custom terminology matches are case-sensitive. "AWS" won't
+      match "aws". Terms must exactly match source text casing.
+    common_false_claim: "Add the term and it will match regardless of case."
+    correct_action: "Include all case variations in terminology. Match source text casing."
+
+  - id: P4-formality-universal
+    trigger_words: ["formality", "formal translation", "informal"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest formality works for all languages.
+      Only specific target languages support it.
+    actual_behavior: >
+      Formality setting works only for: de, es, fr, hi, it, ja,
+      nl, pl, pt. Other languages silently ignore the setting.
+    common_false_claim: "Set formality to FORMAL for any language."
+    correct_action: "Check if target language supports formality before using."
+
+  - id: P5-parallel-instant
+    trigger_words: ["parallel data", "custom model", "training data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest parallel data improves translation immediately.
+      Training takes time.
+    actual_behavior: >
+      Parallel data trains custom models. Training is triggered
+      when used in translation. Takes hours. May not improve all
+      language pairs equally.
+    common_false_claim: "Upload parallel data and translations improve immediately."
+    correct_action: "Create parallel data. Use in translation job. Wait for training. Evaluate quality."
+
+  - id: P6-batch-direct-text
+    trigger_words: ["batch translation", "translate many", "bulk translation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest passing text directly to batch jobs.
+      Batch requires S3 input.
+    actual_behavior: >
+      Batch translation requires S3 input and output locations.
+      One document per file. IAM role with S3 permissions required.
+    common_false_claim: "Pass an array of texts to batch translation."
+    correct_action: "Upload documents to S3. Configure IAM role. Start batch job."
+
+  - id: P7-auto-detect-free
+    trigger_words: ["auto detect", "detect language", "source auto"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest auto-detection has no cost. It adds latency
+      and may be inaccurate for short text.
+    actual_behavior: >
+      Auto language detection adds processing latency. May be
+      inaccurate for very short text. Specify source language
+      when known for better performance.
+    common_false_claim: "Always use auto-detect for source language."
+    correct_action: "Specify source language when known. Use auto only when language is truly unknown."
+
+  - id: P8-profanity-contextual
+    trigger_words: ["profanity", "profanity masking", "content filter"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest profanity masking is contextual.
+      It's simple pattern replacement.
+    actual_behavior: >
+      Profanity masking replaces detected profane words with
+      grawlix (?$#@$). It's pattern-based, not contextual.
+      May miss context-dependent profanity or flag non-profane uses.
+    common_false_claim: "Profanity masking understands context."
+    correct_action: "Enable profanity masking for basic filtering. Implement additional content review for edge cases."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"
