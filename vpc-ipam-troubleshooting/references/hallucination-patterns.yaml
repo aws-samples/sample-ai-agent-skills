@@ -1,0 +1,161 @@
+# =============================================================================
+# VPC IPAM "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+hallucination_patterns:
+
+  - id: P1-auto-assigns-cidrs
+    trigger_words: ["IPAM", "automatic CIDR", "auto-assign", "automatic allocation"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest IPAM automatically assigns CIDRs to VPCs.
+      IPAM provides pools for allocation but VPCs must explicitly
+      request CIDRs from pools.
+    actual_behavior: >
+      IPAM does not automatically assign CIDRs to VPCs. When
+      creating a VPC, you must specify the IPAM pool ID and
+      netmask length to allocate from IPAM. Existing VPCs with
+      manually assigned CIDRs are not automatically migrated to
+      IPAM management. IPAM provides the pool infrastructure
+      but allocation is explicit.
+    common_false_claim: "IPAM automatically assigns CIDRs to all VPCs in the organization."
+    correct_action: "Create VPCs with --ipv4-ipam-pool-id and --ipv4-netmask-length to allocate from IPAM pools."
+
+  - id: P2-global-pool
+    trigger_words: ["global pool", "any region", "single pool", "universal"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest a single pool can serve all regions. Pools
+      have a locale that restricts allocation to one region.
+    actual_behavior: >
+      Each IPAM pool has a locale (region) that determines where
+      allocations can be made. A top-level pool can have no locale
+      (for aggregation), but leaf pools that allocate to VPCs
+      must have a specific locale. You need regional pools for
+      each region where VPCs will be created.
+    common_false_claim: "Create one pool and allocate CIDRs in any region."
+    correct_action: "Create a hierarchy: top-level pool (no locale) with regional child pools (specific locale per region)."
+
+  - id: P3-instant-provisioning
+    trigger_words: ["instant", "immediate", "provision and allocate", "quick setup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CIDR provisioning to pools is instant.
+      Provisioning is asynchronous and takes time.
+    actual_behavior: >
+      After provisioning a CIDR to a pool (provision-ipam-pool-cidr),
+      the CIDR state is pending-provision. It transitions to
+      provisioned after validation. Attempting to allocate from
+      a pool with pending CIDRs will fail with insufficient
+      capacity. For BYOIP CIDRs, provisioning can take hours.
+    common_false_claim: "Provision a CIDR and immediately allocate from the pool."
+    correct_action: "Provision the CIDR, then poll get-ipam-pool-cidrs until state is 'provisioned' before allocating."
+
+  - id: P4-auto-cross-account
+    trigger_words: ["cross-account", "all accounts", "organization automatic", "member accounts"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest IPAM automatically sees all organization
+      accounts. Resource discovery must be configured and shared.
+    actual_behavior: >
+      IPAM requires resource discovery to be configured and
+      shared via AWS RAM (Resource Access Manager) for cross-account
+      visibility. The IPAM owner must create a resource discovery,
+      associate it with the IPAM, and share it with the organization.
+      Without this setup, IPAM only sees resources in its own account.
+    common_false_claim: "IPAM automatically discovers resources in all organization accounts."
+    correct_action: "Create resource discovery, associate with IPAM, share via RAM to the organization."
+
+  - id: P5-overlap-prevention
+    trigger_words: ["prevent overlap", "no overlap", "automatic prevention", "conflict detection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest IPAM prevents all CIDR overlaps. IPAM prevents
+      overlaps within its pools but cannot prevent manual CIDR
+      assignments outside IPAM.
+    actual_behavior: >
+      IPAM prevents CIDR overlaps for allocations made from IPAM
+      pools. However, VPCs created with manually specified CIDRs
+      (not from IPAM) can still overlap. IPAM detects these
+      overlaps through resource discovery but cannot prevent them.
+      Only allocations from IPAM pools are guaranteed non-overlapping.
+    common_false_claim: "IPAM prevents all CIDR overlaps in your organization."
+    correct_action: "Use IPAM pools for all VPC CIDR allocations. Monitor compliance for manually assigned CIDRs."
+
+  - id: P6-free-service
+    trigger_words: ["free", "no cost", "pricing", "IPAM cost"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention IPAM pricing or suggest it is free.
+      IPAM has per-resource monitoring charges.
+    actual_behavior: >
+      IPAM has two tiers: Free tier (basic pool management and
+      allocation) and Advanced tier (resource discovery, compliance
+      monitoring, public IP insights). The Advanced tier charges
+      per active IP address monitored per hour. For large
+      organizations, this can be significant. Public IP Insights
+      requires the Advanced tier.
+    common_false_claim: "IPAM is free to use for IP address management."
+    correct_action: "Review IPAM pricing tiers. Free tier covers basic allocation. Advanced tier charges per monitored IP."
+
+  - id: P7-delete-pool-safe
+    trigger_words: ["delete pool", "remove pool", "clean up pool"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deleting pools is safe. Pools with active
+      allocations cannot be deleted and child pools depend on
+      parent pools.
+    actual_behavior: >
+      IPAM pools cannot be deleted if they have active allocations
+      or child pools. You must first deallocate all CIDRs,
+      deprovision pool CIDRs, and delete child pools before
+      deleting a parent pool. Deleting a pool does not affect
+      VPCs that already have CIDRs allocated — they keep their
+      CIDRs but lose IPAM management.
+    common_false_claim: "Delete the pool to clean up IPAM configuration."
+    correct_action: "Deallocate CIDRs, deprovision pool CIDRs, delete child pools first, then delete the parent pool."
+
+  - id: P8-ipv6-same-as-ipv4
+    trigger_words: ["IPv6 IPAM", "IPv6 pool", "same as IPv4", "dual-stack"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest IPv6 IPAM management works identically to
+      IPv4. IPv6 has different allocation rules and sources.
+    actual_behavior: >
+      IPv6 IPAM pools have different characteristics. Amazon-provided
+      IPv6 CIDRs are /56 per VPC and come from Amazon's pool.
+      BYOIP IPv6 requires /48 minimum from RIR. IPv6 pools use
+      AddressFamily=ipv6 and have different netmask length
+      constraints. IPv6 does not support the same flexible
+      subnetting as IPv4 in IPAM.
+    common_false_claim: "IPv6 IPAM works exactly like IPv4 — just use larger addresses."
+    correct_action: "Create separate IPv6 pools with AddressFamily=ipv6. Understand IPv6-specific allocation rules."
+
+remediation_hallucinations:
+
+  - id: R1-deprovision-active-cidr
+    trigger_words: ["deprovision CIDR", "remove CIDR from pool", "free up space"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deprovisioning a CIDR from a pool while allocations exist
+      within that CIDR range will fail. Active allocations must
+      be released first. Forcing deprovision can orphan VPC CIDRs.
+    correct_approach: >
+      First release all allocations within the CIDR range using
+      release-ipam-pool-allocation. Then deprovision the CIDR
+      from the pool. Verify no VPCs depend on the CIDR range
+      before deprovisioning.
+
+  - id: R2-recreate-ipam
+    trigger_words: ["delete IPAM", "recreate IPAM", "start over"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Deleting an IPAM removes all scopes, pools, allocations,
+      and resource discovery associations. VPCs keep their CIDRs
+      but lose all IPAM management, compliance tracking, and
+      overlap detection. Recreating requires full reconfiguration.
+    correct_approach: >
+      Instead of deleting, modify the existing IPAM configuration.
+      Add or remove operating regions, update pool hierarchies,
+      and reconfigure resource discovery. Only delete IPAM as a
+      last resort after migrating all management to a new IPAM.

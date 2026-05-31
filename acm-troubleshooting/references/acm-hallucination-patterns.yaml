@@ -1,0 +1,122 @@
+# =============================================================================
+# ACM "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-cloudfront-any-region
+    trigger_words: ["cloudfront certificate", "cloudfront ssl", "cloudfront https"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume certificates from any region work with CloudFront.
+      CloudFront exclusively requires certificates in us-east-1.
+    actual_behavior: >
+      CloudFront can only use ACM certificates provisioned in us-east-1
+      (N. Virginia). Certificates in other regions do not appear in the
+      CloudFront console and cannot be associated with distributions.
+    common_false_claim: "Request the certificate in the same region as your CloudFront distribution."
+    correct_action: "Always provision certificates for CloudFront in us-east-1."
+
+  - id: P2-imported-cert-auto-renew
+    trigger_words: ["imported certificate", "import renewal", "imported cert expiry"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate ACM-issued and imported certificates. ACM only
+      auto-renews certificates it issued, not imported ones.
+    actual_behavior: >
+      Imported certificates are NOT managed by ACM for renewal. You must
+      track expiry and re-import the renewed certificate manually. Use
+      CloudWatch DaysToExpiry metric to monitor.
+    common_false_claim: "ACM will automatically renew your imported certificate."
+    correct_action: "Set up CloudWatch alarms on DaysToExpiry and re-import before expiry."
+
+  - id: P3-wildcard-covers-apex
+    trigger_words: ["wildcard", "*.example", "wildcard apex", "wildcard root"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume wildcard certificates cover everything including the
+      apex domain. Wildcards only cover one subdomain level.
+    actual_behavior: >
+      *.example.com covers www.example.com, api.example.com, etc. It
+      does NOT cover example.com (apex) or a.b.example.com (multi-level).
+      Add the apex domain as a SAN to cover both.
+    common_false_claim: "A wildcard certificate for *.example.com covers example.com."
+    correct_action: "Request the certificate with both *.example.com and example.com as SANs."
+
+  - id: P4-email-validation-auto-renew
+    trigger_words: ["email validation", "email validated", "email renewal"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may claim email-validated certificates auto-renew like
+      DNS-validated ones. They require manual approval every cycle.
+    actual_behavior: >
+      Email-validated certificates require manual approval for each
+      renewal. ACM sends emails 45 days before expiry. If not approved,
+      the certificate expires. DNS validation is preferred.
+    common_false_claim: "ACM will automatically renew your email-validated certificate."
+    correct_action: "Switch to DNS validation for auto-renewal, or ensure email approval process is in place."
+
+  - id: P5-remove-dns-cname-after-validation
+    trigger_words: ["remove CNAME", "delete validation record", "cleanup DNS"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cleaning up DNS validation CNAMEs after the certificate
+      is issued. The CNAME must persist for auto-renewal to work.
+    actual_behavior: >
+      ACM re-validates the DNS CNAME record during auto-renewal (60 days
+      before expiry). If the CNAME is removed, renewal fails silently
+      and the certificate expires.
+    common_false_claim: "You can remove the DNS validation CNAME after the certificate is issued."
+    correct_action: "Keep the DNS validation CNAME record permanently for auto-renewal."
+
+  - id: P6-private-ca-browser-trusted
+    trigger_words: ["private CA", "private certificate", "ACM-PCA browser"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest ACM Private CA for public websites. Private CA
+      certificates are not trusted by browsers without installing the
+      root CA certificate.
+    actual_behavior: >
+      ACM Private CA certificates are NOT in public trust stores. Browsers
+      will show certificate warnings. Use ACM public certificates for
+      public-facing services and Private CA only for internal services.
+    common_false_claim: "Use ACM Private CA to issue certificates for your public website."
+    correct_action: "Use ACM public certificates for public websites. Use Private CA only for internal services."
+
+  - id: P7-acm-export-public-cert
+    trigger_words: ["export certificate", "download certificate", "get private key"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest exporting public ACM certificates for use on
+      external servers. Public ACM certificates cannot be exported.
+    actual_behavior: >
+      Public ACM certificates cannot be exported or downloaded. They
+      can only be used with integrated AWS services (CloudFront, ELB,
+      API Gateway). Only ACM Private CA certificates can be exported.
+    common_false_claim: "Export the ACM certificate and install it on your EC2 instance."
+    correct_action: "Use ACM Private CA for exportable certificates, or use a third-party CA."
+
+  - id: P8-validation-retry-after-timeout
+    trigger_words: ["retry validation", "revalidate", "validation expired", "validation timeout"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest retrying validation on a timed-out certificate
+      request. Once validation times out (72 hours), the request
+      cannot be retried.
+    actual_behavior: >
+      Certificate requests that fail validation after 72 hours move to
+      FAILED status permanently. You must delete the failed certificate
+      and request a new one. The validation CNAME values will be different.
+    common_false_claim: "Retry the validation on the existing certificate request."
+    correct_action: "Delete the failed certificate and request a new one with fresh validation records."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,118 @@
+# =============================================================================
+# Amazon Q Developer "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-no-auth-needed
+    trigger_words: ["Q Developer setup", "install plugin", "start using"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Q Developer works without authentication.
+      AWS Builder ID or IAM Identity Center is required.
+    actual_behavior: >
+      Q Developer requires authentication via AWS Builder ID
+      (free tier) or IAM Identity Center (Pro tier). Without
+      sign-in, the plugin shows no suggestions.
+    common_false_claim: "Install the plugin and start getting code suggestions."
+    correct_action: "Install plugin, sign in with Builder ID or Identity Center, then use."
+
+  - id: P2-all-languages
+    trigger_words: ["supported languages", "any language", "language support"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Q Developer supports all programming languages equally.
+    actual_behavior: >
+      Q Developer has varying quality across languages. Best support
+      for Python, Java, JavaScript, TypeScript, C#, and Go. Other
+      languages have limited support. Security scanning supports
+      fewer languages than code suggestions.
+    common_false_claim: "Q Developer provides equal quality suggestions for all languages."
+    correct_action: "Check supported languages. Expect best results with primary languages."
+
+  - id: P3-perfect-security
+    trigger_words: ["security scan", "vulnerability detection", "code security"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest security scanning catches all vulnerabilities.
+    actual_behavior: >
+      Security scanning detects common vulnerability patterns but
+      is not a complete security solution. It has false positives
+      and false negatives. It supplements but does not replace
+      manual security review and other security tools.
+    common_false_claim: "Q Developer security scan ensures your code is secure."
+    correct_action: "Use as one layer of security. Combine with other tools and manual review."
+
+  - id: P4-unlimited-free
+    trigger_words: ["free tier", "pricing", "cost", "limits"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited free usage.
+    actual_behavior: >
+      Free tier (Builder ID) has monthly limits on code suggestions
+      and security scans. Pro tier (Identity Center) has higher
+      limits and additional features. Exceeding free tier limits
+      stops suggestions until the next month.
+    common_false_claim: "Q Developer is completely free with unlimited usage."
+    correct_action: "Check free tier limits. Upgrade to Pro for higher limits."
+
+  - id: P5-any-transformation
+    trigger_words: ["code transformation", "upgrade", "migration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Q Developer transforms any codebase.
+    actual_behavior: >
+      Code transformation supports specific migrations (e.g.,
+      Java 8 to Java 17). Not all languages or frameworks are
+      supported. Large codebases may require multiple passes.
+      Transformation results need manual review.
+    common_false_claim: "Transform any codebase to any target version."
+    correct_action: "Check supported transformations. Review results manually."
+
+  - id: P6-ide-agnostic
+    trigger_words: ["IDE support", "editor", "plugin"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest Q Developer works in any IDE.
+    actual_behavior: >
+      Q Developer supports VS Code, JetBrains IDEs, Visual Studio,
+      and AWS Cloud9. Not all IDEs are supported. Plugin versions
+      and features vary by IDE.
+    common_false_claim: "Use Q Developer in any code editor."
+    correct_action: "Check supported IDEs. Install correct plugin version."
+
+  - id: P7-customization-instant
+    trigger_words: ["customization", "custom model", "training"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest customization is instant.
+    actual_behavior: >
+      Customization requires uploading training data, building
+      a custom model, and deploying it. This takes hours. Training
+      data must meet quality and format requirements. Pro tier only.
+    common_false_claim: "Customize Q Developer instantly with your codebase."
+    correct_action: "Prepare training data. Submit customization job. Wait for completion."
+
+  - id: P8-replaces-developers
+    trigger_words: ["automated coding", "write code for me", "no coding needed"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs overstate Q Developer's autonomous coding ability.
+    actual_behavior: >
+      Q Developer assists developers with suggestions, not
+      autonomous code generation. Suggestions need review and
+      may contain errors. It augments developer productivity
+      but does not replace developer judgment.
+    common_false_claim: "Q Developer writes complete applications automatically."
+    correct_action: "Use as an assistant. Review all suggestions. Apply developer judgment."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,118 @@
+# =============================================================================
+# RDS PostgreSQL "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-postgresql-conf-editing
+    trigger_words: ["postgresql.conf", "pg_hba.conf", "ALTER SYSTEM", "pg_reload_conf"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on self-managed PostgreSQL suggest editing config files
+      or using ALTER SYSTEM. RDS does not allow filesystem access and
+      ALTER SYSTEM is restricted.
+    actual_behavior: >
+      Configuration is done via RDS parameter groups. ALTER SYSTEM is not
+      available on RDS PostgreSQL. Use aws rds modify-db-parameter-group.
+    common_false_claim: "Edit postgresql.conf to change shared_buffers."
+    correct_action: "Modify the RDS parameter group and reboot if the parameter is static."
+
+  - id: P2-true-superuser
+    trigger_words: ["superuser", "pg_read_file", "pg_ls_dir", "LOAD", "pg_execute_server_program"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume rds_superuser has full superuser capabilities. It is
+      a restricted role that cannot perform all superuser operations.
+    actual_behavior: >
+      rds_superuser can create extensions, manage roles, and terminate
+      backends, but cannot access the filesystem, load shared libraries
+      directly, or perform some superuser-only operations.
+    common_false_claim: "As superuser, run pg_read_file to check the config."
+    correct_action: "Use RDS parameter group APIs and logs API instead of filesystem access."
+
+  - id: P3-disable-autovacuum
+    trigger_words: ["disable autovacuum", "autovacuum=off", "turn off vacuum"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs sometimes suggest disabling autovacuum to reduce I/O during
+      bulk loads. This leads to bloat and transaction ID wraparound.
+    actual_behavior: >
+      Disabling autovacuum globally causes dead tuple accumulation, table
+      bloat, and eventually transaction ID wraparound which forces the
+      database into read-only mode.
+    common_false_claim: "Disable autovacuum during bulk data loads for better performance."
+    correct_action: "Tune autovacuum per-table if needed. Never disable globally. For bulk loads, VACUUM after completion."
+
+  - id: P4-in-place-pitr
+    trigger_words: ["restore in place", "in-place recovery", "rollback database"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest in-place restore from general database docs. RDS PITR
+      always creates a new instance.
+    actual_behavior: >
+      PITR via restore-db-instance-to-point-in-time creates a new DB
+      instance with a new endpoint.
+    common_false_claim: "Use PITR to roll back the database to a previous state."
+    correct_action: "Restore to a new instance, verify data, then redirect applications."
+
+  - id: P5-unlimited-shared-buffers
+    trigger_words: ["shared_buffers 75%", "shared_buffers 80%", "maximize shared_buffers"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs apply MySQL buffer pool logic (75% of memory) to PostgreSQL.
+      PostgreSQL uses OS page cache differently.
+    actual_behavior: >
+      PostgreSQL shared_buffers should be 25-40% of memory. The rest is
+      used by the OS page cache. Setting shared_buffers too high reduces
+      OS cache and degrades performance.
+    common_false_claim: "Set shared_buffers to 75% of instance memory like MySQL buffer pool."
+    correct_action: "Keep shared_buffers at 25-40% of memory. RDS default (~25%) is usually optimal."
+
+  - id: P6-any-extension-available
+    trigger_words: ["CREATE EXTENSION", "install extension", "all extensions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest installing any PostgreSQL extension. RDS only supports
+      a curated list of extensions.
+    actual_behavior: >
+      Only allowlisted extensions can be installed. Check with
+      SHOW rds.allowed_extensions. Some extensions require parameter
+      group changes (e.g., shared_preload_libraries for pg_stat_statements).
+    common_false_claim: "Install any PostgreSQL extension with CREATE EXTENSION."
+    correct_action: "Check rds.allowed_extensions first. Some need parameter group changes and reboot."
+
+  - id: P7-replication-slot-safe
+    trigger_words: ["replication slot", "logical slot", "slot safe"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs create replication slots without warning about WAL retention.
+      Inactive slots cause unbounded WAL growth.
+    actual_behavior: >
+      Replication slots prevent WAL from being recycled until consumed.
+      An inactive slot will cause WAL to fill storage. Monitor with
+      pg_replication_slots and set max_slot_wal_keep_size.
+    common_false_claim: "Create a replication slot — it's safe and self-managing."
+    correct_action: "Monitor replication slots. Drop inactive slots. Set max_slot_wal_keep_size as a safety limit."
+
+  - id: P8-encrypt-existing-instance
+    trigger_words: ["enable encryption", "encrypt existing", "add encryption"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling encryption on running instances. Encryption
+      must be set at creation time.
+    actual_behavior: >
+      You cannot encrypt an existing unencrypted RDS instance. Create an
+      encrypted snapshot copy, then restore from it.
+    common_false_claim: "Enable encryption on your existing RDS instance."
+    correct_action: "Create snapshot, copy with encryption, restore from encrypted copy."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

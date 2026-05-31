@@ -1,0 +1,155 @@
+# =============================================================================
+# AWS Snow Family "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-full-s3-api
+    trigger_words: ["S3 adapter", "S3 on Snow", "S3 API", "bucket policy"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest the S3 adapter on Snow devices supports the
+      full S3 API. It only supports a subset.
+    actual_behavior: >
+      The S3 adapter on Snow devices supports basic operations:
+      PutObject, GetObject, DeleteObject, ListObjects, HeadObject,
+      CreateBucket, HeadBucket, ListBuckets. Features like
+      versioning, lifecycle policies, bucket policies, S3 Select,
+      cross-region replication, and multipart upload (on some
+      models) are NOT supported.
+    common_false_claim: "Configure S3 bucket policies on the Snowball Edge S3 adapter."
+    correct_action: "Use only supported S3 API operations. Check device documentation for the specific model."
+
+  - id: P2-standard-ec2-instances
+    trigger_words: ["EC2 on Snow", "instance type", "launch instance", "AMI"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest standard EC2 instance types work on Snow
+      devices. Only sbe1 types are available.
+    actual_behavior: >
+      Snowball Edge supports sbe1 instance types only: sbe1.small,
+      sbe1.medium, sbe1.large, sbe1.xlarge, sbe1.2xlarge,
+      sbe1.4xlarge. Standard EC2 instance types (t3, m5, c5, etc.)
+      are not available. AMIs must be specifically created for
+      Snow devices using the create-ec2-images API.
+    common_false_claim: "Launch a t3.medium instance on your Snowball Edge device."
+    correct_action: "Use sbe1 instance types. Create Snow-compatible AMIs using snowball create-ec2-images."
+
+  - id: P3-remote-device-management
+    trigger_words: ["remote management", "manage device", "AWS console", "remote access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Snow devices can be fully managed remotely
+      through the AWS console. Most operations require local access.
+    actual_behavior: >
+      Snow device operations (unlock, configure network, start
+      services, manage EC2 instances) require the Snowball Edge
+      client running locally with network access to the device.
+      The AWS console shows job status but cannot control the
+      device directly. OTA updates are the exception — they can
+      be initiated remotely but require device internet access.
+    common_false_claim: "Manage your Snowball Edge device from the AWS console."
+    correct_action: "Use the Snowball Edge client locally. Ensure network access to device IP on port 8243."
+
+  - id: P4-unlimited-transfer-speed
+    trigger_words: ["transfer speed", "fast transfer", "data migration", "throughput"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Snow devices always transfer data at maximum
+      speed. Speed depends on network interface and configuration.
+    actual_behavior: >
+      Transfer speed is limited by the network interface: RJ45
+      (1 Gbps), SFP+ (10 Gbps), QSFP28 (25/40/50/100 Gbps).
+      Actual throughput depends on file sizes (many small files
+      are slower), network configuration, and whether encryption
+      is enabled. The S3 adapter adds overhead compared to NFS.
+    common_false_claim: "Snowball Edge transfers data at 100 Gbps."
+    correct_action: "Use the fastest available interface. Batch small files. Use parallel transfers for throughput."
+
+  - id: P5-cluster-modification
+    trigger_words: ["cluster", "add device", "remove device", "cluster resize"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Snow clusters can be dynamically resized by
+      adding or removing devices. Clusters are immutable.
+    actual_behavior: >
+      Snowball Edge clusters require a minimum of 5 devices and
+      are created as a fixed group. You cannot add or remove
+      devices from an existing cluster. If a device fails, the
+      cluster continues with reduced capacity. To change cluster
+      size, you must create a new cluster.
+    common_false_claim: "Add another Snowball Edge device to your existing cluster."
+    correct_action: "Create a new cluster with the desired number of devices. Migrate data from the old cluster."
+
+  - id: P6-snowcone-same-as-snowball
+    trigger_words: ["Snowcone", "small Snowball", "portable", "edge device"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat Snowcone as a smaller Snowball Edge with the
+      same capabilities. Snowcone has significant limitations.
+    actual_behavior: >
+      Snowcone has 14 TB storage (vs 80-210 TB for Snowball Edge),
+      limited compute (2 vCPUs, 4 GB RAM), supports DataSync
+      agent for transfer, and has fewer supported services. It
+      does NOT support clustering, has limited EC2 capability,
+      and uses a different network interface (RJ45 only on some
+      models). It is designed for edge data collection, not
+      large-scale data migration.
+    common_false_claim: "Use Snowcone for the same workloads as Snowball Edge, just smaller."
+    correct_action: "Check Snowcone-specific capabilities. Use Snowball Edge for compute-heavy or large-scale workloads."
+
+  - id: P7-manifest-reuse
+    trigger_words: ["manifest", "unlock code", "unlock device", "reuse manifest"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manifests and unlock codes can be reused
+      across jobs or devices. They are job-specific.
+    actual_behavior: >
+      Each Snow Family job generates a unique manifest file and
+      unlock code. The manifest is cryptographically tied to the
+      specific job and device. You cannot use one job's manifest
+      to unlock another job's device. Manifests expire when the
+      job is completed or cancelled.
+    common_false_claim: "Use the same manifest file to unlock multiple Snowball devices."
+    correct_action: "Download the correct manifest for each specific job using get-job-manifest."
+
+  - id: P8-automatic-data-import
+    trigger_words: ["data import", "automatic import", "S3 import", "return device"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest data import to S3 happens instantly when the
+      device is returned. Import takes time and can fail.
+    actual_behavior: >
+      After the device is returned to AWS, data import to S3
+      takes time depending on data volume. Import status can be
+      tracked via the job status. Import can fail if the target
+      S3 bucket doesn't exist, permissions are wrong, or KMS
+      key is unavailable. Always monitor job status after return.
+    common_false_claim: "Data is immediately available in S3 when you return the device."
+    correct_action: "Monitor job status after device return. Verify S3 bucket and permissions before shipping."
+
+remediation_hallucinations:
+
+  - id: R1-factory-reset
+    false_fix: "Factory reset the Snowball Edge device to fix issues."
+    why_wrong: >
+      Snow devices do not have a user-accessible factory reset.
+      The device is managed by AWS. If the device is malfunctioning,
+      it must be returned to AWS for replacement. Attempting to
+      physically reset or modify the device may trigger tamper
+      protection and make data irrecoverable.
+    correct_approach: >
+      Contact AWS Support for device issues. If the device is
+      unresponsive, return it and request a replacement job.
+
+  - id: R2-bypass-encryption
+    false_fix: "Disable encryption to speed up data transfer."
+    why_wrong: >
+      Encryption on Snow devices is mandatory and cannot be
+      disabled. All data is encrypted with KMS keys. Attempting
+      to bypass encryption is not possible and would violate
+      AWS security requirements.
+    correct_approach: >
+      Optimize transfer speed by using the fastest network
+      interface, batching small files, and using parallel
+      transfer streams. Encryption overhead is minimal.

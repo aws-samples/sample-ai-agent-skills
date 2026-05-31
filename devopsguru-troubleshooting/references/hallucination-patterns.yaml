@@ -1,0 +1,115 @@
+# =============================================================================
+# Amazon DevOps Guru "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-instant-detection
+    trigger_words: ["enable DevOps Guru", "start monitoring", "detect anomalies"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest instant anomaly detection after enabling.
+      DevOps Guru needs a learning period.
+    actual_behavior: >
+      After enabling coverage, DevOps Guru needs hours to days
+      to learn normal behavior. ML models build baselines from
+      CloudWatch metrics. No anomalies during learning period.
+    common_false_claim: "Enable DevOps Guru and it immediately detects issues."
+    correct_action: "Enable coverage. Wait for learning period. Then anomalies are detected."
+
+  - id: P2-auto-coverage
+    trigger_words: ["resource coverage", "monitor resources", "all resources"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all resources are automatically monitored.
+    actual_behavior: >
+      Resource coverage must be explicitly configured via
+      CloudFormation stacks, tags, or account-wide setting.
+      Uncovered resources generate no insights.
+    common_false_claim: "DevOps Guru monitors all AWS resources automatically."
+    correct_action: "Configure coverage via stacks, tags, or account-wide. Verify coverage."
+
+  - id: P3-replaces-monitoring
+    trigger_words: ["replace CloudWatch", "monitoring solution", "alerting"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DevOps Guru replaces CloudWatch.
+    actual_behavior: >
+      DevOps Guru complements CloudWatch by adding ML-based
+      anomaly detection. It uses CloudWatch metrics as input.
+      It does not replace CloudWatch alarms or dashboards.
+    common_false_claim: "Use DevOps Guru instead of CloudWatch for monitoring."
+    correct_action: "Use alongside CloudWatch. DevOps Guru adds ML insights on top."
+
+  - id: P4-auto-remediation
+    trigger_words: ["auto fix", "automatic remediation", "self-healing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DevOps Guru auto-remediates issues.
+    actual_behavior: >
+      DevOps Guru provides insights and recommendations but
+      does NOT automatically remediate. Operators must review
+      insights and take action. SSM Automation can be triggered
+      manually based on insights.
+    common_false_claim: "DevOps Guru automatically fixes detected issues."
+    correct_action: "Review insights. Follow recommendations. Implement fixes manually."
+
+  - id: P5-free-service
+    trigger_words: ["pricing", "cost", "free"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs understate DevOps Guru costs.
+    actual_behavior: >
+      DevOps Guru charges based on analyzed resources and API
+      calls. Costs scale with the number of monitored resources
+      and metric volume. Free tier covers limited resources.
+    common_false_claim: "DevOps Guru is free for small environments."
+    correct_action: "Use cost estimation API. Monitor costs. Start with limited coverage."
+
+  - id: P6-all-services
+    trigger_words: ["supported services", "any AWS service", "coverage"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest DevOps Guru monitors all AWS services.
+    actual_behavior: >
+      DevOps Guru supports specific AWS services including EC2,
+      RDS, Lambda, DynamoDB, ECS, and others. Not all services
+      are supported. Check documentation for supported services.
+    common_false_claim: "DevOps Guru monitors any AWS service."
+    correct_action: "Check supported services list. Configure coverage for supported resources."
+
+  - id: P7-simple-thresholds
+    trigger_words: ["anomaly threshold", "set threshold", "alert threshold"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest configurable thresholds like CloudWatch alarms.
+    actual_behavior: >
+      DevOps Guru uses ML-based anomaly detection, not simple
+      thresholds. You cannot set specific threshold values.
+      The ML model determines what is anomalous based on
+      historical patterns.
+    common_false_claim: "Set a CPU threshold of 80% for anomaly detection."
+    correct_action: "DevOps Guru uses ML, not thresholds. Trust the model. Review insights."
+
+  - id: P8-real-time-insights
+    trigger_words: ["real-time", "instant insight", "immediate detection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest real-time insight generation.
+    actual_behavior: >
+      Insights are generated with some delay as the ML model
+      processes metric data. Detection latency varies from
+      minutes to hours depending on the anomaly pattern.
+    common_false_claim: "DevOps Guru detects issues in real-time."
+    correct_action: "Expect detection delay. Use CloudWatch alarms for real-time alerting."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,135 @@
+# =============================================================================
+# AWS Chatbot "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-cli-workspace-auth
+    trigger_words: ["authorize workspace CLI", "create workspace API", "automate workspace setup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest workspace authorization can be done via CLI or API.
+      This requires manual console interaction with OAuth flow.
+    actual_behavior: >
+      Slack workspace authorization and Microsoft Teams tenant consent
+      must be completed in the AWS Console. The process involves an
+      OAuth flow with Slack or Azure AD consent with Microsoft. This
+      cannot be automated via CLI, API, or CloudFormation. It is a
+      one-time manual step per workspace/tenant.
+    common_false_claim: "Run aws chatbot authorize-slack-workspace to connect your Slack workspace."
+    correct_action: "Go to AWS Console → AWS Chatbot → Configure new client → Complete the OAuth authorization flow."
+
+  - id: P2-custom-notification-format
+    trigger_words: ["custom notification", "notification template", "format notification", "customize card"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest customizing notification card formats. Chatbot
+      manages notification formatting internally.
+    actual_behavior: >
+      AWS Chatbot formats notification cards based on the source
+      service. You cannot customize the card layout, fields, or
+      formatting. The notification includes service-specific details
+      (alarm name, state, metric for CloudWatch; finding title,
+      severity for Security Hub) but the format is fixed.
+    common_false_claim: "Create a custom notification template for your Chatbot alerts."
+    correct_action: "Use the default Chatbot notification format. For custom formatting, use Lambda to process events and send custom Slack/Teams messages directly."
+
+  - id: P3-all-services-supported
+    trigger_words: ["any AWS service", "all notifications", "universal notifications"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Chatbot can deliver notifications from any AWS
+      service. Only specific services are supported.
+    actual_behavior: >
+      Chatbot supports notifications from: CloudWatch Alarms, AWS
+      Health events, Security Hub findings, AWS Budgets alerts,
+      GuardDuty findings, and events routed through EventBridge to
+      SNS. Services not in this list require custom integration
+      (e.g., Lambda processing events and posting to Slack/Teams).
+    common_false_claim: "Configure Chatbot to receive notifications from any AWS service."
+    correct_action: "Check if the service is supported. For unsupported services, use EventBridge → SNS → Chatbot or custom Lambda integration."
+
+  - id: P4-any-cli-command
+    trigger_words: ["any CLI command", "all commands", "run anything"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any AWS CLI command can be run in chat. Only
+      specific commands are supported with restrictions.
+    actual_behavior: >
+      Chatbot supports a subset of AWS CLI commands. Read-only
+      commands (describe, list, get) are allowed by default.
+      Mutating commands require explicit guardrail policy approval.
+      Some commands are never allowed (IAM credential operations,
+      etc.). Commands must use the @aws prefix syntax.
+    common_false_claim: "You can run any AWS CLI command directly in Slack with @aws."
+    correct_action: "Check Chatbot documentation for supported commands. Configure guardrail policies for mutating commands."
+
+  - id: P5-guardrail-equals-role
+    trigger_words: ["guardrail role", "single permission", "one policy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate the channel IAM role with guardrail policies.
+      These are separate permission layers.
+    actual_behavior: >
+      The channel IAM role defines the maximum permissions available
+      for CLI commands. Guardrail policies act as an additional
+      boundary that further restricts what actions are allowed. Both
+      must permit an action for it to succeed. The effective
+      permission is the intersection of the role and guardrail policy.
+    common_false_claim: "Set the channel role to allow the command and it will work."
+    correct_action: "Verify both the channel IAM role AND the guardrail policy allow the action."
+
+  - id: P6-direct-sns-delivery
+    trigger_words: ["direct delivery", "no SNS needed", "chatbot endpoint"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest notifications can be sent directly to Chatbot
+      without SNS. SNS is required as the delivery mechanism.
+    actual_behavior: >
+      All Chatbot notifications flow through SNS topics. AWS services
+      publish to SNS topics, and Chatbot subscribes to those topics.
+      There is no direct API to send notifications to Chatbot channels.
+      The SNS topic must be configured in the channel configuration.
+    common_false_claim: "Send notifications directly to the Chatbot channel endpoint."
+    correct_action: "Configure SNS topics in the channel configuration and ensure services publish to those topics."
+
+  - id: P7-cross-account-simple
+    trigger_words: ["cross account notification", "other account alerts"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs oversimplify cross-account notification setup. It requires
+      SNS cross-account subscription configuration.
+    actual_behavior: >
+      Cross-account notifications require the SNS topic in the source
+      account to allow subscriptions from the Chatbot account, or
+      the Chatbot channel must be configured in the same account as
+      the SNS topic. Cross-account SNS subscription requires topic
+      policy updates.
+    common_false_claim: "Just point the Chatbot channel to the SNS topic in another account."
+    correct_action: "Update the SNS topic policy to allow cross-account subscription, or configure Chatbot in the source account."
+
+  - id: P8-teams-no-admin
+    trigger_words: ["Teams setup easy", "Teams no admin", "self-service Teams"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest Teams setup is simple. It requires Azure AD
+      tenant admin consent.
+    actual_behavior: >
+      Microsoft Teams integration requires an Azure AD tenant
+      administrator to grant consent for the AWS Chatbot app. Regular
+      users cannot complete this step. Without tenant-level consent,
+      no Teams channel configurations can be created. This is a
+      prerequisite before any channel setup.
+    common_false_claim: "Any user can set up AWS Chatbot in their Teams channel."
+    correct_action: "Request Azure AD tenant admin consent for the AWS Chatbot app before configuring channels."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

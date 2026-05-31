@@ -1,0 +1,118 @@
+# =============================================================================
+# Amazon Comprehend "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-direct-model-invoke
+    trigger_words: ["custom classifier", "custom model", "invoke model"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest invoking custom models directly. Custom models
+      require an endpoint for inference.
+    actual_behavior: >
+      Custom classifiers and entity recognizers need an endpoint
+      created via CreateEndpoint. Endpoints are billed while active.
+      Use ClassifyDocument with endpoint ARN for inference.
+    common_false_claim: "Call ClassifyDocument with the classifier ARN."
+    correct_action: "Create endpoint first. Use endpoint ARN for ClassifyDocument."
+
+  - id: P2-unlimited-text
+    trigger_words: ["analyze text", "detect entities", "large document"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention text size limits for real-time APIs.
+    actual_behavior: >
+      Real-time APIs accept up to 100KB UTF-8 text. For larger
+      volumes, use async batch jobs with S3 input. BatchDetect*
+      APIs accept up to 25 documents per call.
+    common_false_claim: "Pass your entire document to DetectEntities."
+    correct_action: "Check text size. Use batch APIs for large volumes. Split text if needed."
+
+  - id: P3-pii-all-languages
+    trigger_words: ["PII detection", "detect PII", "personal information"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest PII detection works equally in all languages.
+      English has the most comprehensive PII type support.
+    actual_behavior: >
+      PII detection supports all entity types in English. Other
+      languages have limited PII type coverage. Check language-
+      specific support before relying on detection.
+    common_false_claim: "Detect all PII types in any supported language."
+    correct_action: "Check PII type support for target language. Use English for comprehensive PII detection."
+
+  - id: P4-no-language-needed
+    trigger_words: ["language code", "detect language", "language parameter"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs forget the language code parameter. Most APIs require it.
+    actual_behavior: >
+      Most Comprehend APIs require a LanguageCode parameter. Use
+      DetectDominantLanguage first if unknown. Wrong language code
+      produces poor results. Not all languages supported by all APIs.
+    common_false_claim: "Comprehend automatically detects the language."
+    correct_action: "Detect language first with DetectDominantLanguage. Pass correct language code."
+
+  - id: P5-classifier-instant
+    trigger_words: ["train classifier", "create classifier", "classification model"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest classifiers are ready immediately after training.
+      Training takes time and endpoint creation is separate.
+    actual_behavior: >
+      Classifier training can take minutes to hours. After training,
+      create an endpoint for inference. Endpoint creation takes
+      additional time. Both steps must complete before inference.
+    common_false_claim: "Train the classifier and start classifying documents."
+    correct_action: "Train classifier. Wait for TRAINED status. Create endpoint. Wait for IN_SERVICE. Then classify."
+
+  - id: P6-sentiment-binary
+    trigger_words: ["sentiment", "positive negative", "sentiment score"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat sentiment as binary (positive/negative).
+      Comprehend returns four sentiment categories.
+    actual_behavior: >
+      DetectSentiment returns scores for POSITIVE, NEGATIVE, NEUTRAL,
+      and MIXED. Scores are probabilities summing to ~1.0. MIXED
+      indicates text with both positive and negative sentiment.
+    common_false_claim: "Check if sentiment is positive or negative."
+    correct_action: "Handle all four categories. Check dominant sentiment score confidence."
+
+  - id: P7-topic-few-docs
+    trigger_words: ["topic modeling", "topics", "StartTopicsDetectionJob"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest topic modeling works with few documents.
+      Meaningful results require substantial corpus.
+    actual_behavior: >
+      Topic modeling needs minimum documents (1000+ recommended).
+      Each document should have substantial text. Very small
+      corpora produce meaningless topics.
+    common_false_claim: "Run topic modeling on 10 documents."
+    correct_action: "Use 1000+ documents. Ensure documents have substantial text content."
+
+  - id: P8-batch-direct-text
+    trigger_words: ["batch job", "async processing", "start job"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest passing text directly to batch jobs.
+      Batch jobs require S3 input.
+    actual_behavior: >
+      Async batch jobs (Start*Job) require S3 input and output
+      locations. Documents must be uploaded to S3 first. IAM
+      data access role must have S3 permissions.
+    common_false_claim: "Pass text directly to StartEntitiesDetectionJob."
+    correct_action: "Upload documents to S3. Pass S3 URI to batch job. Configure IAM role."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

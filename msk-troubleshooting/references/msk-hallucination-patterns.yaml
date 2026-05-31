@@ -1,0 +1,163 @@
+# =============================================================================
+# Amazon MSK "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-storage-auto-scaling
+    trigger_words: ["storage full", "disk full", "broker storage", "auto-scaling storage", "KafkaDataLogsDiskUsed"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume MSK broker storage auto-scales like many other AWS
+      managed services. MSK provisioned clusters do NOT auto-scale
+      storage by default — it must be explicitly enabled.
+    actual_behavior: >
+      MSK provisioned clusters have fixed broker storage by default.
+      Auto-scaling must be explicitly enabled via console, CLI, or API.
+      When enabled, storage scales in 10 GiB increments with a cooldown
+      period. Storage can only increase, never decrease. Without auto-
+      scaling, brokers become unhealthy when disk usage reaches 100%.
+      The KafkaDataLogsDiskUsed metric should be monitored and alarmed
+      at 85%.
+    common_false_claim: "MSK automatically scales broker storage when disk usage is high."
+    correct_action: "Verify auto-scaling is enabled. If not, enable it or manually increase storage. Storage cannot be decreased."
+
+  - id: P2-authentication-ports
+    trigger_words: ["connection refused", "bootstrap broker", "auth port", "9092", "9094", "9096", "9098", "connection timeout"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs often suggest a single default port for all MSK connections
+      or confuse which port maps to which authentication method. Each
+      auth method has a dedicated port.
+    actual_behavior: >
+      MSK uses different ports for each authentication method: 9092 for
+      plaintext (unauthenticated TLS disabled), 9094 for TLS/mTLS,
+      9096 for SASL/SCRAM over TLS, and 9098 for IAM over TLS. Using
+      the wrong port causes connection failures. The get-bootstrap-brokers
+      API returns separate connection strings for each enabled method.
+      A cluster can enable multiple auth methods simultaneously. Inter-
+      broker communication uses port 9093.
+    common_false_claim: "Connect to your MSK cluster on port 9092 with IAM authentication."
+    correct_action: "Use port 9098 for IAM, 9096 for SASL/SCRAM, 9094 for mTLS. Check get-bootstrap-brokers for correct endpoints."
+
+  - id: P3-partition-count-decrease
+    trigger_words: ["reduce partitions", "decrease partitions", "partition count", "too many partitions", "shrink partitions"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest reducing partition count as a solution to
+      over-partitioned topics. Kafka does not support decreasing
+      partition count — it is a one-way operation.
+    actual_behavior: >
+      Partition count can only be increased, never decreased. This is
+      a fundamental Kafka limitation, not MSK-specific. Increasing
+      partitions also changes key-based message ordering because the
+      key-to-partition hash mapping changes. To effectively reduce
+      partitions, you must create a new topic with fewer partitions
+      and migrate producers/consumers. The old topic can then be
+      deleted after migration is complete.
+    common_false_claim: "Reduce the partition count on your topic to improve performance."
+    correct_action: "Create a new topic with the desired partition count and migrate producers/consumers."
+
+  - id: P4-min-insync-replicas
+    trigger_words: ["min.insync.replicas", "replication factor", "acks=all", "NotEnoughReplicasException", "write failures"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse replication factor with min.insync.replicas or
+      recommend setting them to the same value, which causes write
+      failures when any single broker is unavailable.
+    actual_behavior: >
+      Replication factor determines how many copies of each partition
+      exist. min.insync.replicas determines the minimum number of
+      replicas that must acknowledge a write when acks=all. If
+      min.insync.replicas equals the replication factor, losing one
+      broker means writes fail with NotEnoughReplicasException. The
+      recommended production setting is replication factor=3 with
+      min.insync.replicas=2, allowing one broker failure while
+      maintaining write availability.
+    common_false_claim: "Set min.insync.replicas equal to your replication factor for maximum durability."
+    correct_action: "Use replication factor=3 and min.insync.replicas=2. Never set min.insync.replicas >= replication factor."
+
+  - id: P5-serverless-limits
+    trigger_words: ["MSK Serverless", "serverless Kafka", "serverless throughput", "serverless partitions", "serverless topics"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs apply provisioned MSK cluster capabilities and limits to
+      Serverless, which has a fundamentally different architecture
+      with stricter limits and fewer configuration options.
+    actual_behavior: >
+      MSK Serverless has hard limits: max 5 consumer groups per
+      partition, max 120 MB/s ingress and 360 MB/s egress per cluster,
+      max 200 partitions per topic, max 50 topics per cluster.
+      Serverless supports IAM authentication only — no SASL/SCRAM or
+      mTLS. No custom broker configurations. No storage management
+      (fully managed). No multi-VPC connectivity. Serverless pricing
+      is based on data in/out and partition-hours, not instance hours.
+    common_false_claim: "Configure SASL/SCRAM authentication on your MSK Serverless cluster."
+    correct_action: "MSK Serverless supports IAM auth only. For SASL/SCRAM or mTLS, use provisioned MSK."
+
+  - id: P6-storage-shrink
+    trigger_words: ["reduce storage", "shrink volume", "decrease disk", "downsize storage", "storage too large"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest reducing broker storage volume size to save
+      costs. MSK broker storage can only be increased, never decreased.
+      This is an EBS limitation applied to MSK.
+    actual_behavior: >
+      MSK broker EBS volumes can only be scaled up, never down. This
+      applies to both manual scaling and auto-scaling. Once storage is
+      increased to 1000 GiB, it cannot be reduced to 500 GiB. To
+      manage data growth, use topic retention policies (retention.ms,
+      retention.bytes) and log compaction (cleanup.policy=compact).
+      The minimum storage per broker is 1 GiB and maximum is 16384
+      GiB (16 TiB).
+    common_false_claim: "Reduce your broker storage from 1 TB to 500 GB to save costs."
+    correct_action: "Storage cannot be decreased. Use retention policies to manage data growth. Plan initial storage carefully."
+
+  - id: P7-msk-connect-plugins
+    trigger_words: ["MSK Connect", "Kafka Connect", "connector plugin", "connector JAR", "custom plugin"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest directly uploading connector JARs or assume
+      all community Kafka Connect plugins work on MSK Connect without
+      modification.
+    actual_behavior: >
+      MSK Connect requires connector plugins to be uploaded to S3 as
+      ZIP or JAR files, then registered as custom plugins via the MSK
+      Connect API or console. You cannot directly upload JARs to MSK
+      Connect workers. Not all community connectors are compatible —
+      some require specific dependencies, classpath configurations,
+      or modifications. MSK Connect workers have specific resource
+      limits and run in a managed environment. Plugin creation can
+      take several minutes.
+    common_false_claim: "Upload your connector JAR directly to MSK Connect to deploy it."
+    correct_action: "Upload plugin to S3, create a custom plugin resource, then create a connector referencing the plugin."
+
+  - id: P8-cluster-config-rolling-restart
+    trigger_words: ["update configuration", "change broker config", "modify cluster", "Kafka version upgrade", "rolling restart"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest configuration changes as quick fixes without
+      mentioning that they trigger rolling broker restarts, causing
+      temporary disruption.
+    actual_behavior: >
+      Updating MSK cluster configuration (broker config properties,
+      instance type, Kafka version, security settings) triggers a
+      rolling restart of all brokers. During rolling restarts, brokers
+      are restarted one at a time, causing temporary under-replication
+      and potential producer/consumer disruption. Updates can take
+      15-30+ minutes depending on cluster size. Configuration updates
+      cannot be cancelled once started. Some changes (like enabling
+      encryption in transit) require cluster recreation.
+    common_false_claim: "Just update the broker configuration — changes apply instantly with no downtime."
+    correct_action: "Plan configuration changes during maintenance windows. Expect rolling restarts and temporary under-replication."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

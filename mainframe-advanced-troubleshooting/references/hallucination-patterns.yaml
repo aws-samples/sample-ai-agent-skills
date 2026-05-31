@@ -1,0 +1,157 @@
+# =============================================================================
+# AWS Mainframe Modernization Advanced "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-blu-age-runs-cobol
+    trigger_words: ["Blu Age", "refactoring", "COBOL on AWS", "code conversion"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Blu Age runs COBOL natively on AWS. Blu Age
+      converts COBOL to Java. The resulting application is Java,
+      not COBOL.
+    actual_behavior: >
+      Blu Age is an automated refactoring engine that converts
+      COBOL source code to Java. The output is a Java application
+      that runs on a Java runtime. The original COBOL is not
+      executed. Debugging requires Java skills, not COBOL skills.
+      The converted code may have different performance characteristics
+      than the original COBOL.
+    common_false_claim: "Blu Age runs your COBOL programs natively on AWS."
+    correct_action: "Blu Age converts COBOL to Java. Debug the Java output. Use Micro Focus for native COBOL execution."
+
+  - id: P2-micro-focus-converts-code
+    trigger_words: ["Micro Focus", "replatforming", "code conversion", "COBOL migration"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Micro Focus converts COBOL to another language.
+      Micro Focus runs COBOL natively without code conversion.
+    actual_behavior: >
+      Micro Focus replatforming runs COBOL programs natively on
+      AWS without converting them to another language. The COBOL
+      source code is compiled and executed by the Micro Focus
+      runtime. No code conversion occurs. This preserves exact
+      mainframe behavior but requires COBOL skills for maintenance.
+    common_false_claim: "Micro Focus converts your COBOL to modern languages."
+    correct_action: "Micro Focus runs COBOL natively. No conversion occurs. Maintain COBOL skills for the replatformed application."
+
+  - id: P3-instant-migration
+    trigger_words: ["migrate mainframe", "quick migration", "automated migration", "one-click"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest mainframe migration is a quick, automated
+      process. It is a complex, multi-phase effort.
+    actual_behavior: >
+      Mainframe modernization is a multi-phase process: assessment,
+      planning, code analysis, data migration, application migration,
+      testing, and cutover. Each phase can take weeks to months.
+      Data migration alone requires EBCDIC conversion, copybook
+      parsing, and integrity validation. There is no one-click
+      migration.
+    common_false_claim: "Use AWS Mainframe Modernization to automatically migrate your mainframe in days."
+    correct_action: "Plan a phased migration. Start with assessment. Budget months for complex applications."
+
+  - id: P4-all-mainframe-features
+    trigger_words: ["CICS", "IMS", "DB2", "JES", "mainframe features"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all mainframe subsystems are supported.
+      M2 supports specific patterns, not all mainframe features.
+    actual_behavior: >
+      AWS M2 supports CICS (Micro Focus only), batch (JCL),
+      and common data access patterns. IMS (hierarchical database
+      and transaction manager), JES2/JES3 (job entry subsystems),
+      and some specialized mainframe features may require custom
+      solutions. Not all mainframe capabilities have direct M2
+      equivalents.
+    common_false_claim: "AWS M2 supports all mainframe subsystems including IMS and JES."
+    correct_action: "Verify specific subsystem support. Plan custom solutions for unsupported features."
+
+  - id: P5-same-performance
+    trigger_words: ["performance", "same speed", "equivalent performance", "benchmark"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modernized applications have identical
+      performance to mainframe originals.
+    actual_behavior: >
+      Performance characteristics change during modernization.
+      Blu Age Java output may have different CPU and memory
+      profiles than original COBOL. Micro Focus replatformed
+      applications may have different I/O patterns on AWS storage.
+      Batch job timing changes due to different storage and
+      compute characteristics. Performance testing is essential.
+    common_false_claim: "Your modernized application will run at the same speed as on the mainframe."
+    correct_action: "Conduct thorough performance testing. Tune JVM settings (Blu Age) or runtime config (Micro Focus). Expect differences."
+
+  - id: P6-automatic-data-conversion
+    trigger_words: ["data migration", "VSAM", "EBCDIC", "dataset conversion"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest data migration is fully automatic with no
+      manual intervention required.
+    actual_behavior: >
+      Data migration requires: 1) Copybook analysis for record
+      layouts, 2) EBCDIC to ASCII conversion with correct code
+      pages, 3) Packed decimal and binary field handling, 4)
+      VSAM key structure preservation, 5) Data integrity
+      validation. Each step can fail and requires manual
+      verification. Incorrect copybooks cause silent data
+      corruption.
+    common_false_claim: "AWS automatically converts all your mainframe data to cloud-native formats."
+    correct_action: "Validate copybooks. Test EBCDIC conversion with sample data. Verify data integrity after migration."
+
+  - id: P7-no-mainframe-knowledge
+    trigger_words: ["no COBOL needed", "cloud native", "modern skills only"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest mainframe knowledge is not needed after
+      modernization.
+    actual_behavior: >
+      Mainframe knowledge remains essential. Blu Age: understanding
+      original COBOL logic helps debug converted Java. Micro Focus:
+      COBOL skills are required for ongoing maintenance. Both:
+      understanding JCL, CICS, VSAM, and mainframe data formats
+      is needed for troubleshooting data issues and batch job
+      failures.
+    common_false_claim: "After modernization, you only need cloud-native skills."
+    correct_action: "Retain mainframe expertise. Cross-train teams on both mainframe and cloud technologies."
+
+  - id: P8-environment-engine-swap
+    trigger_words: ["change engine", "switch from Blu Age", "convert to Micro Focus"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest you can change the engine type of an existing
+      runtime environment.
+    actual_behavior: >
+      Runtime environment engine type (bluage or microfocus) is
+      set at creation time and cannot be changed. To switch
+      engines, you must create a new environment with the desired
+      engine type and redeploy applications. Applications built
+      for one engine are not compatible with the other.
+    common_false_claim: "Switch your environment from Micro Focus to Blu Age to try refactoring."
+    correct_action: "Create a new environment with the desired engine type. Rebuild and redeploy the application."
+
+remediation_hallucinations:
+
+  - id: R1-debug-cobol-in-blu-age
+    false_remediation: "Debug the COBOL source code in the Blu Age runtime to fix the application error."
+    why_wrong: >
+      Blu Age converts COBOL to Java. The runtime executes Java,
+      not COBOL. COBOL source is not available in the runtime.
+    correct_approach: >
+      Debug the generated Java code. Use Java debugging tools
+      and logs. Reference the original COBOL for business logic
+      understanding, but fix issues in the Java output.
+
+  - id: R2-deploy-cobol-to-blu-age
+    false_remediation: "Deploy your COBOL programs directly to the Blu Age runtime environment."
+    why_wrong: >
+      Blu Age environments run Java applications, not COBOL.
+      COBOL must be converted to Java first through the Blu Age
+      refactoring process.
+    correct_approach: >
+      Run COBOL through the Blu Age refactoring pipeline to
+      generate Java. Package the Java application and deploy
+      to the Blu Age runtime. For native COBOL execution, use
+      a Micro Focus environment instead.

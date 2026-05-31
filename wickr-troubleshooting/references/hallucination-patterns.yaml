@@ -1,0 +1,142 @@
+# =============================================================================
+# AWS Wickr "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-aws-reads-messages
+    trigger_words: ["read messages", "decrypt messages", "message content", "AWS Support"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest AWS can access or decrypt Wickr message content
+      for troubleshooting. End-to-end encryption prevents this.
+    actual_behavior: >
+      AWS Wickr uses end-to-end encryption where only the sender
+      and recipient can decrypt message content. AWS does not hold
+      decryption keys and cannot access message content under any
+      circumstances. Only metadata (delivery status, timestamps)
+      is available for diagnostics.
+    common_false_claim: "Contact AWS Support to retrieve the missing message content."
+    correct_action: "Troubleshoot using message delivery metadata, CloudTrail logs, and network health metrics."
+
+  - id: P2-messages-stored-by-default
+    trigger_words: ["retrieve old messages", "message history", "message backup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume messages are stored like email. Wickr messages
+      are ephemeral by default.
+    actual_behavior: >
+      Wickr messages are ephemeral by default with configurable
+      expiration timers. Messages are NOT retained unless the
+      administrator explicitly enables message retention with an
+      S3 bucket and KMS key. Without retention, expired messages
+      are permanently deleted and cannot be recovered.
+    common_false_claim: "Check the message history to find the deleted message."
+    correct_action: "Verify if retention is enabled. If not, expired messages cannot be recovered."
+
+  - id: P3-wickr-is-vpc
+    trigger_words: ["Wickr VPC", "Wickr subnet", "Wickr security group"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Wickr networks with AWS VPC networking
+      constructs due to shared terminology.
+    actual_behavior: >
+      A Wickr network is a logical grouping of users and
+      configuration settings. It has no relation to AWS VPCs,
+      subnets, or security groups. Wickr network configuration
+      involves user management, security policies, and
+      communication settings — not IP addressing or routing.
+    common_false_claim: "Configure the Wickr network's security group to allow message traffic."
+    correct_action: "Configure Wickr network settings through the admin console. VPC configuration is not applicable."
+
+  - id: P4-lambda-bots
+    trigger_words: ["Wickr Lambda", "serverless bot", "bot function"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Wickr bots can run as Lambda functions.
+      Bots require persistent connections via the Bot SDK.
+    actual_behavior: >
+      Wickr bots use the Wickr Bot SDK and run as long-lived
+      processes that maintain persistent connections to the
+      Wickr network. They cannot run as Lambda functions because
+      they require persistent WebSocket connections. Bots must
+      be hosted on EC2, ECS, EKS, or similar compute services.
+    common_false_claim: "Deploy your Wickr bot as a Lambda function for serverless operation."
+    correct_action: "Host Wickr bots on EC2, ECS, or EKS. Use the Wickr Bot SDK for integration."
+
+  - id: P5-iam-admin-login
+    trigger_words: ["IAM login", "admin console", "IAM credentials", "console access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using IAM user credentials to log into the
+      Wickr admin console. SSO or SAML is required.
+    actual_behavior: >
+      The Wickr admin console requires IAM Identity Center (SSO)
+      or SAML-based federation for authentication. IAM user
+      credentials (access key/secret key or console password)
+      cannot be used to log into the Wickr admin console.
+    common_false_claim: "Log into the Wickr admin console using your IAM user credentials."
+    correct_action: "Configure IAM Identity Center or SAML federation for admin console access."
+
+  - id: P6-one-sided-federation
+    trigger_words: ["enable federation", "federate networks", "cross-network"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest federation can be enabled from one side.
+      Both network admins must configure and approve.
+    actual_behavior: >
+      Federation between Wickr networks requires mutual
+      configuration. Both network administrators must configure
+      federation settings and approve the connection. One-sided
+      configuration does not enable cross-network messaging.
+      Federation requests must be accepted by the remote network.
+    common_false_claim: "Enable federation on your network to message users on the other network."
+    correct_action: "Coordinate with both network administrators. Both must configure and approve federation."
+
+  - id: P7-compliance-reads-content
+    trigger_words: ["compliance log content", "audit messages", "read compliance data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest compliance logging captures message content.
+      Only metadata is captured due to E2E encryption.
+    actual_behavior: >
+      Compliance logging captures message metadata including
+      sender, recipient, timestamp, message type, and delivery
+      status. Due to end-to-end encryption, message content
+      is NOT included in compliance logs. Retained messages
+      (if retention is enabled) are stored encrypted in S3.
+    common_false_claim: "Check the compliance logs to read the message content."
+    correct_action: "Use compliance logs for metadata analysis. Message content requires retention with proper decryption keys."
+
+  - id: P8-instant-user-sync
+    trigger_words: ["instant sync", "immediate provisioning", "real-time directory"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest directory sync and SCIM provisioning are
+      instant. Synchronization has propagation delays.
+    actual_behavior: >
+      User provisioning via SCIM or directory sync is not
+      instantaneous. Changes propagate over minutes to hours
+      depending on the identity provider configuration and
+      sync schedule. New users may not appear immediately
+      in the Wickr network after being added to the directory.
+    common_false_claim: "Add the user to your directory and they'll instantly appear in Wickr."
+    correct_action: "Allow time for directory sync. Check SCIM provisioning logs for sync status and errors."
+
+remediation_hallucinations:
+
+  - id: R1-recreate-network
+    false_pattern: "Delete and recreate the Wickr network to fix configuration issues"
+    why_wrong: >
+      Network deletion is irreversible and removes all user
+      associations, settings, and configuration. Users must
+      be re-provisioned and all settings reconfigured.
+    correct_approach: "Modify existing network settings through the admin console. Network recreation should be an absolute last resort."
+
+  - id: R2-disable-encryption
+    false_pattern: "Disable end-to-end encryption to troubleshoot message delivery"
+    why_wrong: >
+      End-to-end encryption cannot be disabled in AWS Wickr.
+      It is a fundamental architectural feature, not a
+      configurable setting.
+    correct_approach: "Troubleshoot message delivery using metadata, CloudTrail logs, and network health metrics without accessing message content."

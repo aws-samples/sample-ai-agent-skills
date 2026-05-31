@@ -1,0 +1,137 @@
+# =============================================================================
+# Amazon DocumentDB "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-documentdb-is-mongodb
+    trigger_words: ["mongodb feature", "mongodb command", "mongodb config", "replica set"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on MongoDB documentation apply MongoDB-specific features
+      to DocumentDB. DocumentDB is API-compatible but NOT MongoDB — it uses
+      a different storage engine and does not support all MongoDB features.
+    actual_behavior: >
+      DocumentDB supports a subset of MongoDB APIs (3.6, 4.0, 5.0 compatible).
+      Features like capped collections, $graphLookup (limited), certain index
+      types, and some aggregation stages are not supported. The storage engine
+      is Aurora-based, not WiredTiger. Replication uses Aurora replication,
+      not MongoDB replica sets.
+    common_false_claim: "Use rs.status() to check replica set health in DocumentDB."
+    correct_action: "Use aws docdb describe-db-clusters and describe-db-instances for cluster health. Check DocumentDB-specific documentation for supported commands."
+
+  - id: P2-tls-optional
+    trigger_words: ["connect without tls", "disable ssl", "no certificate", "plain connection"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest connecting to DocumentDB without TLS, as MongoDB
+      connections are often unencrypted in development. DocumentDB
+      requires TLS by default.
+    actual_behavior: >
+      TLS is enabled by default on all DocumentDB clusters. Connections
+      without TLS are rejected unless the tls parameter is explicitly
+      set to "disabled" in the cluster parameter group. The connection
+      string must include --tls and --tlsCAFile pointing to the RDS
+      certificate bundle.
+    common_false_claim: "Connect to DocumentDB with: mongo --host <endpoint> --username <user>"
+    correct_action: "Always include --tls --tlsCAFile rds-combined-ca-bundle.pem in connection strings."
+
+  - id: P3-mongodump-restore
+    trigger_words: ["mongodump", "mongorestore", "dump and restore", "backup with mongo"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs recommend mongodump/mongorestore for DocumentDB backup, which
+      is the standard MongoDB backup approach. DocumentDB does not support
+      these tools.
+    actual_behavior: >
+      DocumentDB does not support mongodump or mongorestore. Use AWS
+      native snapshots for backups, PITR for continuous backup, or AWS
+      DMS for migration. For logical data export, use mongoexport/mongoimport
+      or custom scripts. Snapshots are automatic (daily) and manual.
+    common_false_claim: "Use mongodump to back up your DocumentDB cluster."
+    correct_action: "Use AWS snapshots (aws docdb create-db-cluster-snapshot) or PITR for backup."
+
+  - id: P4-background-index-builds
+    trigger_words: ["background index", "index build background", "createIndex background", "non-blocking index"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest background index builds as available in MongoDB 4.2+.
+      DocumentDB index builds are foreground and block writes.
+    actual_behavior: >
+      DocumentDB index creation blocks write operations on the collection.
+      There is no true background index building option. The {background: true}
+      option is accepted but does not prevent write blocking. Plan index
+      creation during maintenance windows. Monitor progress with currentOp().
+    common_false_claim: "Create the index with {background: true} to avoid blocking writes."
+    correct_action: "Plan index creation during low-traffic periods. Monitor with db.currentOp()."
+
+  - id: P5-change-stream-unlimited
+    trigger_words: ["change stream history", "replay all changes", "change stream from beginning"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume change streams retain events indefinitely or can replay
+      from the beginning. DocumentDB change streams have limited retention.
+    actual_behavior: >
+      Change stream events are retained for 24 hours by default, configurable
+      up to 7 days via the change_stream_log_retention_duration parameter.
+      Events beyond the retention window are permanently deleted. Consumers
+      must process events within the retention period. Resume tokens expire
+      with the events they reference.
+    common_false_claim: "Resume the change stream from the beginning to replay all historical changes."
+    correct_action: "Process events within the retention window. Use resume tokens for reliable consumption."
+
+  - id: P6-storage-shrink
+    trigger_words: ["shrink storage", "reclaim space", "reduce storage", "compact database"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest compacting or shrinking DocumentDB storage after
+      deleting data. Storage is billed on high-water mark and does
+      not shrink immediately.
+    actual_behavior: >
+      DocumentDB storage auto-grows but does not immediately shrink when
+      data is deleted. Storage billing is based on the high-water mark.
+      Gradual reclamation occurs over time. The compact command is not
+      supported. To immediately reclaim storage, dump data to a new
+      cluster. There is no manual shrink operation.
+    common_false_claim: "Run db.runCommand({compact: 'collection'}) to reclaim storage space."
+    correct_action: "Storage reclaims gradually. For immediate reclamation, migrate data to a new cluster."
+
+  - id: P7-elastic-standard-same
+    trigger_words: ["elastic cluster same", "convert to elastic", "elastic features"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs treat elastic clusters and standard clusters as interchangeable.
+      They have different architectures, APIs, and feature sets.
+    actual_behavior: >
+      Elastic clusters use sharding with a shard key for data distribution.
+      Standard clusters use single-writer, multi-reader architecture.
+      You cannot convert between standard and elastic clusters in place.
+      Elastic clusters have different connection patterns, API operations,
+      and feature limitations compared to standard clusters.
+    common_false_claim: "Convert your standard cluster to elastic for automatic sharding."
+    correct_action: "Create a new elastic cluster and migrate data. They are separate architectures."
+
+  - id: P8-engine-version-downgrade
+    trigger_words: ["downgrade engine", "revert version", "rollback engine version"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest downgrading DocumentDB engine versions as a
+      troubleshooting step. Engine version downgrades are not supported.
+    actual_behavior: >
+      DocumentDB engine version upgrades are one-way. You cannot downgrade
+      from 5.0 to 4.0 or from 4.0 to 3.6. To revert to an older version,
+      you must create a new cluster with the desired version and migrate
+      data. Always test application compatibility before upgrading.
+    common_false_claim: "Downgrade the engine version to resolve the compatibility issue."
+    correct_action: "Create a new cluster with the desired engine version and migrate data."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

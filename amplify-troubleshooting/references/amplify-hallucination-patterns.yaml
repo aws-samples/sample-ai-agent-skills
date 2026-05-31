@@ -1,0 +1,148 @@
+# =============================================================================
+# AWS Amplify Hosting "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-console-overrides-file
+    trigger_words: ["build settings", "amplify.yml", "buildspec", "console settings"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest changing build settings in the Amplify console
+      without checking if amplify.yml exists. When the file exists,
+      console settings are completely ignored.
+    actual_behavior: >
+      If amplify.yml exists in the repository root, it takes complete
+      precedence over console build settings. The console UI may show
+      different settings but they will NOT be used. To use console
+      settings, the amplify.yml file must be removed or renamed.
+      The file supports branch-specific configurations.
+    common_false_claim: "Change the build command in the Amplify console to fix the build."
+    correct_action: "Check if amplify.yml exists first. If it does, modify the file instead of console settings."
+
+  - id: P2-env-vars-runtime
+    trigger_words: ["environment variable", "runtime", "process.env", "REACT_APP"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest environment variables are available at runtime
+      for static sites. For static (SPA) apps, environment variables
+      are only available during build time.
+    actual_behavior: >
+      For static sites (WEB platform), environment variables are
+      injected during the build process only. They are NOT available
+      at runtime in the browser. Frameworks like React (REACT_APP_*),
+      Next.js (NEXT_PUBLIC_*), and Vue (VUE_APP_*) embed variables
+      during build. For SSR apps (WEB_COMPUTE), server-side code
+      can access environment variables at runtime.
+    common_false_claim: "Add the environment variable in Amplify and it will be available at runtime."
+    correct_action: "For static sites, ensure variables are embedded during build. For SSR, variables are available server-side."
+
+  - id: P3-instant-domain
+    trigger_words: ["custom domain", "domain setup", "DNS", "domain not working"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest custom domains work immediately after configuration.
+      DNS verification and propagation can take up to 48 hours.
+    actual_behavior: >
+      Custom domain setup requires: (1) adding the domain in Amplify,
+      (2) creating DNS verification records at your DNS provider,
+      (3) waiting for DNS propagation (up to 48 hours), (4) SSL
+      certificate provisioning (automatic after verification).
+      The domain goes through PENDING_VERIFICATION → PENDING_DEPLOYMENT
+      → AVAILABLE states. Root domains need ANAME/ALIAS records.
+    common_false_claim: "Add the custom domain and it will be available immediately."
+    correct_action: "Add domain, create DNS records, wait for verification (up to 48h), then SSL provisioning."
+
+  - id: P4-ssr-static-same
+    trigger_words: ["SSR", "server-side rendering", "static site", "Next.js", "Nuxt"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat SSR and static hosting as interchangeable on Amplify.
+      SSR requires the WEB_COMPUTE platform and has different
+      requirements and limitations.
+    actual_behavior: >
+      Static sites use the WEB platform — files are served from S3
+      via CloudFront. SSR apps use WEB_COMPUTE — server-side code
+      runs on Lambda@Edge. SSR requires framework support (Next.js,
+      Nuxt, etc.). SSR has compute limits (memory, timeout). Not
+      all Next.js features are supported. The platform type must
+      be set correctly during app creation or updated.
+    common_false_claim: "Deploy your Next.js SSR app — Amplify handles it like any static site."
+    correct_action: "Ensure app platform is WEB_COMPUTE for SSR. Verify framework compatibility."
+
+  - id: P5-basic-auth-path
+    trigger_words: ["basic auth", "password protect", "staging protection", "access control"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest basic auth can be applied to specific paths or
+      routes. Amplify basic auth applies to the entire branch.
+    actual_behavior: >
+      Basic authentication in Amplify protects ALL paths on a branch.
+      It cannot be scoped to specific routes or directories. It uses
+      HTTP Basic Authentication. Credentials are per-branch. It is
+      designed for protecting staging/preview environments, not for
+      application-level access control. For path-specific protection,
+      implement it in the application code.
+    common_false_claim: "Enable basic auth on the /admin path to protect the admin panel."
+    correct_action: "Basic auth protects the entire branch. Use application-level auth for path-specific protection."
+
+  - id: P6-cache-control-cloudfront
+    trigger_words: ["cache", "stale content", "CDN", "CloudFront", "cache invalidation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manually invalidating CloudFront cache or
+      modifying CloudFront distribution settings. Amplify manages
+      CloudFront automatically.
+    actual_behavior: >
+      Amplify automatically invalidates CloudFront cache after each
+      deployment. You cannot directly access or modify the CloudFront
+      distribution. Custom cache headers can be set in amplify.yml
+      customHeaders section. If stale content persists after deploy,
+      check browser cache, custom headers, or trigger a manual
+      redeploy. Amplify does not expose CloudFront distribution ID.
+    common_false_claim: "Create a CloudFront invalidation to clear the stale content."
+    correct_action: "Redeploy the branch or check custom cache headers in amplify.yml. Amplify handles invalidation."
+
+  - id: P7-webhook-polling
+    trigger_words: ["auto deploy", "build not triggering", "webhook", "repository connection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Amplify polls the repository for changes. Amplify
+      uses webhooks, which can fail silently if misconfigured.
+    actual_behavior: >
+      Amplify uses webhooks (not polling) to detect repository changes.
+      Webhooks are configured automatically when connecting a repository.
+      If webhooks are deleted or misconfigured in the repository
+      provider, builds will not trigger automatically. Manual builds
+      always work. Check webhook configuration in GitHub/GitLab/
+      Bitbucket settings. Reconnecting the repository recreates webhooks.
+    common_false_claim: "Amplify checks your repository periodically for changes."
+    correct_action: "Check webhook configuration in your repository provider. Reconnect if webhooks are missing."
+
+  - id: P8-monorepo-root
+    trigger_words: ["monorepo", "subdirectory", "app root", "multiple apps"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Amplify always builds from the repository root.
+      Monorepo support requires configuring the app root directory.
+    actual_behavior: >
+      For monorepos, the appRoot setting in amplify.yml or the
+      "App root" setting in the console specifies the subdirectory
+      containing the app. Build commands run relative to this
+      directory. The amplify.yml file should be in the app root,
+      not the repository root. Environment variables and build
+      settings are relative to the app root. Multiple Amplify apps
+      can point to different directories in the same repository.
+    common_false_claim: "Amplify automatically detects your app in the monorepo subdirectory."
+    correct_action: "Set appRoot in amplify.yml or configure 'App root' in console for monorepo apps."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

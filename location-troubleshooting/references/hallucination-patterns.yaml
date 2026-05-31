@@ -1,0 +1,117 @@
+# =============================================================================
+# Amazon Location Service "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-grabmaps-global
+    trigger_words: ["GrabMaps", "Grab", "map provider"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest GrabMaps works globally. It only covers Southeast Asia.
+    actual_behavior: >
+      GrabMaps data provider only covers Southeast Asian countries
+      (Singapore, Malaysia, Thailand, Indonesia, Philippines, Vietnam,
+      Cambodia, Myanmar). Returns no results outside this region.
+    common_false_claim: "Use GrabMaps for your application."
+    correct_action: "Use GrabMaps only for Southeast Asia. Use Esri or HERE for global coverage."
+
+  - id: P2-lat-lng-order
+    trigger_words: ["coordinates", "position", "longitude", "latitude"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs use [latitude, longitude] order. Location Service uses
+      [longitude, latitude] (GeoJSON standard).
+    actual_behavior: >
+      Amazon Location Service uses [longitude, latitude] order
+      following GeoJSON standard. Swapped coordinates cause positions
+      to appear in wrong locations.
+    common_false_claim: "Pass coordinates as [latitude, longitude]."
+    correct_action: "Use [longitude, latitude] order. Example: [-122.33, 47.60] for Seattle."
+
+  - id: P3-all-providers-same
+    trigger_words: ["place search", "search results", "POI"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all providers return same results.
+      Results vary significantly by provider.
+    actual_behavior: >
+      Different providers have different POI databases, coverage,
+      and data quality. Same query returns different results with
+      different providers.
+    common_false_claim: "Search results are the same regardless of provider."
+    correct_action: "Choose provider based on coverage needs. Test with target regions."
+
+  - id: P4-all-route-modes
+    trigger_words: ["route", "driving", "walking", "truck"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest all travel modes work with all providers.
+    actual_behavior: >
+      Travel mode support varies by provider. Not all providers
+      support truck routing or walking. Check provider capabilities.
+    common_false_claim: "Calculate truck routes with any provider."
+    correct_action: "Check provider support for desired travel mode before configuring."
+
+  - id: P5-geofence-instant
+    trigger_words: ["geofence", "enter", "exit", "geofence event"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest geofence events are instant.
+      There is evaluation latency.
+    actual_behavior: >
+      Geofence evaluation has latency. Events sent to EventBridge
+      after evaluation. Complex geofences take longer. Position
+      filtering may delay evaluation.
+    common_false_claim: "Geofence events trigger instantly when device crosses boundary."
+    correct_action: "Account for evaluation latency. Configure position filtering appropriately."
+
+  - id: P6-tracker-auto-geofence
+    trigger_words: ["tracker", "geofence collection", "link tracker"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest trackers automatically evaluate geofences.
+      Tracker must be explicitly linked to geofence collection.
+    actual_behavior: >
+      Trackers must be linked to geofence collections via
+      AssociateTrackerConsumer. Without linking, position updates
+      don't trigger geofence events.
+    common_false_claim: "Create a tracker and geofences will be evaluated automatically."
+    correct_action: "Create tracker. Create geofence collection. Link with AssociateTrackerConsumer."
+
+  - id: P7-api-key-unlimited
+    trigger_words: ["API key", "authentication", "access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest API keys provide unlimited access.
+      Keys can be scoped and have expiration.
+    actual_behavior: >
+      API keys can be restricted to specific actions and resources.
+      Keys have expiration dates. Use Cognito for authenticated
+      access with user identity.
+    common_false_claim: "Create an API key for full Location Service access."
+    correct_action: "Scope API keys to needed resources. Set expiration. Use Cognito for user-level access."
+
+  - id: P8-geofence-any-format
+    trigger_words: ["geofence polygon", "geofence shape", "create geofence"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest various geometry formats for geofences.
+      Only GeoJSON polygon and circle supported.
+    actual_behavior: >
+      Geofences use GeoJSON polygon (max 1000 vertices, must be
+      closed) or circle (center + radius). Polygon coordinates
+      in [longitude, latitude] order.
+    common_false_claim: "Define geofences with any geometry format."
+    correct_action: "Use GeoJSON polygon or circle. Close polygon. Use [lng, lat] order."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

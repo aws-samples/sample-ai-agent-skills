@@ -1,0 +1,161 @@
+# =============================================================================
+# Amazon Lookout for Vision "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-inference
+    trigger_words: ["detect anomaly", "automatic detection", "always running"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest models automatically detect anomalies once trained.
+      Models must be explicitly started and images sent for inference.
+    actual_behavior: >
+      Lookout for Vision models do NOT automatically monitor or
+      detect anomalies. After training, the model must be explicitly
+      started (start-model), which transitions it to HOSTED status.
+      Then, images must be sent individually via detect-anomalies
+      API. The model does not pull images from S3 or monitor a
+      camera feed automatically.
+    common_false_claim: "Once trained, the model automatically detects anomalies in your production line."
+    correct_action: "Start the model, then send images via detect-anomalies API. Build an integration pipeline for continuous monitoring."
+
+  - id: P2-any-image-works
+    trigger_words: ["any image", "any photo", "upload picture", "camera"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest any image quality or format works for training
+      and inference. Strict quality requirements exist.
+    actual_behavior: >
+      Image quality significantly affects model accuracy. Images
+      must have consistent lighting, camera angle, distance, and
+      resolution. Supported formats are PNG and JPEG. Images should
+      be at least 64x64 pixels but ideally 512x512 or higher.
+      Inconsistent image capture conditions introduce noise that
+      degrades model performance.
+    common_false_claim: "Take photos with your phone from any angle and the model will work."
+    correct_action: "Standardize image capture: fixed camera position, consistent lighting, uniform background. Use PNG or JPEG at 512x512+."
+
+  - id: P3-few-images-sufficient
+    trigger_words: ["few images", "small dataset", "5 images", "10 images"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs underestimate the minimum dataset size required for
+      reliable model training.
+    actual_behavior: >
+      Training requires a minimum of 20 normal images and 10
+      anomaly images. However, these minimums produce unreliable
+      models. For production use, 100+ images per class is
+      recommended. More diverse training images (different
+      examples of normal and anomalous conditions) improve
+      model generalization.
+    common_false_claim: "You only need 5-10 images to train a good model."
+    correct_action: "Collect 100+ images per class for production models. Minimum is 20 normal + 10 anomaly for experimentation."
+
+  - id: P4-free-inference
+    trigger_words: ["free", "no cost", "inference cost", "pricing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention that running models incur hourly
+      charges regardless of inference volume.
+    actual_behavior: >
+      Models in HOSTED status incur charges per hour of runtime,
+      regardless of how many (or few) inference calls are made.
+      A model left running 24/7 incurs continuous charges. There
+      is also a per-image inference charge. Training incurs
+      separate per-hour charges.
+    common_false_claim: "Inference is free once the model is trained."
+    correct_action: "Stop models when not in use. Calculate costs based on runtime hours + inference volume. Use stop-model to halt charges."
+
+  - id: P5-direct-edge-deploy
+    trigger_words: ["edge deployment", "deploy to device", "IoT", "edge"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest direct model deployment to edge devices.
+      Greengrass V2 is required as the deployment mechanism.
+    actual_behavior: >
+      Edge deployment requires AWS IoT Greengrass V2. The model
+      must first be packaged as a Greengrass component using
+      create-model-packaging-job. The packaged component is then
+      deployed to edge devices through Greengrass deployment.
+      There is no direct model download or deployment mechanism.
+    common_false_claim: "Download the model and deploy it directly to your edge device."
+    correct_action: "Package model with create-model-packaging-job. Deploy via Greengrass V2 to target devices."
+
+  - id: P6-model-update-in-place
+    trigger_words: ["update model", "retrain", "improve model", "fine-tune"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest models can be updated or fine-tuned in place.
+      New model versions must be trained from scratch.
+    actual_behavior: >
+      Model versions are immutable once trained. To improve a
+      model, you must train a new version with updated training
+      data. There is no fine-tuning, incremental training, or
+      in-place update mechanism. Previous versions remain
+      available for comparison and rollback.
+    common_false_claim: "Fine-tune the existing model with new images."
+    correct_action: "Add new images to the dataset. Train a new model version. Compare metrics with previous version before switching."
+
+  - id: P7-multi-class-detection
+    trigger_words: ["multiple defects", "classify defects", "defect types"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Lookout for Vision can classify multiple
+      defect types. It performs binary classification.
+    actual_behavior: >
+      Lookout for Vision performs binary anomaly detection:
+      normal vs. anomaly. It does NOT classify different types
+      of anomalies or defects. The model outputs a confidence
+      score for whether an image is normal or anomalous, plus
+      an optional anomaly mask showing the affected region.
+    common_false_claim: "The model will classify each defect type (scratch, dent, discoloration)."
+    correct_action: "Use Lookout for Vision for binary normal/anomaly detection. For multi-class classification, consider Amazon Rekognition Custom Labels."
+
+  - id: P8-real-time-video
+    trigger_words: ["video", "real-time", "camera feed", "stream"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Lookout for Vision processes video streams.
+      It processes individual images only.
+    actual_behavior: >
+      Lookout for Vision processes individual images via the
+      detect-anomalies API. It does NOT process video streams,
+      camera feeds, or continuous monitoring. To monitor a
+      production line, you must capture individual frames and
+      send them as separate API calls.
+    common_false_claim: "Connect your camera feed to Lookout for Vision for real-time monitoring."
+    correct_action: "Capture individual frames from the camera. Send each frame via detect-anomalies API. Build a pipeline for continuous frame capture."
+
+remediation_hallucinations:
+
+  - id: R1-delete-retrain
+    trigger_words: ["delete model", "start over", "retrain from scratch"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a model version removes it permanently. If the
+      model was serving production inference, deleting it causes
+      immediate service disruption. Training a new version takes
+      time and may produce different results.
+    correct_approach: >
+      Train a new model version alongside the existing one.
+      Compare evaluation metrics. Switch inference to the new
+      version only after confirming it performs better. Keep
+      the old version as rollback until the new version is
+      validated in production.
+
+  - id: R2-lower-confidence-threshold
+    trigger_words: ["lower threshold", "reduce confidence", "accept more"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Lowering the confidence threshold increases false positives
+      (normal items flagged as anomalies). In manufacturing, this
+      causes unnecessary production line stops, wasted inspection
+      time, and reduced throughput. The threshold should be tuned
+      based on the cost of false positives vs. false negatives.
+    correct_approach: >
+      Analyze the model evaluation metrics (precision, recall,
+      F1 score) at different thresholds. Consider the business
+      cost of false positives vs. false negatives. Adjust
+      threshold based on the specific use case requirements,
+      not arbitrary values.

@@ -1,0 +1,155 @@
+# =============================================================================
+# AWS Application Composer "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-deployment
+    trigger_words: ["Application Composer", "auto deploy", "automatic deployment", "live deploy"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Application Composer automatically deploys changes
+      to AWS. It is a visual design tool that generates templates.
+    actual_behavior: >
+      Application Composer is a visual builder for designing serverless
+      applications. It generates SAM/CloudFormation templates but does
+      NOT automatically deploy them. Deployment requires explicit
+      sam deploy or CloudFormation create-stack/update-stack commands.
+      The canvas is a design surface, not a live infrastructure view.
+    common_false_claim: "Changes in Application Composer are automatically deployed to your AWS account."
+    correct_action: "Use sam deploy or aws cloudformation deploy to deploy the generated template."
+
+  - id: P2-all-resources-supported
+    trigger_words: ["any resource", "all AWS services", "every resource type"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Application Composer supports all AWS resource types
+      visually. Only resources with enhanced card support are fully editable.
+    actual_behavior: >
+      Application Composer has enhanced visual cards for common serverless
+      resources (Lambda, API Gateway, DynamoDB, S3, SQS, SNS, Step Functions,
+      EventBridge). Other CloudFormation resource types appear as generic
+      cards with limited property editing. Not all resource properties
+      are exposed in the visual editor.
+    common_false_claim: "Application Composer supports visual editing of all AWS resource types."
+    correct_action: "Check if the resource type has enhanced card support. Use template source editing for unsupported properties."
+
+  - id: P3-connection-cleanup
+    trigger_words: ["remove connection", "disconnect", "unlink resources"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest removing a canvas connection fully cleans up
+      generated IAM policies and environment variables.
+    actual_behavior: >
+      Removing a connection from the canvas removes the visual link
+      but does NOT automatically remove IAM policy statements or
+      environment variables that were generated when the connection
+      was created. These artifacts remain in the template and must
+      be manually cleaned up.
+    common_false_claim: "Removing the connection will clean up all associated IAM policies."
+    correct_action: "After removing a connection, manually review and clean up IAM policies and environment variables in the template."
+
+  - id: P4-template-round-trip
+    trigger_words: ["import template", "export template", "round trip"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest templates can be imported and exported without
+      any loss of information or fidelity.
+    actual_behavior: >
+      Template import may silently drop unsupported resource types,
+      properties, or intrinsic function patterns that Application
+      Composer cannot render. Exported templates may have different
+      formatting, ordering, or structure than the original. Round-trip
+      fidelity is NOT guaranteed for complex templates.
+    common_false_claim: "Import your existing template and Application Composer will preserve everything."
+    correct_action: "After import, diff the original template against the Application Composer version to identify any dropped elements."
+
+  - id: P5-sam-cloudformation-interchangeable
+    trigger_words: ["SAM template", "CloudFormation template", "same thing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate SAM and CloudFormation templates as identical.
+      SAM requires the serverless transform.
+    actual_behavior: >
+      SAM templates require Transform: AWS::Serverless-2016-10-31
+      and use SAM-specific resource types (AWS::Serverless::Function,
+      AWS::Serverless::Api). These are NOT valid CloudFormation
+      without the transform. SAM CLI processes the transform into
+      standard CloudFormation before deployment.
+    common_false_claim: "SAM templates and CloudFormation templates are the same thing."
+    correct_action: "Use sam deploy for SAM templates. Use aws cloudformation deploy for plain CloudFormation templates."
+
+  - id: P6-local-testing-production
+    trigger_words: ["local test", "sam local", "local invoke", "production parity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest local SAM testing perfectly replicates the
+      production Lambda environment.
+    actual_behavior: >
+      SAM local invoke uses Docker containers to approximate Lambda
+      runtimes but does NOT perfectly replicate production. Differences
+      include: no VPC connectivity, no IAM role assumption (uses local
+      credentials), different file system limits, no Lambda layers
+      caching, and different timeout behavior. Local testing is for
+      functional validation, not production parity.
+    common_false_claim: "sam local invoke perfectly replicates the production Lambda environment."
+    correct_action: "Use local testing for functional validation. Deploy to a dev/staging environment for production-like testing."
+
+  - id: P7-visual-editor-complete
+    trigger_words: ["visual editor", "no code", "drag and drop", "fully visual"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Application Composer can build complete applications
+      entirely through the visual editor without touching code.
+    actual_behavior: >
+      Application Composer's visual editor handles resource creation,
+      connections, and basic property configuration. However, Lambda
+      function code, complex IAM policies, custom resource logic,
+      CloudFormation conditions, mappings, and advanced intrinsic
+      functions must be written manually. The visual editor is a
+      starting point, not a complete no-code solution.
+    common_false_claim: "Build your entire serverless application visually without writing any code."
+    correct_action: "Use the visual editor for architecture design and resource wiring. Write function code and complex configurations manually."
+
+  - id: P8-project-sync-git
+    trigger_words: ["project sync", "git integration", "version control", "sync"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest project sync integrates with git or provides
+      version control capabilities.
+    actual_behavior: >
+      Project sync writes Application Composer changes directly to
+      local files on disk. It does NOT integrate with git, provide
+      version history, or offer conflict resolution. If the local
+      file has been modified outside Application Composer, sync
+      overwrites those changes. Version control must be managed
+      separately through git.
+    common_false_claim: "Project sync provides version control for your Application Composer changes."
+    correct_action: "Use git independently for version control. Commit changes before enabling project sync to avoid data loss."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-stack
+    trigger_words: ["delete stack", "recreate", "start over"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Suggesting stack deletion to fix Application Composer issues
+      destroys production resources including databases, S3 buckets
+      with data, and stateful resources.
+    correct_approach: >
+      Use CloudFormation update-stack or sam deploy to apply fixes.
+      For template issues, fix the template and redeploy. Only delete
+      stacks in development environments after confirming no stateful
+      resources will be lost.
+
+  - id: R2-disable-rollback
+    trigger_words: ["disable rollback", "no rollback", "DISABLE_ROLLBACK"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Disabling CloudFormation rollback leaves stacks in a partially
+      created state that is difficult to recover from and may leave
+      orphaned resources incurring costs.
+    correct_approach: >
+      Keep rollback enabled. Use CloudFormation stack events to
+      diagnose the specific resource that failed. Fix the root cause
+      in the template and redeploy with rollback enabled.

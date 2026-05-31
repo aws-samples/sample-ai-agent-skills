@@ -1,0 +1,158 @@
+# =============================================================================
+# AWS Budgets Actions "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-real-time-actions
+    trigger_words: ["Budgets", "real-time", "immediate action", "instant response"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest budget actions trigger in real-time when
+      spending exceeds thresholds. Cost data has up to 24-hour delay.
+    actual_behavior: >
+      AWS cost and usage data can be delayed up to 24 hours.
+      Budget actions trigger based on this delayed data, not
+      real-time spending. By the time an action triggers, actual
+      spending may have already exceeded the threshold significantly.
+      There is no real-time cost enforcement mechanism.
+    common_false_claim: "Budget actions immediately stop resources when spending exceeds the threshold."
+    correct_action: "Set thresholds conservatively (e.g., 80%) to account for data delay. Use forecasted spend thresholds for earlier warning."
+
+  - id: P2-auto-reversal
+    trigger_words: ["auto-reverse", "automatic recovery", "undo action", "restore"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest budget actions are automatically reversed when
+      spending drops below the threshold. Actions are permanent
+      until manually reversed.
+    actual_behavior: >
+      Budget actions are NOT automatically reversed. When an action
+      stops EC2/RDS instances, they remain stopped even if spending
+      drops below the threshold. When an action applies an IAM
+      policy or SCP, it remains applied. Manual intervention is
+      required to restart instances, detach policies, or detach SCPs.
+    common_false_claim: "Instances will automatically restart when the new budget period begins."
+    correct_action: "Plan for manual reversal of actions. Set up runbooks for restarting instances and detaching policies after budget periods."
+
+  - id: P3-granular-resource-control
+    trigger_words: ["specific resource", "target instance", "selective action"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest budget actions can target specific resources
+      precisely. EC2/RDS actions target ALL instances matching criteria.
+    actual_behavior: >
+      EC2 and RDS stop actions target instances based on tags or
+      all instances in the account/region. You cannot target a
+      single specific instance by ID in a budget action. The action
+      applies to all instances matching the budget's filter criteria.
+    common_false_claim: "Configure the budget action to stop only instance i-1234567890abcdef0."
+    correct_action: "Use tags to group instances for budget actions. Apply specific tags to instances that should be affected."
+
+  - id: P4-scp-any-account
+    trigger_words: ["SCP action", "service control policy", "restrict account"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SCP budget actions can be created from any
+      account. They require Organizations management account.
+    actual_behavior: >
+      SCP-based budget actions require AWS Organizations and must
+      be configured from the management account or a delegated
+      administrator. Member accounts cannot create SCP actions.
+      The SCP must already exist — budget actions attach existing
+      SCPs, they do not create new ones.
+    common_false_claim: "Create an SCP budget action from any account to restrict spending."
+    correct_action: "Create SCP actions from the management account. Pre-create the SCP to be attached. Use IAM policy actions for single-account restrictions."
+
+  - id: P5-budget-prevents-spending
+    trigger_words: ["prevent spending", "block charges", "spending cap", "hard limit"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest budgets can prevent spending beyond a limit.
+      Budgets are reactive, not preventive.
+    actual_behavior: >
+      AWS Budgets track and alert on spending but cannot prevent
+      charges from being incurred. Even with actions enabled,
+      there is a delay between spending and action execution.
+      Budget actions can reduce future spending (by stopping
+      instances) but cannot reverse charges already incurred.
+    common_false_claim: "Set a budget to cap your AWS spending at $1000."
+    correct_action: "Use budgets for monitoring and automated response. Combine with SCPs and IAM policies for preventive controls. Accept that some overspend may occur."
+
+  - id: P6-notification-guaranteed
+    trigger_words: ["notification", "alert", "email notification", "guaranteed delivery"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest budget notifications are guaranteed to be
+      delivered. SNS delivery depends on subscription confirmation
+      and endpoint availability.
+    actual_behavior: >
+      Budget notifications use Amazon SNS. Email subscribers must
+      confirm their subscription. Unconfirmed subscribers receive
+      nothing. SNS delivery is best-effort for email. For critical
+      alerts, use multiple notification channels (email, SMS,
+      Lambda, Chatbot).
+    common_false_claim: "Budget alerts will always be delivered to your email."
+    correct_action: "Confirm SNS subscriptions. Use multiple notification channels. Set up CloudWatch alarms as backup."
+
+  - id: P7-iam-policy-scoped
+    trigger_words: ["IAM policy action", "deny policy", "restrict user"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest IAM policy budget actions can target specific
+      users or roles. They attach policies to IAM groups or users
+      defined in the action.
+    actual_behavior: >
+      IAM policy budget actions attach a specified IAM policy to
+      specified IAM users, groups, or roles. The policy must
+      already exist. The action attaches the policy — it does not
+      create it. The attached policy affects all permissions for
+      the target principals, not just budget-related resources.
+    common_false_claim: "The budget action creates a deny policy automatically."
+    correct_action: "Pre-create the IAM deny policy. Configure the action to attach it to specific users/groups/roles. Test the policy impact before enabling."
+
+  - id: P8-forecasted-accurate
+    trigger_words: ["forecast", "predicted spend", "estimated cost"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest budget forecasts are highly accurate. Forecasts
+      are estimates based on historical patterns.
+    actual_behavior: >
+      Budget forecasts use historical spending patterns to predict
+      future costs. Forecasts become more accurate as more data
+      is available (after 5+ weeks of history). New accounts or
+      accounts with variable spending have less accurate forecasts.
+      Forecasts do not account for planned changes (new deployments,
+      migrations).
+    common_false_claim: "The budget forecast accurately predicts your end-of-month spend."
+    correct_action: "Use forecasted thresholds as early warnings, not precise predictions. Combine with actual spend thresholds for comprehensive coverage."
+
+remediation_hallucinations:
+
+  - id: R1-delete-budget-stops-actions
+    trigger_words: ["delete budget", "remove budget", "cancel actions"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest deleting a budget reverses its executed actions.
+      Deleting a budget does not undo actions already taken.
+    actual_behavior: >
+      Deleting a budget removes future monitoring and action
+      triggers but does NOT reverse actions already executed.
+      Stopped instances remain stopped. Attached IAM policies
+      remain attached. Attached SCPs remain attached. Each action
+      must be manually reversed independently.
+    correct_action: "Manually reverse each executed action before or after deleting the budget. Restart instances, detach policies, detach SCPs."
+
+  - id: R2-increase-budget-fixes-actions
+    trigger_words: ["increase budget", "raise limit", "higher threshold"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest increasing the budget amount reverses executed
+      actions. It only prevents future triggers.
+    actual_behavior: >
+      Increasing the budget amount or threshold prevents future
+      action triggers but does NOT reverse actions already executed.
+      If instances were stopped, they remain stopped regardless of
+      budget changes. If policies were attached, they remain
+      attached.
+    correct_action: "Manually reverse executed actions. Then increase the budget to prevent future triggers. Consider using approval workflows for disruptive actions."

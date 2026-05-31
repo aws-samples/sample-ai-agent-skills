@@ -1,0 +1,136 @@
+# =============================================================================
+# AWS IoT Events "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-sql-conditions
+    trigger_words: ["condition", "WHERE clause", "SQL expression", "filter"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs write SQL-style conditions for detector models. IoT Events
+      uses its own expression language.
+    actual_behavior: >
+      IoT Events conditions use expressions like $input.inputName.path
+      to reference input values. Comparison operators (==, !=, >, <),
+      logical operators (&&, ||, !), and arithmetic operators are
+      supported. String functions and type conversion functions are
+      available. This is NOT SQL syntax.
+    common_false_claim: "WHERE temperature > 100 AND sensor_id = 'abc'"
+    correct_action: "$input.TempInput.temperature > 100 && $input.TempInput.sensor_id == 'abc'"
+
+  - id: P2-shared-detector-state
+    trigger_words: ["detector state", "all detectors", "global state", "shared variable"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume detectors share state. Each key value creates
+      an isolated detector instance.
+    actual_behavior: >
+      Each unique key value in the input creates a separate detector
+      instance with its own state, variables, and timers. Detector
+      instances are completely isolated. There is no way to share
+      state between instances. The key is defined in the detector
+      model and extracted from the input payload.
+    common_false_claim: "Set a variable in one detector to affect all other detectors."
+    correct_action: "Each detector instance is isolated. Use external services for cross-instance state."
+
+  - id: P3-alarm-custom-states
+    trigger_words: ["alarm state", "custom alarm", "alarm model"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating custom alarm states. Alarm models have
+      predefined states.
+    actual_behavior: >
+      IoT Events alarm models have predefined states: DISABLED,
+      NORMAL, ACTIVE, ACKNOWLEDGED, LATCHED, SNOOZE_DISABLED.
+      You cannot add custom states. State transitions follow
+      predefined rules. For custom state machines, use detector
+      models instead of alarm models.
+    common_false_claim: "Add a MAINTENANCE state to the alarm model."
+    correct_action: "Use a detector model for custom state machines. Alarm models have fixed states."
+
+  - id: P4-action-instant
+    trigger_words: ["action execution", "immediate action", "action order"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume actions execute instantly and in order. Actions
+      are asynchronous and order is not guaranteed.
+    actual_behavior: >
+      Actions within an event are executed asynchronously. The order
+      of execution is not guaranteed. If action A must complete
+      before action B, you need to use separate states with
+      transitions. Action failures do not prevent other actions
+      from executing. Failed actions are logged but do not roll back.
+    common_false_claim: "Actions execute in the order they are defined."
+    correct_action: "Actions are asynchronous. Use state transitions for ordered execution."
+
+  - id: P5-timer-precision
+    trigger_words: ["timer", "timeout", "delay", "schedule"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest sub-second timer precision. Timers have
+      minimum granularity of 60 seconds.
+    actual_behavior: >
+      IoT Events timers have a minimum duration of 60 seconds.
+      Timer precision is approximately ±5 seconds. Timers are
+      evaluated on input messages, not continuously. If no input
+      arrives, the timer expiration may be delayed. Timers are
+      per-detector-instance.
+    common_false_claim: "Set a 5-second timer for quick response."
+    correct_action: "Minimum timer is 60 seconds. For sub-minute timing, use external services."
+
+  - id: P6-unlimited-detectors
+    trigger_words: ["detector instances", "scale", "many detectors"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited detector instances. There are
+      per-account limits.
+    actual_behavior: >
+      There are limits on the number of detector instances per
+      detector model and per account. Default limits vary by
+      region. Each unique key value creates a new instance.
+      Instances persist until explicitly deleted or the model
+      is deleted. Monitor instance count to avoid hitting limits.
+    common_false_claim: "Create a detector instance for each of your million devices."
+    correct_action: "Check detector instance limits. Request increases via Service Quotas if needed."
+
+  - id: P7-input-any-format
+    trigger_words: ["input format", "input schema", "payload format"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any JSON structure works as input. The input
+      must match the defined schema exactly.
+    actual_behavior: >
+      Input payloads must be flat JSON objects matching the input
+      definition. Nested objects require dot-notation attribute
+      paths in the input definition. Missing required attributes
+      cause the input to be silently dropped. Extra attributes
+      are ignored. Attribute names are case-sensitive.
+    common_false_claim: "Send any JSON payload and the detector will parse it."
+    correct_action: "Define input attributes matching your payload structure. Missing attributes drop the message."
+
+  - id: P8-model-live-edit
+    trigger_words: ["edit model", "update detector", "change state"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest editing a running detector model updates
+      existing instances. New versions create new instances.
+    actual_behavior: >
+      Updating a detector model creates a new version. Existing
+      detector instances continue running the old version. You
+      must delete existing instances for them to be recreated
+      with the new version. Alternatively, deploy the new version
+      and let new inputs create instances on the new version.
+    common_false_claim: "Update the model and all running detectors will use the new logic."
+    correct_action: "New model versions don't affect existing instances. Delete old instances to use new version."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

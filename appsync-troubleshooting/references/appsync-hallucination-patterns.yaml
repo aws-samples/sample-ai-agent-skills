@@ -1,0 +1,135 @@
+# =============================================================================
+# AppSync "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-vtl-vs-javascript-syntax
+    trigger_words: ["VTL", "mapping template", "resolver code", "JavaScript resolver", "APPSYNC_JS"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs mix VTL and JavaScript syntax because both are used for
+      AppSync resolvers. VTL uses $ctx and $util with Velocity syntax,
+      while JavaScript uses ctx and util with standard JS syntax.
+    actual_behavior: >
+      VTL resolvers use Apache Velocity Template Language with $ctx.arguments,
+      $util.toJson(), and #set directives. JavaScript resolvers (APPSYNC_JS
+      runtime) use ctx.args, util.toJson(), and standard JS. The runtime
+      is set per resolver and cannot be mixed within a single resolver.
+    common_false_claim: "Use $util.toJson() in your JavaScript resolver to serialize the response."
+    correct_action: "Check the resolver runtime first. Use $util for VTL, util for JavaScript."
+
+  - id: P2-resolver-timeout-limit
+    trigger_words: ["timeout", "resolver timeout", "30 seconds", "long running"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest increasing the resolver timeout beyond 30 seconds,
+      similar to Lambda timeout adjustments. AppSync has a hard cap.
+    actual_behavior: >
+      The maximum resolver execution timeout is 30 seconds. This is a
+      service limit that cannot be increased via support request or
+      configuration. For operations exceeding 30 seconds, use async
+      patterns with DynamoDB streams, EventBridge, or Step Functions.
+    common_false_claim: "Increase the resolver timeout to 60 seconds to handle the slow query."
+    correct_action: "Optimize the data source query, add caching, or use an async pattern."
+
+  - id: P3-subscription-endpoint-confusion
+    trigger_words: ["subscription", "WebSocket", "wss://", "real-time", "realtime"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs use the GraphQL HTTP endpoint for subscriptions. AppSync
+      subscriptions require a separate WebSocket endpoint.
+    actual_behavior: >
+      AppSync has two endpoints: the GraphQL HTTPS endpoint for queries
+      and mutations, and the real-time WebSocket endpoint (wss://) for
+      subscriptions. The real-time endpoint uses MQTT over WebSocket
+      protocol. Clients must connect to the wss:// endpoint for
+      subscriptions. Connection limit is 100 subscriptions per connection.
+    common_false_claim: "Connect to the GraphQL endpoint to subscribe to real-time updates."
+    correct_action: "Use the real-time wss:// endpoint for subscriptions. Use Amplify or graphql-ws libraries."
+
+  - id: P4-caching-is-free
+    trigger_words: ["caching", "cache", "TTL", "per-resolver cache"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs recommend enabling caching as a simple toggle without
+      mentioning the required provisioned cache instance and costs.
+    actual_behavior: >
+      AppSync caching requires provisioning a dedicated cache instance
+      (t2.small to r5.12xlarge). Cache TTL is 1-3600 seconds. Per-resolver
+      caching can override API-level settings. The cache instance runs
+      continuously and incurs hourly charges. Caching is not a free feature.
+    common_false_claim: "Enable caching on your AppSync API to improve performance at no extra cost."
+    correct_action: "Provision a cache instance of appropriate size. Factor in hourly costs."
+
+  - id: P5-multi-auth-directive-required
+    trigger_words: ["multiple auth", "authorization mode", "@aws_auth", "multi-auth"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume adding multiple auth modes to an API automatically
+      makes all types accessible via all modes. Directives are required.
+    actual_behavior: >
+      When multiple auth modes are configured, types and fields default
+      to the primary auth mode only. To allow access via additional auth
+      modes, you must annotate types/fields with @aws_api_key,
+      @aws_cognito_user_pools, @aws_iam, or @aws_oidc directives.
+      Without directives, non-default auth modes get "Unauthorized".
+    common_false_claim: "Add COGNITO and API_KEY auth modes and both will work for all types."
+    correct_action: "Add @aws_api_key or @aws_cognito_user_pools directives to types that need multi-auth access."
+
+  - id: P6-merged-api-auto-sync
+    trigger_words: ["merged API", "source API", "merge", "combined API"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim merged APIs automatically reflect source API changes.
+      Source API updates require explicit re-merge operations.
+    actual_behavior: >
+      Merged APIs combine schemas from multiple source APIs into a single
+      endpoint. When a source API schema changes, the merged API does NOT
+      auto-update. You must trigger a re-merge (associate/update source API).
+      Schema conflicts between source APIs (duplicate type names with
+      different definitions) cause merge failures.
+    common_false_claim: "Changes to source APIs are automatically reflected in the merged API."
+    correct_action: "Re-merge after source API changes. Resolve schema conflicts before merging."
+
+  - id: P7-conflict-detection-scope
+    trigger_words: ["conflict detection", "Versioned", "Automerge", "DataStore", "offline sync"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs recommend conflict detection for standard GraphQL APIs.
+      It only applies to Amplify DataStore offline sync patterns.
+    actual_behavior: >
+      Conflict detection (Versioned, Automerge, Lambda) is specifically
+      for Amplify DataStore offline synchronization. It adds _version,
+      _lastChangedAt, and _deleted fields to types. Standard GraphQL
+      mutations without DataStore do not use or need conflict detection.
+      Enabling it on non-DataStore APIs adds unnecessary overhead.
+    common_false_claim: "Enable Versioned conflict detection to prevent concurrent mutation conflicts."
+    correct_action: "Only use conflict detection with Amplify DataStore. Use conditional mutations for standard APIs."
+
+  - id: P8-batch-resolver-configuration
+    trigger_words: ["N+1", "batch", "BatchInvoke", "BatchGetItem", "batch resolver"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest batch resolvers work automatically. They require
+      specific configuration in both the resolver and the data source.
+    actual_behavior: >
+      Batch resolvers require explicit configuration. For Lambda, use
+      BatchInvoke instead of Invoke — the Lambda function must accept
+      and return arrays. For DynamoDB, use BatchGetItem with proper key
+      mapping. The resolver must be configured with maxBatchSize. Without
+      batch configuration, each item in a list triggers a separate
+      resolver invocation (N+1 problem).
+    common_false_claim: "AppSync automatically batches resolver calls for list queries."
+    correct_action: "Configure batch resolvers explicitly with maxBatchSize. Update Lambda to handle arrays."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,113 @@
+# =============================================================================
+# RDS MySQL "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-super-privilege
+    trigger_words: ["SUPER", "SET GLOBAL", "CHANGE MASTER", "CHANGE REPLICATION SOURCE"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on self-managed MySQL docs suggest SUPER privilege
+      operations. RDS does not grant SUPER.
+    actual_behavior: >
+      RDS MySQL uses rds_superuser_role with restricted privileges.
+      Use stored procedures like mysql.rds_kill(), mysql.rds_set_configuration().
+    common_false_claim: "Run SET GLOBAL innodb_buffer_pool_size to resize the buffer pool."
+    correct_action: "Modify the parameter group and apply changes. Some parameters require reboot."
+
+  - id: P2-myisam-recommendation
+    trigger_words: ["MyISAM", "ISAM", "non-transactional"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MyISAM for read-heavy workloads from older MySQL docs.
+      MyISAM is not crash-safe and breaks replication on RDS.
+    actual_behavior: >
+      InnoDB is the only recommended engine on RDS. MyISAM tables are not
+      replicated to read replicas reliably and are not crash-safe.
+    common_false_claim: "Use MyISAM for read-heavy tables to improve performance."
+    correct_action: "Use InnoDB for all tables. Optimize with proper indexing and buffer pool sizing."
+
+  - id: P3-readable-standby
+    trigger_words: ["read from standby", "query standby", "standby endpoint", "standby reads"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse Multi-AZ standby with Aurora reader instances or
+      read replicas. The Multi-AZ standby is not accessible.
+    actual_behavior: >
+      Multi-AZ standby is for failover only and cannot be queried.
+      For read scaling, create read replicas which have their own endpoints.
+    common_false_claim: "Connect to the Multi-AZ standby for read queries."
+    correct_action: "Create read replicas for read scaling. Multi-AZ is HA only."
+
+  - id: P4-in-place-pitr
+    trigger_words: ["restore in place", "in-place recovery", "rollback database"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest in-place restore from general database docs. RDS PITR
+      always creates a new instance.
+    actual_behavior: >
+      PITR via restore-db-instance-to-point-in-time creates a new DB
+      instance with a new endpoint. The original instance is unchanged.
+    common_false_claim: "Use PITR to roll back the database to a previous state."
+    correct_action: "Restore to a new instance, verify data, then redirect applications."
+
+  - id: P5-direct-binlog-access
+    trigger_words: ["mysqlbinlog", "binary log files", "purge binary logs", "SHOW BINARY LOGS"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest direct binlog manipulation from self-managed MySQL docs.
+      RDS manages binary logs internally.
+    actual_behavior: >
+      Binary logs are managed by RDS. Retention is set via
+      mysql.rds_set_configuration('binlog retention hours', N).
+      You cannot purge or directly access binlog files.
+    common_false_claim: "Run PURGE BINARY LOGS to free disk space."
+    correct_action: "Use mysql.rds_set_configuration to set binlog retention. RDS purges automatically."
+
+  - id: P6-mycnf-editing
+    trigger_words: ["my.cnf", "my.ini", "/etc/mysql", "mysqld.cnf"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to editing config files from self-managed MySQL docs.
+      No filesystem access on RDS.
+    actual_behavior: >
+      All MySQL configuration is done via RDS parameter groups. Use
+      aws rds modify-db-parameter-group to change settings.
+    common_false_claim: "Edit /etc/mysql/my.cnf to change innodb_buffer_pool_size."
+    correct_action: "Modify the RDS parameter group. Apply immediately or during maintenance window."
+
+  - id: P7-unlimited-connections
+    trigger_words: ["set max_connections 10000", "unlimited connections", "increase connections"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest large max_connections values without considering
+      memory constraints. Each connection uses ~10MB.
+    actual_behavior: >
+      max_connections is bounded by instance memory. Setting it too high
+      causes OOM. Default formula is {DBInstanceClassMemory/12582880}.
+    common_false_claim: "Set max_connections to 10000 for high-traffic applications."
+    correct_action: "Use RDS Proxy for connection pooling or scale the instance class."
+
+  - id: P8-encrypt-existing-instance
+    trigger_words: ["enable encryption", "encrypt existing", "add encryption"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling encryption on running instances. Encryption
+      at rest must be set at creation time.
+    actual_behavior: >
+      You cannot encrypt an existing unencrypted RDS instance. Create an
+      encrypted snapshot copy, then restore from it to get an encrypted instance.
+    common_false_claim: "Enable encryption on your existing RDS instance."
+    correct_action: "Create snapshot, copy with encryption, restore from encrypted copy."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

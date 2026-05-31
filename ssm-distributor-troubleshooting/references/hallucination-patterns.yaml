@@ -1,0 +1,160 @@
+# =============================================================================
+# SSM Distributor "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+hallucination_patterns:
+
+  - id: P1-auto-update-packages
+    trigger_words: ["Distributor", "auto-update", "automatic update", "self-update"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Distributor automatically updates packages on
+      instances. Distributor installs specific versions and does
+      not auto-update unless an association with "latest" version
+      is configured on a schedule.
+    actual_behavior: >
+      Distributor installs the exact version specified in the
+      command or association. There is no built-in auto-update
+      mechanism. To update packages, you must either send a new
+      command with the updated version or configure an association
+      targeting the latest/default version on a recurring schedule.
+    common_false_claim: "Distributor automatically keeps packages updated on all instances."
+    correct_action: "Create an association with the desired version and schedule for recurring updates."
+
+  - id: P2-cross-region-packages
+    trigger_words: ["cross-region", "global package", "all regions", "replicate"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest packages are globally available once created.
+      Distributor packages are regional resources.
+    actual_behavior: >
+      Distributor packages are regional. A package created in
+      us-east-1 is only available in us-east-1. For multi-region
+      deployments, you must create the package in each target
+      region or use automation to replicate packages across regions.
+      S3 artifacts must also be in the same region.
+    common_false_claim: "Create the package once and it's available in all regions."
+    correct_action: "Create packages in each target region. Use automation for cross-region replication."
+
+  - id: P3-modify-existing-version
+    trigger_words: ["edit package", "modify version", "update version", "change package"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest you can edit an existing package version.
+      Package versions are immutable once created.
+    actual_behavior: >
+      Package versions in Distributor are immutable. Once a
+      version is created, its content, scripts, and manifest
+      cannot be changed. To fix issues, you must create a new
+      version with the corrected content and optionally set it
+      as the default version.
+    common_false_claim: "Edit the package version to fix the installation script."
+    correct_action: "Create a new package version with the fix and update the default version."
+
+  - id: P4-any-s3-bucket
+    trigger_words: ["S3 bucket", "package storage", "any bucket", "cross-account S3"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any S3 bucket can be used for package storage.
+      The bucket must be in the same region as target instances.
+    actual_behavior: >
+      Custom package artifacts must be stored in an S3 bucket in
+      the same AWS region as the target instances. The SSM Agent
+      downloads artifacts directly from S3 using the instance
+      profile's IAM permissions. Cross-region S3 access is not
+      supported for Distributor packages.
+    common_false_claim: "Store your package in any S3 bucket and Distributor will find it."
+    correct_action: "Use an S3 bucket in the same region as target instances. Ensure IAM permissions allow s3:GetObject."
+
+  - id: P5-all-platforms-automatic
+    trigger_words: ["all platforms", "universal package", "any OS", "platform independent"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest a single installer works across all platforms.
+      Each platform requires its own installer definition.
+    actual_behavior: >
+      Distributor packages require platform-specific installers
+      defined in the manifest.json. Each platform (windows, linux,
+      macos) needs its own install and uninstall scripts and
+      artifacts. A package without a linux installer cannot be
+      installed on Linux instances even if it contains a Windows
+      installer.
+    common_false_claim: "Create one package and it installs on any platform."
+    correct_action: "Define platform-specific installers in manifest.json for each target OS."
+
+  - id: P6-instant-association
+    trigger_words: ["association", "immediate install", "instant deployment", "apply now"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating an association immediately installs
+      the package. Associations follow their configured schedule.
+    actual_behavior: >
+      Associations execute based on their schedule expression
+      (cron or rate). By default, ApplyOnlyAtCronInterval is
+      false, which means the association runs when created and
+      then on schedule. However, if ApplyOnlyAtCronInterval is
+      true, it only runs at the scheduled time. For immediate
+      installation, use aws ssm send-command instead.
+    common_false_claim: "Create an association and the package installs immediately on all instances."
+    correct_action: "Use send-command for immediate installation. Use associations for scheduled recurring deployments."
+
+  - id: P7-edit-aws-packages
+    trigger_words: ["modify AWS package", "edit CloudWatch agent", "customize managed"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest you can modify AWS-managed third-party packages.
+      These packages are read-only and owned by Amazon.
+    actual_behavior: >
+      AWS-managed packages (AmazonCloudWatchAgent, AWSPVDriver,
+      AWSEC2Launch, etc.) are owned and maintained by Amazon.
+      You cannot modify their installation scripts, manifest,
+      or artifacts. You can only choose which version to install
+      and configure the software after installation using its
+      own configuration mechanisms.
+    common_false_claim: "Modify the AmazonCloudWatchAgent package to customize the installation."
+    correct_action: "Install the AWS-managed package as-is. Configure the software post-installation using its configuration file."
+
+  - id: P8-unlimited-package-size
+    trigger_words: ["large package", "package size", "big installer", "no limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention package size limits or the impact
+      of large packages on installation reliability.
+    actual_behavior: >
+      While there is no hard size limit on Distributor packages,
+      large packages (>1 GB) can cause installation timeouts,
+      especially on instances with limited bandwidth or disk
+      space. The SSM Agent downloads the entire package before
+      installation. Command timeout defaults to 3600 seconds
+      and may need to be increased for large packages.
+    common_false_claim: "Package any size installer without concerns."
+    correct_action: "Keep packages small. For large packages, increase command timeout and verify instance disk space and bandwidth."
+
+remediation_hallucinations:
+
+  - id: R1-delete-and-recreate
+    trigger_words: ["delete package", "recreate", "start over"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a package removes all versions and breaks existing
+      associations referencing that package. Instances with the
+      software installed are not affected, but future association
+      runs will fail.
+    correct_approach: >
+      Instead of deleting, create a new version of the package
+      with the fix. Update the default version. Existing
+      associations will pick up the new default version on their
+      next execution. Only delete packages that are truly unused.
+
+  - id: R2-force-install-flag
+    trigger_words: ["force install", "override", "skip checks", "force flag"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      There is no --force flag for Distributor installations.
+      LLMs may fabricate CLI flags that do not exist, leading
+      to command failures and confusion.
+    correct_approach: >
+      If installation fails, diagnose the root cause (permissions,
+      disk space, script errors). Use the reinstall action to
+      attempt a clean installation. Check command output for
+      specific error messages.

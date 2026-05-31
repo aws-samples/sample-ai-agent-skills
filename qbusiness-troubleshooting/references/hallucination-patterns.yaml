@@ -1,0 +1,121 @@
+# =============================================================================
+# Amazon Q Business "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-no-sso-needed
+    trigger_words: ["Q Business setup", "create application", "Q Business auth"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Q Business works without IAM Identity Center.
+      SSO is mandatory for all Q Business applications.
+    actual_behavior: >
+      Q Business requires IAM Identity Center for user authentication.
+      Application creation fails without Identity Center. All users
+      must be provisioned in Identity Center.
+    common_false_claim: "Create a Q Business application with IAM user authentication."
+    correct_action: "Configure IAM Identity Center first. Provision users. Then create application."
+
+  - id: P2-instant-answers
+    trigger_words: ["add documents", "upload data", "chat immediately"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest documents are immediately available for chat.
+      Sync must complete first.
+    actual_behavior: >
+      Documents must be synced through data source connectors.
+      Sync crawls, processes, chunks, and indexes documents.
+      Chat only returns answers from synced documents.
+    common_false_claim: "Upload documents and start chatting immediately."
+    correct_action: "Configure data source, trigger sync, wait for completion, then chat."
+
+  - id: P3-unlimited-knowledge
+    trigger_words: ["Q Business knows", "general knowledge", "any question"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Q Business answers any question.
+      It only answers from indexed enterprise data.
+    actual_behavior: >
+      Q Business retrieves answers from indexed enterprise documents.
+      It does not have general knowledge beyond the indexed content.
+      Questions outside the indexed corpus return no answer.
+    common_false_claim: "Q Business can answer any business question."
+    correct_action: "Index relevant documents. Q Business answers from indexed content only."
+
+  - id: P4-guardrails-simple
+    trigger_words: ["topic controls", "blocked topics", "guardrails"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs oversimplify guardrail configuration.
+    actual_behavior: >
+      Topic controls use natural language descriptions to define
+      allowed and blocked topics. The ML model interprets these
+      descriptions. Vague descriptions cause inconsistent blocking.
+      Testing with diverse queries is essential.
+    common_false_claim: "Add a blocked topic and it perfectly filters all related queries."
+    correct_action: "Write specific topic descriptions. Test with diverse queries. Iterate."
+
+  - id: P5-plugin-auto-config
+    trigger_words: ["plugin", "Jira plugin", "Salesforce plugin"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest plugins work out of the box.
+      Each requires specific OAuth/API configuration.
+    actual_behavior: >
+      Plugins require OAuth credentials, API endpoints, and
+      permission scopes configured in the external service.
+      Each plugin type has different requirements.
+    common_false_claim: "Enable the Jira plugin and it connects automatically."
+    correct_action: "Configure OAuth app in Jira. Provide credentials to Q Business. Test connection."
+
+  - id: P6-web-experience-public
+    trigger_words: ["web experience", "search portal", "chat interface"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest web experience is publicly accessible.
+      It requires SSO authentication.
+    actual_behavior: >
+      Web experience URLs require IAM Identity Center authentication.
+      Only assigned users can access the interface. There is no
+      public or anonymous access mode.
+    common_false_claim: "Share the web experience URL for public access."
+    correct_action: "Assign users in Identity Center. Share URL with assigned users only."
+
+  - id: P7-real-time-sync
+    trigger_words: ["real-time", "live data", "instant sync"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest real-time data synchronization.
+      Sync is batch-based with configurable schedules.
+    actual_behavior: >
+      Data source sync runs on a schedule or on-demand. There is
+      no real-time streaming sync. Changes in source systems
+      appear after the next sync completes.
+    common_false_claim: "Q Business shows real-time data from connected sources."
+    correct_action: "Configure sync schedule. Understand data freshness depends on sync frequency."
+
+  - id: P8-any-data-source
+    trigger_words: ["data source", "connector", "connect to"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest Q Business connects to any data source.
+      Only supported connectors are available.
+    actual_behavior: >
+      Q Business supports specific connectors: S3, SharePoint,
+      Confluence, Salesforce, Jira, and others. Custom connectors
+      require the Custom Data Source API. Not all data sources
+      have native connectors.
+    common_false_claim: "Connect Q Business to any database or API."
+    correct_action: "Check supported connectors. Use Custom Data Source API for unsupported sources."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,147 @@
+# =============================================================================
+# AWS Lake Formation "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-lf-replaces-iam
+    trigger_words: ["Lake Formation", "LF permissions", "data lake permissions", "fine-grained"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Lake Formation replaces IAM for data access
+      control. LF works ON TOP of IAM — both must allow access.
+    actual_behavior: >
+      Lake Formation permissions are an additional layer on top
+      of IAM. Both IAM AND LF must allow access. A principal
+      needs IAM permissions (e.g., glue:GetTable, s3:GetObject)
+      AND LF permissions (e.g., SELECT on table). Granting LF
+      permissions without IAM permissions results in access denied.
+    common_false_claim: "Grant Lake Formation permissions to replace IAM policies for data access."
+    correct_action: "Ensure BOTH IAM permissions and LF permissions allow the action. They work together."
+
+  - id: P2-lf-permissions-auto-enforced
+    trigger_words: ["IAMAllowedPrincipals", "default permissions", "new database", "new table"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume LF permissions are automatically enforced on
+      new resources. By default, IAMAllowedPrincipals grants
+      bypass LF permissions.
+    actual_behavior: >
+      New databases and tables automatically grant ALL permissions
+      to IAMAllowedPrincipals. This means IAM policies alone
+      control access — LF permissions are effectively bypassed.
+      To enforce LF permissions, you must revoke the
+      IAMAllowedPrincipals grants. This is the #1 source of
+      confusion with Lake Formation.
+    common_false_claim: "Lake Formation permissions are enforced as soon as you grant them."
+    correct_action: "Revoke IAMAllowedPrincipals grants first, then grant specific LF permissions."
+
+  - id: P3-unregistered-locations-managed
+    trigger_words: ["data location", "S3 path", "register resource", "location registration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume LF manages permissions on all S3 locations.
+      Only registered locations are managed by LF.
+    actual_behavior: >
+      Lake Formation can only manage fine-grained permissions
+      on S3 locations that are explicitly registered. Unregistered
+      locations fall back to IAM-only access control. Register
+      with: aws lakeformation register-resource --resource-arn
+      s3://bucket/path. The registration role must have S3 read
+      access to the location.
+    common_false_claim: "Lake Formation automatically manages permissions on all S3 data locations."
+    correct_action: "Register S3 locations with LF before granting fine-grained permissions."
+
+  - id: P4-cross-account-direct
+    trigger_words: ["cross-account", "share table", "external account", "cross-account grant"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest direct cross-account LF grants without
+      mentioning RAM. Cross-account sharing requires RAM.
+    actual_behavior: >
+      LF cross-account grants create RAM resource shares under
+      the hood. The recipient must accept the RAM invitation
+      (unless org sharing is enabled). The recipient account
+      must create a resource link to the shared database/table
+      in their local catalog. Both accounts need LF admin
+      configuration for cross-account sharing.
+    common_false_claim: "Grant cross-account permissions directly in Lake Formation."
+    correct_action: "Grant cross-account LF permissions (creates RAM share). Recipient accepts RAM invitation and creates resource link."
+
+  - id: P5-lf-tags-simple
+    trigger_words: ["LF-Tags", "tag-based access", "TBAC", "attribute-based"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs oversimplify LF-Tag behavior, ignoring inheritance
+      and evaluation complexity.
+    actual_behavior: >
+      LF-Tags inherit down the hierarchy: database → table →
+      column. Explicit tags override inherited tags. Tag-based
+      permissions evaluate against effective tags (inherited +
+      explicit). Changing a database tag affects ALL tables in
+      that database. Tag values are case-sensitive. Both the
+      tag definition and tag assignment are separate operations.
+    common_false_claim: "Assign an LF-Tag to the table and permissions are automatically applied."
+    correct_action: "Define LF-Tags, assign to resources, then create tag-based permission grants. Understand inheritance."
+
+  - id: P6-column-permissions-additive
+    trigger_words: ["column-level", "column permissions", "column security", "restrict columns"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest column permissions are additive to table
+      permissions. Column permissions RESTRICT which columns
+      are visible.
+    actual_behavior: >
+      When column-level permissions are granted, the principal
+      can ONLY see the specified columns. Queries referencing
+      non-permitted columns fail with access denied. Column
+      permissions use include lists (only these) or exclude
+      lists (all except these). This is a restriction, not
+      an addition to table-level access.
+    common_false_claim: "Grant column permissions to give additional access to specific columns."
+    correct_action: "Column permissions restrict visible columns. Use include/exclude lists carefully."
+
+  - id: P7-governed-tables-standard
+    trigger_words: ["governed table", "ACID", "transaction", "compaction"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat governed tables like standard Glue tables.
+      Governed tables have a different storage and transaction
+      model.
+    actual_behavior: >
+      Governed tables support ACID transactions with snapshot
+      isolation. They use a different storage format. Concurrent
+      writes can cause transaction conflicts. Compaction is
+      needed to merge small files. Governed tables have specific
+      API calls (StartTransaction, CommitTransaction). They
+      incur different storage costs than standard tables.
+    common_false_claim: "Governed tables work the same as regular Glue tables."
+    correct_action: "Use transaction APIs for governed tables. Plan for compaction. Handle transaction conflicts."
+
+  - id: P8-lf-admin-is-iam-admin
+    trigger_words: ["LF admin", "Lake Formation administrator", "data lake admin", "admin setup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume the IAM administrator is automatically a
+      Lake Formation administrator. LF admins must be
+      explicitly designated.
+    actual_behavior: >
+      Lake Formation administrators must be explicitly
+      configured in data lake settings. The IAM admin or
+      root user is NOT automatically an LF admin. LF admins
+      are designated by ARN (IAM user or role). Multiple
+      admins can be configured. LF admins have unrestricted
+      permissions within Lake Formation.
+    common_false_claim: "The IAM admin automatically has Lake Formation admin permissions."
+    correct_action: "Explicitly designate LF admins: aws lakeformation put-data-lake-settings with DataLakeAdmins."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

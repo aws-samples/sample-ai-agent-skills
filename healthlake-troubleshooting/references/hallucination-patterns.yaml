@@ -1,0 +1,131 @@
+# =============================================================================
+# AWS HealthLake "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-fhir-version
+    trigger_words: ["FHIR version", "STU3", "DSTU2", "FHIR standard"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest HealthLake supports multiple FHIR versions.
+      Only FHIR R4 is supported.
+    actual_behavior: >
+      AWS HealthLake exclusively supports FHIR R4 (Release 4).
+      Resources in FHIR STU3, DSTU2, or other versions must be
+      converted to R4 before import. The FHIR REST API follows
+      R4 specification for resource types, search parameters,
+      and operations.
+    common_false_claim: "Import your FHIR STU3 resources directly into HealthLake."
+    correct_action: "Convert resources to FHIR R4 format before importing into HealthLake."
+
+  - id: P2-realtime-import
+    trigger_words: ["instant import", "real-time import", "immediate load"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest imports are instant. Import jobs are async
+      and can take hours for large datasets.
+    actual_behavior: >
+      Import jobs are asynchronous operations. Small imports may
+      complete in minutes, but large datasets can take hours.
+      Import status must be polled via describe-fhir-import-job.
+      Invalid resources are reported in the output manifest, not
+      as immediate errors.
+    common_false_claim: "Import the data and query it immediately."
+    correct_action: "Start import job, poll status until COMPLETED, then query data."
+
+  - id: P3-sql-search
+    trigger_words: ["SQL query", "SELECT FROM", "database query"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SQL queries for HealthLake search. The FHIR
+      REST API uses FHIR search parameters.
+    actual_behavior: >
+      HealthLake search uses FHIR search parameters via the REST
+      API (GET /Patient?name=Smith). SQL queries are available
+      only through the analytics integration with Athena/Lake
+      Formation. Direct data store queries use FHIR search syntax.
+    common_false_claim: "SELECT * FROM Patient WHERE name = 'Smith'"
+    correct_action: "GET /Patient?name=Smith (FHIR search) or use Athena for SQL analytics."
+
+  - id: P4-custom-resources
+    trigger_words: ["custom resource", "custom type", "extend FHIR"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating custom FHIR resource types. HealthLake
+      supports standard R4 resource types only.
+    actual_behavior: >
+      HealthLake supports standard FHIR R4 resource types. Custom
+      resource types are not supported. Use FHIR extensions to add
+      custom data to standard resources. Extensions follow the
+      FHIR extension mechanism with URLs and values.
+    common_false_claim: "Create a custom resource type for your specific data."
+    correct_action: "Use FHIR extensions on standard resource types for custom data."
+
+  - id: P5-unencrypted-store
+    trigger_words: ["encryption", "unencrypted", "disable encryption"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest encryption is optional. All HealthLake data
+      stores are encrypted.
+    actual_behavior: >
+      All HealthLake data stores are encrypted at rest using KMS.
+      You can choose AWS-managed keys (default) or customer-managed
+      KMS keys. Encryption cannot be disabled. The KMS key must be
+      in the same region as the data store.
+    common_false_claim: "Create an unencrypted data store for development."
+    correct_action: "All data stores are encrypted. Choose AWS-managed or customer-managed KMS key."
+
+  - id: P6-nlp-manual
+    trigger_words: ["NLP enrichment", "Comprehend Medical", "entity extraction"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manually running NLP on HealthLake data.
+      NLP enrichment is automatic when enabled.
+    actual_behavior: >
+      When integrated with Amazon Comprehend Medical, NLP enrichment
+      automatically processes clinical notes during import. Medical
+      entities (conditions, medications, procedures) are extracted
+      and added as FHIR extensions. This is not a manual process.
+    common_false_claim: "Run Comprehend Medical on each resource after import."
+    correct_action: "Enable Comprehend Medical integration. NLP enrichment runs automatically on import."
+
+  - id: P7-json-import
+    trigger_words: ["JSON import", "import format", "FHIR Bundle"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest regular JSON files for import. NDJSON format
+      is required.
+    actual_behavior: >
+      Import requires NDJSON (Newline Delimited JSON) format where
+      each line is a complete FHIR resource or Bundle. Regular JSON
+      files (even valid FHIR) will fail import. Files must be in S3.
+      The import IAM role must have s3:GetObject permission.
+    common_false_claim: "Upload a JSON file with FHIR resources to import."
+    correct_action: "Convert to NDJSON format (one resource per line) and upload to S3."
+
+  - id: P8-analytics-instant
+    trigger_words: ["analytics", "Athena query", "Lake Formation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest analytics data is instantly available. Analytics
+      integration has sync delay.
+    actual_behavior: >
+      Analytics integration exports data to Lake Formation
+      periodically, not in real-time. There is a delay between
+      data store changes and analytics availability. Athena queries
+      run against the analytics export, not the live data store.
+      Analytics must be explicitly enabled on the data store.
+    common_false_claim: "Query the latest data immediately via Athena."
+    correct_action: "Enable analytics, allow sync time, then query via Athena."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,158 @@
+# =============================================================================
+# AWS Marketplace "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-provisioning
+    trigger_words: ["Marketplace", "subscribe", "auto-provision", "instant access"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest subscribing to a Marketplace product automatically
+      provisions the software. SaaS products require post-subscribe
+      registration on the seller's website.
+    actual_behavior: >
+      Subscribing to a SaaS product on Marketplace creates a billing
+      agreement but does NOT provision access. The buyer must click
+      the redirect URL to the seller's website and complete registration.
+      AMI products require launching an EC2 instance. Container products
+      require deploying to ECS/EKS.
+    common_false_claim: "Subscribe to the product and it will be automatically available."
+    correct_action: "After subscribing, complete the fulfillment workflow specific to the product type (SaaS registration, AMI launch, container deploy)."
+
+  - id: P2-single-subscription-org
+    trigger_words: ["organization", "all accounts", "org-wide subscription"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest a single Marketplace subscription covers all
+      accounts in an organization. Subscriptions are per-account.
+    actual_behavior: >
+      Marketplace subscriptions are per-account. Each AWS account
+      must subscribe independently. Organization procurement with
+      Private Marketplace controls which products CAN be subscribed
+      to, but does not create shared subscriptions. Some sellers
+      offer enterprise contracts that cover multiple accounts, but
+      these are negotiated separately.
+    common_false_claim: "Subscribe once and all organization accounts get access."
+    correct_action: "Each account must subscribe individually. Use Private Marketplace to govern allowed products across the organization."
+
+  - id: P3-free-trial-no-charges
+    trigger_words: ["free trial", "no cost", "try for free", "free tier"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Marketplace free trials have no charges. Infrastructure
+      costs still apply during free trials.
+    actual_behavior: >
+      Marketplace free trials waive the software license fee for a
+      limited period. However, underlying infrastructure costs (EC2
+      instances, data transfer, storage) still apply and are billed
+      normally. Some free trials auto-convert to paid subscriptions
+      after the trial period.
+    common_false_claim: "The free trial is completely free with no charges."
+    correct_action: "Inform users that infrastructure costs apply during free trials. Set up billing alerts to monitor costs."
+
+  - id: P4-metering-automatic
+    trigger_words: ["metering", "usage tracking", "automatic billing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Marketplace metering is automatic. Sellers must
+      implement metering API calls in their software.
+    actual_behavior: >
+      For SaaS and container products with usage-based pricing,
+      sellers must implement calls to the Marketplace Metering
+      Service API (batch-meter-usage or meter-usage). Records must
+      be sent within 6 hours of usage. AWS does not automatically
+      track usage — the seller's software must report it.
+    common_false_claim: "AWS automatically meters and bills usage for Marketplace products."
+    correct_action: "Sellers must implement metering API calls. Buyers should verify metering records match expected usage."
+
+  - id: P5-private-marketplace-blocks-existing
+    trigger_words: ["private marketplace", "block products", "restrict access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling Private Marketplace blocks access to
+      already-subscribed products. It only affects new subscriptions.
+    actual_behavior: >
+      Private Marketplace controls which products can be newly
+      subscribed to. It does NOT affect existing subscriptions or
+      already-provisioned resources. Products not on the approved
+      list cannot be subscribed to, but existing subscriptions
+      continue to function.
+    common_false_claim: "Enable Private Marketplace to block all unapproved products immediately."
+    correct_action: "Private Marketplace governs new subscriptions only. To remove existing subscriptions, cancel them individually."
+
+  - id: P6-catalog-api-immediate
+    trigger_words: ["catalog API", "update product", "change listing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Marketplace Catalog API changes take effect
+      immediately. Changes are asynchronous and go through review.
+    actual_behavior: >
+      Changes via marketplace-catalog start-change-set are
+      asynchronous. Change sets go through PREPARING, APPLYING,
+      and SUCCEEDED/FAILED states. Some changes (pricing, product
+      descriptions) may require AWS review before taking effect.
+      Product listing changes can take hours to days.
+    common_false_claim: "Update the product listing and changes appear immediately."
+    correct_action: "Monitor change set status via describe-change-set. Allow time for async processing and potential review."
+
+  - id: P7-entitlement-equals-subscription
+    trigger_words: ["entitlement", "subscription", "access rights"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate entitlements with subscriptions. They are
+      separate concepts with different lifecycles.
+    actual_behavior: >
+      A subscription is the billing agreement between buyer and
+      seller. Entitlements define specific usage dimensions and
+      limits within that subscription (e.g., 10 users, 100GB
+      storage). A valid subscription can have expired or exhausted
+      entitlements. Entitlements are checked via get-entitlements API.
+    common_false_claim: "If you have a subscription, you have full entitlements."
+    correct_action: "Check both subscription status AND entitlement dimensions/limits. They have independent lifecycles."
+
+  - id: P8-data-products-direct-access
+    trigger_words: ["data product", "data exchange", "download data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Marketplace data products provide direct download.
+      They are fulfilled through AWS Data Exchange.
+    actual_behavior: >
+      Data products listed on Marketplace are fulfilled through
+      AWS Data Exchange. After subscribing, buyers access data
+      through Data Exchange APIs, not direct download. Data sets
+      may be delivered as S3 exports, API calls, or Lake Formation
+      tables depending on the product type.
+    common_false_claim: "Subscribe to the data product and download it directly."
+    correct_action: "After subscribing, use AWS Data Exchange console or API to access data sets. Ensure Data Exchange permissions are configured."
+
+remediation_hallucinations:
+
+  - id: R1-cancel-subscription-refund
+    trigger_words: ["cancel subscription", "refund", "get money back"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest canceling a Marketplace subscription provides
+      an automatic refund. Refund policies vary by seller and
+      product type.
+    actual_behavior: >
+      Canceling a Marketplace subscription stops future charges
+      but does NOT automatically provide a refund for past usage.
+      Annual subscriptions may not be refundable. Refund policies
+      are set by individual sellers. Contact the seller or AWS
+      Support for refund requests.
+    correct_action: "Cancel the subscription to stop future charges. For refunds, contact the seller directly or open an AWS Support case."
+
+  - id: R2-unsubscribe-deletes-resources
+    trigger_words: ["unsubscribe", "remove product", "delete subscription"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest unsubscribing automatically cleans up all
+      provisioned resources. Resources persist after unsubscribe.
+    actual_behavior: >
+      Unsubscribing from a Marketplace product cancels the billing
+      agreement but does NOT automatically terminate EC2 instances,
+      delete containers, or remove provisioned resources. These
+      resources continue to incur infrastructure charges until
+      manually terminated.
+    correct_action: "Before unsubscribing, identify and terminate all resources provisioned from the product. Then cancel the subscription."

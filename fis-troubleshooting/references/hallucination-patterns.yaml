@@ -1,0 +1,139 @@
+# =============================================================================
+# AWS Fault Injection Simulator "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-simulation-not-real
+    trigger_words: ["FIS", "simulate", "simulation", "chaos engineering"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs describe FIS as a "simulator" that doesn't affect real
+      infrastructure. FIS causes actual failures.
+    actual_behavior: >
+      Despite the name "Simulator," FIS causes REAL failures in
+      your infrastructure. It actually stops EC2 instances, injects
+      network latency, terminates ECS tasks, and triggers RDS
+      failovers. These are not simulated — they affect production
+      resources. Always use stop conditions and test in non-prod first.
+    common_false_claim: "FIS simulates failures without affecting your actual infrastructure."
+    correct_action: "FIS causes real failures. Always use stop conditions, start with non-production, and have rollback plans."
+
+  - id: P2-auto-rollback
+    trigger_words: ["rollback", "auto-restore", "undo experiment", "recover after"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest FIS automatically restores resources after
+      experiments. Some actions are irreversible.
+    actual_behavior: >
+      FIS does NOT automatically restore all resources after
+      experiment completion. Some actions are reversible (stop
+      instance → instance can be started), but others are
+      irreversible (terminate instance → instance is gone).
+      Network disruption actions are removed when the experiment
+      ends, but terminated resources are not recreated.
+    common_false_claim: "After the experiment ends, everything returns to normal automatically."
+    correct_action: "Understand which actions are reversible. Plan manual recovery for irreversible actions."
+
+  - id: P3-stop-conditions-auto-created
+    trigger_words: ["stop condition", "safety", "automatic stop", "guardrail"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest FIS automatically creates stop conditions.
+      Stop conditions must be manually configured with existing
+      CloudWatch alarms.
+    actual_behavior: >
+      Stop conditions must be explicitly configured in the
+      experiment template. They reference existing CloudWatch
+      alarm ARNs. FIS does NOT create alarms or default stop
+      conditions. An experiment without stop conditions runs
+      to completion regardless of impact.
+    common_false_claim: "FIS automatically stops if something goes wrong."
+    correct_action: "Create CloudWatch alarms for critical metrics, then reference them as stop conditions in the experiment template."
+
+  - id: P4-safe-for-production
+    trigger_words: ["production", "safe to run", "no risk", "controlled"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest FIS is inherently safe for production use.
+      Production experiments require careful planning.
+    actual_behavior: >
+      FIS experiments in production carry real risk. Misconfigured
+      targets can affect more resources than intended. Missing
+      stop conditions can allow experiments to cause extended
+      outages. Production experiments should only be run after
+      thorough testing in non-production environments with
+      proper stop conditions and blast radius limits.
+    common_false_claim: "FIS is designed to be safe for production — just run it."
+    correct_action: "Start in non-production. Use COUNT/PERCENT selection mode. Configure stop conditions. Gradually increase blast radius."
+
+  - id: P5-all-services-supported
+    trigger_words: ["any service", "all AWS services", "supported services"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest FIS supports fault injection for all AWS
+      services. Only specific services and actions are supported.
+    actual_behavior: >
+      FIS supports a specific set of actions for specific services
+      (EC2, ECS, EKS, RDS, etc.). Not all AWS services have FIS
+      actions. Check available actions with: aws fis list-actions.
+      For unsupported services, you need custom fault injection
+      approaches.
+    common_false_claim: "Use FIS to inject faults into any AWS service."
+    correct_action: "Check supported actions: aws fis list-actions. Use custom approaches for unsupported services."
+
+  - id: P6-free-service
+    trigger_words: ["FIS cost", "pricing", "free"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not accurately describe FIS pricing. FIS charges
+      per action-minute.
+    actual_behavior: >
+      FIS charges per action-minute for each action in the
+      experiment. Longer experiments with more actions cost more.
+      Additionally, any infrastructure changes caused by FIS
+      (e.g., launching replacement instances) incur standard
+      AWS charges. Check current pricing on the FIS pricing page.
+    common_false_claim: "FIS is free to use for chaos engineering."
+    correct_action: "FIS charges per action-minute. Calculate costs based on experiment duration and number of actions."
+
+  - id: P7-parallel-default
+    trigger_words: ["action order", "sequential", "one at a time"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest FIS actions execute sequentially by default.
+      Actions execute in parallel unless dependencies are defined.
+    actual_behavior: >
+      All actions in an FIS experiment execute in PARALLEL by
+      default. To enforce sequential execution, you must use
+      the startAfter property to define dependencies between
+      actions. Without explicit dependencies, all actions start
+      simultaneously when the experiment begins.
+    common_false_claim: "FIS runs actions one after another in the order defined."
+    correct_action: "Use startAfter to define action dependencies for sequential execution. Without it, actions run in parallel."
+
+  - id: P8-experiment-template-immutable
+    trigger_words: ["update template", "modify experiment", "change template"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest experiment templates cannot be modified.
+      Templates can be updated.
+    actual_behavior: >
+      Experiment templates CAN be updated using
+      update-experiment-template API. However, running experiments
+      use a snapshot of the template at start time. Updating a
+      template does not affect currently running experiments.
+      Changes apply to future experiment runs only.
+    common_false_claim: "You must create a new template to change experiment parameters."
+    correct_action: "Update existing templates: aws fis update-experiment-template. Changes apply to future experiments only."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

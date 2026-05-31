@@ -1,0 +1,135 @@
+# =============================================================================
+# Amazon QLDB "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-delete-history
+    trigger_words: ["delete history", "purge records", "remove journal"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest deleting or purging historical data. QLDB's
+      journal is immutable by design.
+    actual_behavior: >
+      The QLDB journal is append-only and immutable. DELETE
+      operations create a new revision marking the document as
+      deleted, but all previous revisions remain in the journal.
+      There is no way to remove historical data. This is the
+      fundamental value proposition of QLDB for audit trails.
+    common_false_claim: "Delete old records to save storage costs."
+    correct_action: "QLDB journal is immutable. Use lifecycle policies on exports for cost management."
+
+  - id: P2-standard-sql
+    trigger_words: ["SQL query", "JOIN", "ALTER TABLE", "standard SQL"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs write standard SQL for QLDB. PartiQL has different
+      syntax for inserts, updates, and some operations.
+    actual_behavior: >
+      PartiQL uses INSERT INTO table VALUE {...} (not VALUES).
+      UPDATE uses document-oriented syntax. JOINs have limitations.
+      No ALTER TABLE. Data types are Ion types (timestamp, decimal,
+      blob) not SQL types (DATETIME, NUMERIC, BINARY). Use
+      backticks for reserved words.
+    common_false_claim: "INSERT INTO table VALUES (1, 'name', '2024-01-01')"
+    correct_action: "INSERT INTO table VALUE {'id': 1, 'name': 'test', 'date': `2024-01-01T`}"
+
+  - id: P3-json-only
+    trigger_words: ["JSON data", "JSON format", "store JSON"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume QLDB uses JSON. QLDB uses Amazon Ion which is
+      a superset of JSON.
+    actual_behavior: >
+      QLDB stores data in Amazon Ion format. Ion supports all JSON
+      types plus: timestamp, blob, clob, decimal (arbitrary
+      precision), symbol, sexp. JSON is valid Ion but Ion has
+      richer type support. Use Ion libraries for proper serialization.
+    common_false_claim: "Store data as JSON in QLDB."
+    correct_action: "QLDB uses Ion format. JSON works but use Ion types for timestamps, decimals, etc."
+
+  - id: P4-no-index-needed
+    trigger_words: ["query without index", "full scan", "no index"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest queries work fine without indexes. Unindexed
+      queries cause full table scans and may be rejected.
+    actual_behavior: >
+      Queries without an indexed field in the WHERE clause perform
+      full table scans. QLDB may reject queries that would scan
+      too many documents. Maximum 5 indexes per table. Create
+      indexes on frequently queried fields. Indexes cannot be
+      dropped after creation.
+    common_false_claim: "Query any field without creating an index."
+    correct_action: "Create indexes on fields used in WHERE clauses. Max 5 per table."
+
+  - id: P5-transaction-unlimited
+    trigger_words: ["large transaction", "bulk insert", "batch operation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited transaction sizes. Transactions have
+      document count and size limits.
+    actual_behavior: >
+      Transactions have limits on the number of documents affected
+      and total transaction size. Large bulk operations must be
+      split into multiple transactions. OCC conflicts increase
+      with larger transactions. Use the QLDB driver's transaction
+      executor for automatic retry.
+    common_false_claim: "Insert millions of records in a single transaction."
+    correct_action: "Split large operations into smaller transactions. Use driver retry logic."
+
+  - id: P6-stream-replay
+    trigger_words: ["replay stream", "reprocess", "stream from beginning"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest replaying QLDB streams from the beginning.
+      Streams have a configurable start time but cannot replay.
+    actual_behavior: >
+      QLDB streams deliver data from the specified start time
+      forward. You cannot replay a stream. For historical data,
+      use journal export to S3. Streams deliver BLOCK_SUMMARY
+      and REVISION_DETAILS records. If a stream fails, create
+      a new stream with the appropriate start time.
+    common_false_claim: "Replay the stream to reprocess all historical data."
+    correct_action: "Use journal export for historical data. Create new stream for future data."
+
+  - id: P7-verification-optional
+    trigger_words: ["verify", "proof", "integrity check"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest verification is automatic. Verification must
+      be explicitly performed using digest and proof.
+    actual_behavior: >
+      Verification is not automatic. You must: (1) get the digest,
+      (2) get the revision with proof, (3) compute the hash chain
+      locally, (4) compare with the digest. This proves the
+      document hasn't been tampered with. Use the QLDB verification
+      library for hash computation.
+    common_false_claim: "QLDB automatically verifies data integrity."
+    correct_action: "Explicitly verify using get-digest and get-revision with proof computation."
+
+  - id: P8-ledger-backup
+    trigger_words: ["backup ledger", "snapshot", "point-in-time recovery"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest traditional backup/restore for QLDB. The journal
+      IS the backup — it's immutable and complete.
+    actual_behavior: >
+      QLDB doesn't have traditional backup/restore. The journal
+      itself is the complete, immutable record. For disaster
+      recovery, use journal export to S3 and/or QLDB streams to
+      Kinesis. To recreate a ledger, replay the exported journal.
+      Cross-region replication is not built-in.
+    common_false_claim: "Create a backup of the QLDB ledger."
+    correct_action: "Use journal export to S3 for archival. Use streams for near-real-time replication."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

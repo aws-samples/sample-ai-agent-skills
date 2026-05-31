@@ -1,0 +1,144 @@
+# =============================================================================
+# EC2 "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about EC2 behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-reboot-vs-stop-start
+    trigger_words: ["reboot", "restart", "stop and start", "migrate hardware"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate "reboot" and "stop+start" because both restart the instance.
+      They have fundamentally different effects on hardware, IPs, and instance store.
+    actual_behavior: >
+      Reboot: same host, same public IP, instance store preserved.
+      Stop+start: new host, new public IP (unless EIP), instance store LOST.
+    common_false_claim: >
+      "Reboot the instance to migrate to new hardware and fix the system status check."
+    correct_action: "Stop and start (NOT reboot) to migrate to new hardware."
+
+  - id: P2-security-group-deny-rules
+    trigger_words: ["deny rule", "block IP", "security group deny", "SG deny"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs know firewalls have deny rules. They assume security groups work
+      the same way. Security groups ONLY have allow rules.
+    actual_behavior: >
+      Security groups have ALLOW rules only. Default is deny-all-inbound,
+      allow-all-outbound. To block specific IPs, use NACLs.
+    common_false_claim: >
+      "Add a deny rule to the security group to block the attacker's IP."
+    correct_action: "Use a NACL deny rule to block specific IPs."
+
+  - id: P3-instance-store-persistence
+    trigger_words: ["instance store", "ephemeral", "local disk", "NVMe instance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs see "store" and "disk" and assume persistence. Instance store
+      is physically attached to the host and lost on stop/terminate.
+    actual_behavior: >
+      Instance store data survives ONLY reboot. Lost on: stop, terminate,
+      host failure, hibernation. No backup by AWS.
+    common_false_claim: >
+      "Stop the instance and the data on instance store will be preserved."
+
+  - id: P4-status-check-ownership
+    trigger_words: ["status check", "system status", "instance status"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse system status checks (AWS infrastructure) with instance
+      status checks (customer OS). The remediation is completely different.
+    actual_behavior: >
+      System status = AWS host problem → stop+start to migrate.
+      Instance status = OS problem → fix OS via system log/rescue instance.
+    common_false_claim: >
+      "Reboot to fix the system status check failure."
+    correct_action: "Stop and start (not reboot) for system status. Fix OS for instance status."
+
+  - id: P5-nacl-statefulness
+    trigger_words: ["NACL", "network ACL", "stateless", "return traffic"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs sometimes apply security group stateful behavior to NACLs.
+      NACLs are stateless — return traffic is NOT automatically allowed.
+    actual_behavior: >
+      NACLs require explicit rules for BOTH directions. Inbound allow
+      does NOT automatically allow outbound return traffic. Ephemeral
+      ports (1024-65535) must be explicitly allowed for return traffic.
+    common_false_claim: >
+      "The NACL allows inbound on port 443, so HTTPS responses will work."
+    correct_action: "Also add outbound rule for ephemeral ports 1024-65535."
+
+  - id: P6-ebs-gp2-baseline
+    trigger_words: ["gp2", "burst", "IOPS", "baseline"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs often state gp2 has 3000 IOPS baseline. That's the BURST
+      ceiling, not the baseline. Baseline is 3 IOPS/GB.
+    actual_behavior: >
+      gp2 baseline: 3 IOPS/GB (min 100, max 16000). Burst to 3000 IOPS
+      using I/O credits. A 100GB gp2 volume has 300 baseline IOPS, not 3000.
+    common_false_claim: >
+      "gp2 volumes have a baseline of 3000 IOPS."
+    correct_action: "gp2 baseline is 3 IOPS/GB. 3000 is the burst ceiling."
+
+  - id: P7-public-ip-persistence
+    trigger_words: ["public IP", "stop start", "IP address change"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs sometimes claim public IPs are preserved on stop+start, or
+      confuse auto-assigned public IPs with Elastic IPs.
+    actual_behavior: >
+      Auto-assigned public IPs change on stop+start. Only Elastic IPs
+      are static. Private IPs are always preserved.
+    common_false_claim: >
+      "The public IP will be the same after you stop and start the instance."
+
+  - id: P8-imds-hop-limit
+    trigger_words: ["IMDS", "metadata", "hop limit", "169.254.169.254"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not understand that containers add a network hop, making
+      IMDS unreachable with hop limit 1.
+    actual_behavior: >
+      Hop limit 1 = only the host can reach IMDS. Containers need hop
+      limit 2 because the container network namespace adds an extra hop.
+    common_false_claim: >
+      "IMDS is disabled because containers can't reach it."
+    correct_action: "Increase hop limit to 2, don't disable IMDS."
+
+  - id: P9-ebs-multi-attach-filesystem
+    trigger_words: ["Multi-Attach", "shared volume", "multiple instances"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs see "Multi-Attach" and assume it works like a shared filesystem.
+      It's a block device shared across instances — requires cluster-aware FS.
+    actual_behavior: >
+      Multi-Attach shares the raw block device. Using ext4/xfs will cause
+      data corruption. Must use cluster-aware filesystem (GFS2, OCFS2).
+    common_false_claim: >
+      "Use EBS Multi-Attach to share data between instances with ext4."
+
+  - id: P10-volume-modification-cooldown
+    trigger_words: ["modify volume", "resize", "change IOPS", "volume modification"]
+    hallucination_risk: LOW
+    why_llms_get_this_wrong: >
+      LLMs may not mention the 6-hour cooldown between volume modifications.
+    actual_behavior: >
+      After any volume modification (size, type, IOPS, throughput), there
+      is a 6-hour cooldown before the next modification can be initiated.
+    common_false_claim: >
+      "Just modify the volume again to increase IOPS further."
+    correct_action: "Wait 6 hours after the previous modification."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

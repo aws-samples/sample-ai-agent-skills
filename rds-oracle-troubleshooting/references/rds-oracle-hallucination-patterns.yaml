@@ -1,0 +1,127 @@
+# =============================================================================
+# RDS Oracle "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-rac-on-rds
+    trigger_words: ["RAC", "Real Application Clusters", "cluster interconnect", "GCS", "GES"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on general Oracle documentation suggest RAC for high
+      availability. RAC is not available on RDS — Multi-AZ with Data Guard
+      is the HA mechanism.
+    actual_behavior: >
+      RDS Oracle does not support RAC. High availability is achieved via
+      Multi-AZ deployments which use Oracle Data Guard (physical standby)
+      internally. Failover is automatic and managed by RDS.
+    common_false_claim: "Enable RAC on your RDS Oracle instance for high availability."
+    correct_action: "Use Multi-AZ deployment for HA. RDS manages Data Guard automatically."
+
+  - id: P2-direct-rman-access
+    trigger_words: ["RMAN", "rman target", "backup database", "RMAN catalog", "recovery manager"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to RMAN for Oracle backup/recovery. On RDS, RMAN is
+      not directly accessible. Backups are storage-level snapshots.
+    actual_behavior: >
+      RDS automated backups use EBS snapshots, not RMAN. For logical
+      backups, use Data Pump via rdsadmin.rdsadmin_datapump_util
+      procedures. RMAN commands cannot be executed.
+    common_false_claim: "Connect to RMAN and run BACKUP DATABASE to create a backup."
+    correct_action: "Use RDS automated backups (snapshots) or Data Pump via rdsadmin for logical backups."
+
+  - id: P3-manual-data-guard
+    trigger_words: ["Data Guard broker", "DGMGRL", "switchover", "standby database", "redo shipping"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest manual Data Guard configuration from on-premises
+      Oracle documentation. RDS manages Data Guard internally for
+      Multi-AZ and does not expose DG management interfaces.
+    actual_behavior: >
+      Multi-AZ uses Data Guard under the hood but is fully managed.
+      You cannot run DGMGRL, configure standby redo logs, or initiate
+      manual switchover/failover. RDS handles all DG operations.
+    common_false_claim: "Use DGMGRL to configure Data Guard for your RDS instance."
+    correct_action: "Enable Multi-AZ via modify-db-instance. RDS manages Data Guard automatically."
+
+  - id: P4-os-level-access
+    trigger_words: ["SSH", "OS access", "sqlnet.ora", "listener.ora", "tnsnames.ora", "$ORACLE_HOME"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on on-premises Oracle suggest editing OS-level config
+      files. RDS does not provide OS access.
+    actual_behavior: >
+      No SSH or OS access on RDS. Network configuration (sqlnet.ora
+      equivalent) is managed via option groups. Listener is managed by
+      RDS. Use the RDS logs API to access alert logs and trace files.
+    common_false_claim: "Edit sqlnet.ora to configure Oracle Net encryption."
+    correct_action: "Use RDS option groups to configure Oracle features. Use RDS logs API for log access."
+
+  - id: P5-unlimited-sga-tuning
+    trigger_words: ["SGA_TARGET", "SGA_MAX_SIZE", "memory_target", "AMM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest setting SGA to large fixed values without considering
+      RDS instance memory constraints. RDS uses DBInstanceClassMemory
+      formula for defaults.
+    actual_behavior: >
+      SGA and PGA are constrained by the instance class memory. The
+      default parameter group uses {DBInstanceClassMemory*3/4} for
+      sga_target. Over-allocating causes ORA-04031 or instance crashes.
+      memory_target (AMM) is not supported on RDS.
+    common_false_claim: "Set SGA_TARGET to 32G for better performance."
+    correct_action: "Use the DBInstanceClassMemory formula or scale the instance class. Never exceed 75% of instance memory for SGA."
+
+  - id: P6-character-set-change
+    trigger_words: ["change character set", "ALTER DATABASE CHARACTER SET", "CSSCAN", "CSALTER", "NLS_CHARACTERSET"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest ALTER DATABASE CHARACTER SET from on-premises docs.
+      Character set is immutable on RDS after instance creation.
+    actual_behavior: >
+      The database character set and national character set are set at
+      instance creation and cannot be changed. AL32UTF8 is the default.
+      Changing requires creating a new instance and migrating data.
+    common_false_claim: "Run ALTER DATABASE CHARACTER SET to change to AL32UTF8."
+    correct_action: "Create a new RDS instance with the desired character set and migrate data using Data Pump."
+
+  - id: P7-all-oracle-features-available
+    trigger_words: ["Oracle feature", "Advanced Compression", "partitioning", "OLAP", "Spatial"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume all Oracle features work on RDS. Many EE features
+      require specific option groups and licensing. SE2 has significant
+      feature restrictions.
+    actual_behavior: >
+      SE2 does not support partitioning, Advanced Compression, TDE,
+      Active Data Guard, Diagnostics Pack, or Tuning Pack. EE features
+      require BYOL licensing and may need option group configuration.
+      Some features (RAC, ASM, Grid Infrastructure) are not available
+      on any RDS edition.
+    common_false_claim: "Enable partitioning on your RDS Oracle SE2 instance."
+    correct_action: "Check edition compatibility. SE2 has limited features. EE requires BYOL and option group configuration."
+
+  - id: P8-direct-alert-log-access
+    trigger_words: ["alert log", "alert_*.log", "$ORACLE_BASE/diag", "ADR", "adrci"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest navigating the filesystem to read alert logs. RDS
+      does not provide filesystem access.
+    actual_behavior: >
+      Alert logs are accessed via the RDS logs API:
+      aws rds download-db-log-file-portion --log-file-name trace/alert_<SID>.log.
+      ADRCI is not available. Trace files are also accessed via the API.
+    common_false_claim: "Check $ORACLE_BASE/diag/rdbms/<db>/<SID>/trace/alert_<SID>.log."
+    correct_action: "Use aws rds download-db-log-file-portion or the RDS console to view alert and trace logs."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

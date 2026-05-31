@@ -1,0 +1,140 @@
+# =============================================================================
+# Amazon Macie "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-macie-scans-everything
+    trigger_words: ["Macie", "sensitive data", "data classification", "scan database", "scan EBS"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Macie for scanning databases, EBS volumes, or
+      other non-S3 data stores. Macie only scans Amazon S3.
+    actual_behavior: >
+      Macie is exclusively an S3 data classification service. It
+      discovers and classifies sensitive data stored in S3 buckets.
+      It cannot scan RDS, DynamoDB, EBS, EFS, or any other AWS
+      data store. For non-S3 sensitive data detection, use other
+      tools like database activity monitoring or custom solutions.
+    common_false_claim: "Use Macie to scan your RDS database for sensitive data."
+    correct_action: "Use Macie for S3 only. Use other tools for non-S3 data stores."
+
+  - id: P2-realtime-scanning
+    trigger_words: ["real-time", "continuous scanning", "immediate detection", "live monitoring"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim Macie provides real-time sensitive data detection.
+      Discovery jobs run on schedules, not in real-time.
+    actual_behavior: >
+      Discovery jobs run on configured schedules (daily, weekly,
+      monthly) or as one-time jobs. Objects added after a job
+      starts are not scanned until the next run. Automated
+      sensitive data discovery provides ongoing analysis but
+      is not instantaneous. For near-real-time, use daily
+      scheduled jobs.
+    common_false_claim: "Macie will immediately detect sensitive data when uploaded to S3."
+    correct_action: "Configure scheduled discovery jobs. Use daily frequency for near-real-time detection."
+
+  - id: P3-free-bucket-scanning
+    trigger_words: ["free scanning", "no cost", "bucket inventory", "automatic scanning"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Macie's free bucket inventory with paid
+      sensitive data scanning. Bucket inventory is free but
+      does not scan for sensitive data.
+    actual_behavior: >
+      Macie provides free S3 bucket inventory (metadata, encryption
+      status, public access). Sensitive data discovery (scanning
+      object contents) is paid per object evaluated. These are
+      different features. Having buckets in inventory does NOT
+      mean they are being scanned for sensitive data.
+    common_false_claim: "Enable Macie and it will automatically scan all your buckets for free."
+    correct_action: "Macie inventory is free. Discovery jobs for sensitive data scanning are paid per object."
+
+  - id: P4-custom-id-any-language
+    trigger_words: ["custom identifier", "custom pattern", "detection rule", "custom regex"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest custom data identifiers support complex
+      pattern languages or NLP. They use PCRE regex only.
+    actual_behavior: >
+      Custom data identifiers use PCRE regular expressions
+      with a 512-character limit. They support optional
+      keywords for proximity-based matching and ignore words.
+      They do NOT support NLP, machine learning, or complex
+      pattern languages. Test regex patterns thoroughly
+      before deploying.
+    common_false_claim: "Create a custom identifier using natural language patterns."
+    correct_action: "Use PCRE regex (max 512 chars) with optional keywords for custom identifiers."
+
+  - id: P5-sampling-no-impact
+    trigger_words: ["sampling", "sample depth", "percentage", "cost reduction"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest aggressive sampling without explaining the
+      risk of missing sensitive data in unsampled objects.
+    actual_behavior: >
+      Sampling depth controls what percentage of objects are
+      scanned. Lower sampling reduces cost but increases the
+      risk of missing sensitive data. A 10% sample of a bucket
+      with 1M objects scans only 100K objects. Sensitive data
+      in the other 900K objects is not detected. Use 100%
+      for compliance-critical buckets.
+    common_false_claim: "Set sampling to 10% to save costs — you'll still find all sensitive data."
+    correct_action: "Balance sampling depth with risk tolerance. Use 100% for compliance-critical buckets."
+
+  - id: P6-findings-auto-remediate
+    trigger_words: ["auto remediate", "automatic fix", "finding resolution", "auto encrypt"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Macie automatically remediates sensitive data
+      findings. Macie only detects — it does not remediate.
+    actual_behavior: >
+      Macie detects and reports sensitive data. It does NOT
+      automatically encrypt, delete, move, or restrict access
+      to sensitive data. Remediation must be done separately
+      using S3 operations, Lambda functions, or manual actions.
+      EventBridge can trigger automated remediation workflows.
+    common_false_claim: "Macie will automatically encrypt sensitive data it finds."
+    correct_action: "Use Macie for detection. Build remediation workflows with EventBridge + Lambda."
+
+  - id: P7-all-file-types
+    trigger_words: ["all files", "any format", "scan everything", "file type"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim Macie can scan any file type. Macie supports
+      specific file formats for content inspection.
+    actual_behavior: >
+      Macie supports specific file formats: CSV, JSON, JSON Lines,
+      TSV, Parquet, Avro, ORC, plain text, Microsoft Office docs,
+      PDF, and compressed archives (gzip, zip, tar). Binary files,
+      images, videos, and proprietary formats are not scanned for
+      content. Unsupported formats are skipped during discovery jobs.
+    common_false_claim: "Macie will scan all files in your S3 bucket regardless of format."
+    correct_action: "Check supported file formats. Unsupported formats are skipped during scanning."
+
+  - id: P8-macie-v1-commands
+    trigger_words: ["macie", "create-member", "get-master-account", "macie API"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs mix Macie v1 and v2 API commands. Macie v1 (classic)
+      has been discontinued. All current operations use macie2 API.
+    actual_behavior: >
+      Amazon Macie Classic (v1) has been discontinued. All current
+      Macie operations use the macie2 API namespace. Commands use
+      'aws macie2' not 'aws macie'. The v2 API has different
+      endpoints, parameters, and response formats. Do not use
+      v1 API commands or documentation.
+    common_false_claim: "Use aws macie create-member to add accounts."
+    correct_action: "Use aws macie2 commands. Macie Classic (v1) is discontinued."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

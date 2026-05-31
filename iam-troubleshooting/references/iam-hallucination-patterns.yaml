@@ -1,0 +1,114 @@
+# =============================================================================
+# IAM "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-permission-boundary-grants
+    trigger_words: ["permission boundary", "boundary policy", "maximum permissions"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs see "permissions" in the name and assume boundaries grant access.
+      They only set the ceiling — identity policies grant actual access.
+    actual_behavior: >
+      Permission boundaries define the maximum permissions. Effective
+      permissions = intersection of boundary AND identity policy. Both
+      must allow the action.
+    common_false_claim: "Add S3 access to the permission boundary to grant the user S3 access."
+    correct_action: "Add S3 access to BOTH the permission boundary AND the identity policy."
+
+  - id: P2-scp-management-account
+    trigger_words: ["SCP", "management account", "organization root"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume SCPs apply universally. The management account is exempt.
+    actual_behavior: >
+      SCPs never restrict the management account. Use IAM policies for
+      management account restrictions.
+    common_false_claim: "The SCP will prevent actions in the management account."
+    correct_action: "Use IAM policies for management account. SCPs only affect member accounts."
+
+  - id: P3-role-trust-one-side
+    trigger_words: ["assume role", "trust policy", "cross-account role"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs fix only the trust policy or only the IAM policy, missing
+      that both sides are required.
+    actual_behavior: >
+      Role assumption requires: trust policy allows the principal AND
+      the principal has sts:AssumeRole permission targeting the role ARN.
+    common_false_claim: "Update the trust policy and the role can be assumed."
+    correct_action: "Update BOTH the trust policy and the principal's IAM policy."
+
+  - id: P4-iam-instant-propagation
+    trigger_words: ["policy change", "immediate", "instant", "propagation"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume API changes are instant. IAM is eventually consistent.
+    actual_behavior: >
+      IAM changes may take several seconds to propagate globally. A
+      policy change might not take effect immediately.
+    common_false_claim: "The policy change will take effect immediately."
+    correct_action: "Wait a few seconds after policy changes. IAM is eventually consistent."
+
+  - id: P5-mfa-long-term-keys
+    trigger_words: ["MFA", "MultiFactorAuth", "access key", "CLI MFA"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume MFA conditions work with all credential types. They
+      only work with temporary credentials from STS.
+    actual_behavior: >
+      aws:MultiFactorAuthPresent is only in temporary credentials.
+      Long-term access keys never have this condition, even with MFA
+      configured. Use GetSessionToken with MFA to get temp credentials.
+    common_false_claim: "Add MFA condition to the policy and CLI access will require MFA."
+    correct_action: "Users must call GetSessionToken with MFA token, then use the temporary credentials."
+
+  - id: P6-wildcard-principal-safe
+    trigger_words: ["Principal", "wildcard", "star", "anonymous"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may use Principal: * without realizing it means everyone
+      including unauthenticated users.
+    actual_behavior: >
+      Principal: * means ALL principals including anonymous. Always
+      combine with Condition keys (aws:PrincipalOrgID, aws:SourceAccount)
+      to restrict access.
+    common_false_claim: "Use Principal: * with a Condition to safely allow access."
+    correct_action: "Use specific principal ARNs when possible. If using *, always add restrictive Conditions."
+
+  - id: P7-resource-policy-cross-account
+    trigger_words: ["resource policy", "cross-account", "bucket policy", "key policy"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not know that resource policies can grant cross-account
+      access without the identity policy also allowing it.
+    actual_behavior: >
+      Resource-based policies (S3, KMS, Lambda, SNS, SQS) can grant
+      cross-account access directly. The calling account doesn't need
+      an identity policy for the action if the resource policy allows it.
+    common_false_claim: "You need both IAM policy and resource policy for cross-account access."
+    correct_action: "Resource policies alone can grant cross-account access (exception to normal evaluation)."
+
+  - id: P8-session-policy-grants
+    trigger_words: ["session policy", "AssumeRole", "scope down"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may suggest session policies can expand permissions beyond
+      the role's policies.
+    actual_behavior: >
+      Session policies can only restrict, never expand. Effective
+      session permissions = intersection of role policy and session policy.
+    common_false_claim: "Pass a session policy to grant additional S3 access during this session."
+    correct_action: "Session policies only restrict. Add permissions to the role itself."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

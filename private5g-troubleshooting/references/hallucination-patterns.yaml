@@ -1,0 +1,140 @@
+# =============================================================================
+# AWS Private 5G "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-software-only-activation
+    trigger_words: ["activate radio", "enable radio unit", "software activation"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest radio units can be activated purely through
+      software or API calls. Physical installation is required.
+    actual_behavior: >
+      Radio units are physical hardware that must be shipped,
+      physically installed, powered on, and connected to the
+      network before they can be activated. The activation
+      process also requires CBRS Spectrum Access System (SAS)
+      registration which happens automatically after physical setup.
+    common_false_claim: "Activate the radio unit using the AWS CLI activate-network-resource command."
+    correct_action: "Verify physical installation, power, and network connectivity first. Then check SAS registration status via the console."
+
+  - id: P2-global-availability
+    trigger_words: ["deploy Private 5G", "any region", "global", "international"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs treat Private 5G like a standard AWS service available
+      globally. It uses CBRS spectrum which is US-only.
+    actual_behavior: >
+      AWS Private 5G uses CBRS Band 48 (3.5 GHz) spectrum which
+      is regulated by the FCC and only available in the United
+      States. The service is only available in select US regions.
+      There is no international equivalent or workaround.
+    common_false_claim: "Deploy AWS Private 5G in eu-west-1 for your European office."
+    correct_action: "Confirm deployment location is in the US. For international sites, evaluate alternative connectivity solutions."
+
+  - id: P3-third-party-sims
+    trigger_words: ["bring your own SIM", "third-party SIM", "carrier SIM", "BYOD SIM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume SIM cards work like consumer mobile where you
+      can swap SIMs. Private 5G requires AWS-provided SIMs.
+    actual_behavior: >
+      AWS Private 5G only supports AWS-provided SIM cards that
+      are shipped with the network hardware order. Third-party
+      SIM cards from mobile carriers cannot be used. Each SIM
+      is pre-configured for the specific Private 5G network.
+    common_false_claim: "Insert any compatible SIM card into the device to connect to your Private 5G network."
+    correct_action: "Order SIM cards through the Private 5G console. Use only AWS-provided SIMs for device connectivity."
+
+  - id: P4-instant-throughput
+    trigger_words: ["5G speed", "gigabit", "maximum throughput", "bandwidth guarantee"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs quote theoretical 5G speeds. Private 5G CBRS
+      throughput is significantly lower and environment-dependent.
+    actual_behavior: >
+      AWS Private 5G uses CBRS Band 48 with limited bandwidth
+      allocations. Actual throughput depends on the number of
+      radio units, connected devices, physical environment,
+      interference, and distance. Throughput is typically in
+      the tens to low hundreds of Mbps, not multi-gigabit.
+    common_false_claim: "AWS Private 5G delivers multi-gigabit speeds like commercial 5G networks."
+    correct_action: "Set realistic throughput expectations based on CBRS capabilities. Test actual throughput in the deployment environment."
+
+  - id: P5-no-physical-planning
+    trigger_words: ["deploy anywhere", "quick setup", "instant network"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Private 5G can be deployed without physical
+      site planning. RF planning is essential.
+    actual_behavior: >
+      Deploying Private 5G requires physical site planning
+      including radio unit placement, coverage area mapping,
+      power availability, network connectivity, and RF
+      interference assessment. Poor planning leads to coverage
+      gaps and performance issues.
+    common_false_claim: "Just order the hardware and place radio units anywhere in your facility."
+    correct_action: "Conduct RF site survey before deployment. Plan radio unit placement for optimal coverage and minimal interference."
+
+  - id: P6-vpc-direct-connection
+    trigger_words: ["direct connection", "VPC peering", "private link"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Private 5G VPC integration with other AWS
+      networking services like VPC Peering or PrivateLink.
+    actual_behavior: >
+      Private 5G integrates with your VPC through elastic
+      network interfaces (ENIs) in your specified subnet.
+      Device traffic is routed through these ENIs into your
+      VPC. This is not VPC Peering, PrivateLink, or Direct
+      Connect — it is a managed ENI-based integration.
+    common_false_claim: "Set up VPC Peering to connect your Private 5G network to your VPC."
+    correct_action: "Configure the VPC subnet during network creation. Ensure the subnet has available IPs and proper security group rules."
+
+  - id: P7-automatic-coverage
+    trigger_words: ["full coverage", "automatic coverage", "seamless roaming"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest a single radio unit provides full facility
+      coverage. Coverage depends on unit count and placement.
+    actual_behavior: >
+      Each radio unit has a limited coverage radius affected
+      by the physical environment. Large facilities require
+      multiple radio units for full coverage. There is no
+      automatic mesh or self-healing coverage — each unit
+      covers its own area independently.
+    common_false_claim: "One radio unit will cover your entire warehouse."
+    correct_action: "Calculate coverage requirements based on facility size. Deploy multiple radio units with overlapping coverage for reliability."
+
+  - id: P8-carrier-interop
+    trigger_words: ["carrier", "roaming", "public network", "handoff"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Private 5G can interoperate with public
+      carrier networks. It is an isolated private network.
+    actual_behavior: >
+      AWS Private 5G is an isolated private network. Devices
+      connected to Private 5G cannot roam to public carrier
+      networks and vice versa. There is no handoff between
+      Private 5G and commercial 5G/LTE networks.
+    common_false_claim: "Devices will automatically fall back to the public carrier network when out of Private 5G range."
+    correct_action: "Design coverage to meet all connectivity needs within the private network. Use separate connectivity for public network access."
+
+remediation_hallucinations:
+
+  - id: R1-api-only-fix
+    false_pattern: "Fix radio unit issues by calling the activate-network-site API"
+    why_wrong: >
+      Radio unit issues often require physical intervention
+      (power cycling, cable checks, repositioning). API calls
+      alone cannot resolve hardware problems.
+    correct_approach: "Check physical installation first: power, cabling, positioning. Then verify SAS registration and network status via API."
+
+  - id: R2-delete-recreate-network
+    false_pattern: "Delete and recreate the network to fix connectivity issues"
+    why_wrong: >
+      Network deletion requires hardware return and reorder,
+      taking days to weeks. This is not a quick fix and may
+      result in extended downtime.
+    correct_approach: "Diagnose the specific connectivity issue (radio, SIM, VPC). Most issues can be resolved without network recreation."

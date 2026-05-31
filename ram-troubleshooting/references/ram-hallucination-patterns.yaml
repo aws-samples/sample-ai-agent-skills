@@ -1,0 +1,150 @@
+# =============================================================================
+# AWS Resource Access Manager "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-invitation-always-required
+    trigger_words: ["resource share", "invitation", "accept invitation", "share resources"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs always suggest sending and accepting invitations for RAM
+      sharing. Within an organization with RAM sharing enabled,
+      invitations are not needed.
+    actual_behavior: >
+      When RAM organization sharing is enabled (aws ram
+      enable-sharing-with-aws-organization), resources shared with
+      organization member accounts are automatically available.
+      No invitation is sent or required. Invitations are ONLY
+      needed for sharing with accounts outside the organization
+      or when organization sharing is not enabled.
+    common_false_claim: "Send an invitation to the member account and have them accept it."
+    correct_action: "For organization sharing, resources are auto-available. Only use invitations for external accounts."
+
+  - id: P2-all-resources-shareable
+    trigger_words: ["share resource", "RAM share", "resource type", "shareable"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest sharing any AWS resource through RAM. Only
+      specific resource types are supported.
+    actual_behavior: >
+      RAM supports a limited set of resource types for sharing.
+      Common types: VPC subnets, Transit Gateways, Route 53
+      Resolver rules, License Manager configurations, Aurora DB
+      clusters, Outposts, CodeBuild projects. Many resource types
+      (S3 buckets, Lambda functions, DynamoDB tables) are NOT
+      shareable through RAM. Check with: aws ram list-resource-types.
+    common_false_claim: "Share your S3 bucket using RAM for cross-account access."
+    correct_action: "Check if the resource type is supported: aws ram list-resource-types. Use resource policies for unsupported types."
+
+  - id: P3-ram-permissions-are-iam
+    trigger_words: ["RAM permission", "managed permission", "share permission", "access control"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate RAM permissions with IAM policies. They are
+      separate permission systems that work together.
+    actual_behavior: >
+      RAM permissions define what actions participants can perform
+      on shared resources. They are NOT IAM policies. Both RAM
+      permissions AND IAM policies must allow an action. RAM
+      permissions are attached to resource shares. Each resource
+      type has a default managed permission. Custom permissions
+      can provide fine-grained access. IAM policies in the
+      participant account must also allow the actions.
+    common_false_claim: "The RAM permission grants full access to the shared resource."
+    correct_action: "Verify BOTH RAM permission and IAM policy allow the action. They work together, not independently."
+
+  - id: P4-cross-region-sharing
+    trigger_words: ["cross-region", "different region", "multi-region", "share across regions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest RAM can share resources across regions.
+      RAM sharing is region-specific for most resource types.
+    actual_behavior: >
+      RAM shares resources within the same AWS region only.
+      A VPC subnet in us-east-1 cannot be shared for use in
+      us-west-2. The resource and the participant's usage must
+      be in the same region. Some global resources (like Route 53
+      hosted zones) have different sharing mechanisms. Transit
+      Gateway cross-region peering is separate from RAM sharing.
+    common_false_claim: "Share the Transit Gateway across regions using RAM."
+    correct_action: "RAM sharing is same-region only. Use Transit Gateway peering for cross-region connectivity."
+
+  - id: P5-shared-subnet-full-access
+    trigger_words: ["shared subnet", "VPC sharing", "participant account", "shared VPC"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest participants have full control over shared
+      subnets. Participants have limited permissions.
+    actual_behavior: >
+      Participants can launch resources (EC2, RDS, etc.) into
+      shared subnets but CANNOT modify the subnet, VPC, route
+      tables, NACLs, or internet gateways. Security groups are
+      NOT shared — each account manages its own. Participants
+      cannot see other accounts' resources. The owner retains
+      full control. Participants need their own security groups
+      for resources in shared subnets.
+    common_false_claim: "The participant account can modify the shared subnet's route table."
+    correct_action: "Participants can only launch resources. VPC/subnet/route table changes require the owner account."
+
+  - id: P6-auto-accept-external
+    trigger_words: ["auto accept", "automatic acceptance", "external sharing", "invitation auto"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest external sharing invitations are auto-accepted.
+      External invitations always require manual acceptance.
+    actual_behavior: >
+      Invitations for resource shares with external accounts
+      (outside the organization) always require manual acceptance
+      by the recipient. There is no auto-accept for external
+      invitations. Organization sharing bypasses invitations
+      entirely (no invitation is sent). The invitation expires
+      after 7 days if not accepted.
+    common_false_claim: "Configure auto-accept for external resource share invitations."
+    correct_action: "External invitations require manual acceptance. Use organization sharing to avoid invitations for member accounts."
+
+  - id: P7-delete-share-safe
+    trigger_words: ["delete resource share", "remove share", "unshare", "revoke access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deleting resource shares is safe and
+      non-disruptive. Deletion immediately removes access.
+    actual_behavior: >
+      Deleting a resource share immediately removes all
+      participant access to shared resources. Resources launched
+      by participants (e.g., EC2 instances in shared subnets)
+      continue to run but may lose connectivity or functionality.
+      This can cause service disruptions. Always verify no
+      critical workloads depend on the share before deleting.
+      Consider removing individual principals instead of
+      deleting the entire share.
+    common_false_claim: "Delete the resource share to clean up — existing resources won't be affected."
+    correct_action: "Verify no workloads depend on the share. Remove individual principals for targeted access revocation."
+
+  - id: P8-org-sharing-auto-enabled
+    trigger_words: ["organization sharing", "org sharing", "enable sharing", "RAM organization"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume organization sharing is automatically enabled
+      when Organizations is set up. It requires explicit enablement.
+    actual_behavior: >
+      RAM organization sharing must be explicitly enabled by
+      running: aws ram enable-sharing-with-aws-organization
+      from the management account. This is a one-time setup
+      that creates a service-linked role. Without this, sharing
+      within the organization requires invitations just like
+      external sharing. Check status by attempting to share
+      with an organization principal.
+    common_false_claim: "Organization sharing works automatically once Organizations is enabled."
+    correct_action: "Explicitly enable: aws ram enable-sharing-with-aws-organization from the management account."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

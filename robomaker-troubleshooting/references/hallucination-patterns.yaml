@@ -1,0 +1,124 @@
+# =============================================================================
+# AWS RoboMaker "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-simulation-is-deployment
+    trigger_words: ["simulation", "deploy robot", "run on robot"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse simulation with physical robot deployment.
+      Simulation runs in AWS cloud, not on physical robots.
+    actual_behavior: >
+      RoboMaker simulation jobs run in AWS-managed compute using
+      Gazebo simulator. They do NOT deploy to physical robots.
+      Physical deployment uses fleet management with Greengrass.
+    common_false_claim: "Run a simulation job to deploy your application to the robot."
+    correct_action: "Use simulation for testing. Use fleet deployment for physical robots."
+
+  - id: P2-ros-version-flexible
+    trigger_words: ["ROS version", "ROS1", "ROS2", "melodic", "foxy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest ROS versions are interchangeable.
+      ROS1 and ROS2 are fundamentally different.
+    actual_behavior: >
+      ROS1 (Melodic) and ROS2 (Foxy) have different APIs,
+      message formats, and build systems. Robot and simulation
+      applications must use the same ROS version. Cross-version
+      communication requires bridges.
+    common_false_claim: "Use any ROS version for your robot application."
+    correct_action: "Match ROS versions between robot and simulation apps. Use ROS2 for new projects."
+
+  - id: P3-direct-robot-deployment
+    trigger_words: ["deploy to robot", "fleet deployment", "robot update"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest direct deployment from RoboMaker to robots.
+      Deployment requires Greengrass infrastructure.
+    actual_behavior: >
+      Fleet deployment creates Greengrass deployment groups.
+      Each robot must have Greengrass Core installed with valid
+      IoT certificates. RoboMaker orchestrates the deployment
+      through Greengrass, not directly.
+    common_false_claim: "RoboMaker deploys directly to robots over the network."
+    correct_action: "Install Greengrass Core on robots. Register as fleet members. Deploy via RoboMaker."
+
+  - id: P4-unlimited-simulation-resources
+    trigger_words: ["simulation resources", "GPU simulation", "parallel simulation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited simulation compute.
+      Concurrent job limits and resource quotas apply.
+    actual_behavior: >
+      Each account has concurrent simulation job limits per region.
+      GPU-enabled simulations have additional constraints. Batch
+      simulation jobs share the same quota. Exceeding limits
+      returns LimitExceededException.
+    common_false_claim: "Run unlimited parallel simulations for testing."
+    correct_action: "Check service quotas. Request limit increases. Use batch simulation for parallel runs."
+
+  - id: P5-instant-world-generation
+    trigger_words: ["world generation", "WorldForge", "simulation world"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest world generation is instant.
+      It takes 10-60 minutes depending on complexity.
+    actual_behavior: >
+      WorldForge generates 3D environments from templates.
+      Generation is asynchronous and compute-intensive. Simple
+      worlds take 10-15 minutes, complex worlds up to 60 minutes.
+      Generation jobs have concurrency limits.
+    common_false_claim: "Generate a simulation world in seconds."
+    correct_action: "Submit generation job and wait. Monitor status. Plan for generation time."
+
+  - id: P6-any-architecture
+    trigger_words: ["robot architecture", "ARM", "x86", "cross-compile"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs ignore architecture requirements for robot applications.
+    actual_behavior: >
+      Robot applications must be compiled for the target architecture.
+      X86_64 for simulation and x86 robots. ARM64 for ARM-based
+      robots. Architecture mismatch causes deployment failures.
+    common_false_claim: "Robot applications work on any architecture."
+    correct_action: "Build for target architecture. Use X86_64 for simulation, ARM64 for ARM robots."
+
+  - id: P7-simulation-gui-direct
+    trigger_words: ["Gazebo GUI", "RViz", "simulation visualization"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest direct GUI access to simulation tools.
+      Port forwarding is required.
+    actual_behavior: >
+      Simulation tools (Gazebo, RViz, terminal) run inside the
+      simulation environment. Direct access is not available.
+      Use RoboMaker console for visualization or configure
+      port forwarding for tool access.
+    common_false_claim: "Open Gazebo directly to view the simulation."
+    correct_action: "Use RoboMaker console or configure port forwarding for tool access."
+
+  - id: P8-no-s3-needed
+    trigger_words: ["application bundle", "simulation output", "robot package"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs omit S3 requirements for application storage.
+    actual_behavior: >
+      Application bundles must be stored in S3. Simulation outputs
+      (logs, rosbags, videos) are written to S3. IAM roles need
+      S3 read/write permissions. Incorrect S3 configuration is
+      a common cause of job failures.
+    common_false_claim: "Upload your application directly to RoboMaker."
+    correct_action: "Store bundles in S3. Configure output S3 paths. Ensure IAM S3 permissions."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

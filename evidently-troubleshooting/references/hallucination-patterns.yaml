@@ -1,0 +1,159 @@
+# =============================================================================
+# CloudWatch Evidently "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-launches-collect-metrics
+    trigger_words: ["launch", "metrics", "launch results", "launch analysis"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate launches with experiments. Launches control
+      rollout percentages but do NOT collect or analyze metrics.
+    actual_behavior: >
+      Launches manage gradual feature rollouts by controlling what
+      percentage of traffic sees each variation. They do NOT collect
+      metrics, perform statistical analysis, or determine winning
+      variations. For metric-based analysis, use experiments.
+      Launches and experiments can run simultaneously on the same
+      feature.
+    common_false_claim: "Check the launch results to see which variation performed better."
+    correct_action: "Use experiments for metric analysis. Launches only control traffic allocation."
+
+  - id: P2-instant-experiment-results
+    trigger_words: ["experiment results", "winner", "best variation", "conclusive"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest experiment results are immediately available
+      and conclusive. Results require statistical significance.
+    actual_behavior: >
+      Experiment results use Bayesian inference and require
+      sufficient sample size for statistical significance. Early
+      results may show trends but are not conclusive. The
+      confidence interval must be checked before declaring a
+      winner. Insufficient data produces unreliable results.
+    common_false_claim: "The experiment shows variation B is the winner after 100 evaluations."
+    correct_action: "Check confidence intervals in experiment results. Ensure sufficient sample size before concluding."
+
+  - id: P3-change-variation-type
+    trigger_words: ["change type", "update variation", "modify feature type"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest variation types can be changed after creation.
+      They are immutable.
+    actual_behavior: >
+      Feature variation types (boolean, string, long, double) are
+      set at creation time and cannot be changed. Attempting to
+      update the variation type will fail. To change the type,
+      the feature must be deleted and recreated with the correct
+      type, which disrupts any active launches or experiments.
+    common_false_claim: "Update the feature to change the variation type from boolean to string."
+    correct_action: "Delete and recreate the feature with the correct variation type. Stop active launches/experiments first."
+
+  - id: P4-automatic-data-delivery
+    trigger_words: ["logs", "data delivery", "automatic", "default export"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume data delivery is enabled by default.
+      It must be explicitly configured at the project level.
+    actual_behavior: >
+      Data delivery to S3 or CloudWatch Logs is NOT enabled by
+      default. It must be configured at the project level using
+      update-project-data-delivery. All features and experiments
+      in the project share the same delivery configuration.
+      Missing evaluation or event data usually means delivery
+      was never configured.
+    common_false_claim: "Check your Evidently logs in S3 — they're delivered automatically."
+    correct_action: "Configure data delivery at the project level before expecting data export."
+
+  - id: P5-client-side-api-calls
+    trigger_words: ["client-side", "local evaluation", "SDK", "evaluate locally"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest client-side evaluation still calls the
+      EvaluateFeature API. It evaluates locally.
+    actual_behavior: >
+      Client-side (local) evaluation downloads feature rules to
+      the SDK and evaluates them locally without calling the
+      EvaluateFeature API. This reduces latency and allows
+      offline evaluation. However, evaluation events are still
+      sent asynchronously for data collection. Server-side
+      evaluation calls the API for each evaluation.
+    common_false_claim: "Client-side evaluation calls the EvaluateFeature API with lower latency."
+    correct_action: "Client-side evaluation is local. Check SDK configuration for rule download and local evaluation setup."
+
+  - id: P6-segments-auto-detect
+    trigger_words: ["segment", "auto-detect", "user group", "automatic segmentation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest segments automatically detect user groups.
+      Segments require explicit attribute matching rules.
+    actual_behavior: >
+      Segments define user subsets using explicit pattern matching
+      rules on entity attributes. The application must pass entity
+      attributes in the EvaluateFeature call. Segments do NOT
+      automatically detect or classify users. If attributes are
+      not passed, segment rules cannot match.
+    common_false_claim: "Evidently automatically segments your users based on behavior."
+    correct_action: "Define segment rules with attribute patterns. Ensure the application passes required entity attributes."
+
+  - id: P7-experiments-control-rollout
+    trigger_words: ["experiment", "rollout", "percentage", "traffic split"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate experiments with launches for traffic control.
+      Experiments measure impact; launches control rollout.
+    actual_behavior: >
+      Experiments allocate traffic to variations for measurement
+      purposes but are not designed for gradual rollout control.
+      Launches are the mechanism for controlling rollout percentages
+      with scheduled steps. An experiment runs alongside a launch
+      to measure the impact of variations.
+    common_false_claim: "Use an experiment to gradually roll out the feature to 50% of users."
+    correct_action: "Use a launch for gradual rollout. Use an experiment to measure the impact of variations."
+
+  - id: P8-free-unlimited-evaluations
+    trigger_words: ["free", "pricing", "cost", "evaluations limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not accurately represent Evidently pricing which
+      is based on evaluation events and data analysis.
+    actual_behavior: >
+      Evidently pricing is based on the number of evaluation events
+      (EvaluateFeature calls and client-side evaluations) and
+      Evidently analysis events (experiment metric events). There
+      is a free tier, but beyond that, charges apply per million
+      events. Data delivery to S3 or CloudWatch Logs incurs
+      additional storage costs.
+    common_false_claim: "Evidently is free to use with unlimited evaluations."
+    correct_action: "Check pricing based on evaluation and analysis event volumes. Monitor usage to control costs."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-project
+    trigger_words: ["delete project", "recreate project", "start over"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a project deletes ALL features, launches, experiments,
+      and historical data within it. This is irreversible and
+      disrupts all active feature flags and experiments.
+    correct_approach: >
+      Update the existing project configuration instead of deleting.
+      Use update-project for settings changes and update-project-data-delivery
+      for data delivery changes. Only delete if the project is
+      truly no longer needed and all features have been migrated.
+
+  - id: R2-stop-experiment-early
+    trigger_words: ["stop experiment", "end early", "cancel experiment"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Stopping an experiment early freezes results at that point.
+      If insufficient data has been collected, results will be
+      inconclusive and cannot be recalculated. The experiment
+      cannot be resumed after stopping.
+    correct_approach: >
+      Check experiment results confidence intervals before stopping.
+      If results are not yet statistically significant, allow the
+      experiment to continue collecting data. Only stop when
+      sufficient confidence is achieved or if the experiment is
+      causing user impact.

@@ -1,0 +1,139 @@
+# =============================================================================
+# CloudFormation "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-update-rollback-failed-recovery
+    trigger_words: ["UPDATE_ROLLBACK_FAILED", "stuck stack", "rollback failed"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest deleting and recreating the stack or waiting for
+      automatic recovery. There is no automatic recovery from
+      UPDATE_ROLLBACK_FAILED. The only options are ContinueUpdateRollback
+      with resources to skip, or deleting the entire stack.
+    actual_behavior: >
+      UPDATE_ROLLBACK_FAILED means the rollback itself failed. Use
+      aws cloudformation continue-update-rollback --stack-name <stack>
+      --resources-to-skip <logical-id-1> <logical-id-2> to skip
+      problematic resources and complete the rollback.
+    common_false_claim: "Wait for CloudFormation to automatically recover the stack."
+    correct_action: "Use continue-update-rollback with --resources-to-skip for the failing resources."
+
+  - id: P2-custom-resource-timeout
+    trigger_words: ["custom resource", "timeout", "Lambda custom", "cfn-response"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs claim custom resource failures are immediate. CloudFormation
+      waits up to 1 hour (default) for the Lambda to send a response
+      to the pre-signed S3 URL before timing out.
+    actual_behavior: >
+      Custom resources have a 1-hour default timeout. The Lambda must
+      explicitly send SUCCESS or FAILED to the pre-signed URL. If the
+      Lambda crashes or doesn't send a response, CloudFormation waits
+      the full timeout period. The ServiceTimeout property can customize
+      this (1-3600 seconds).
+    common_false_claim: "The custom resource failed immediately because the Lambda errored."
+    correct_action: "Check Lambda logs for errors. Ensure cfn-response or cfn-send is called in all code paths including error handlers."
+
+  - id: P3-circular-dependency-detection-timing
+    trigger_words: ["circular dependency", "circular reference", "depends on cycle"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest circular dependencies cause deployment failures
+      mid-creation. They are actually detected at template validation
+      time, before any resources are provisioned.
+    actual_behavior: >
+      CloudFormation detects circular dependencies during validate-template
+      or at the very start of create/update operations. No resources are
+      created before the cycle is detected. The error message identifies
+      the resources involved in the cycle.
+    common_false_claim: "The stack failed mid-creation due to a circular dependency."
+    correct_action: "Fix the template to break the cycle. Use Fn::ImportValue, Fn::Sub, or restructure resource relationships."
+
+  - id: P4-drift-coverage
+    trigger_words: ["drift detection", "drift", "out of band changes"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim drift detection covers all resources in a stack.
+      Many resource types do not support drift detection and are
+      silently skipped.
+    actual_behavior: >
+      Drift detection only covers resource types that explicitly support
+      it. Unsupported resources are skipped without warning. The drift
+      results only include resources that were actually checked. A stack
+      showing IN_SYNC may still have drifted unsupported resources.
+    common_false_claim: "Drift detection shows the stack is fully in sync with the template."
+    correct_action: "Check which resource types support drift detection. Manually verify unsupported resources."
+
+  - id: P5-dependson-guarantees
+    trigger_words: ["DependsOn", "depends on", "resource ordering", "resource readiness"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume DependsOn guarantees the dependency is fully
+      functional. It only guarantees CREATE_COMPLETE status, which
+      does not mean the resource is ready to accept traffic.
+    actual_behavior: >
+      DependsOn ensures CloudFormation waits for CREATE_COMPLETE before
+      starting the dependent resource. But CREATE_COMPLETE only means
+      CloudFormation's API call succeeded. The resource may still be
+      initializing (e.g., RDS instance, ECS service stabilization).
+    common_false_claim: "Add DependsOn to ensure the database is ready before the application starts."
+    correct_action: "Use DependsOn for ordering. Use wait conditions or custom resources for readiness checks."
+
+  - id: P6-nested-stack-error-location
+    trigger_words: ["nested stack", "embedded stack", "child stack"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs diagnose from the parent stack events. The parent only shows
+      "Embedded stack was not successfully created." The actual error
+      is in the nested stack's own events.
+    actual_behavior: >
+      Nested stacks fail from the inside out. The parent stack event
+      only indicates the nested stack failed. The root cause is in the
+      nested stack's events. For deeply nested stacks, you must traverse
+      each level to find the innermost failure.
+    common_false_claim: "The parent stack event shows the root cause of the nested stack failure."
+    correct_action: "Navigate to the nested stack ARN and check its events. Repeat for deeper nesting levels."
+
+  - id: P7-resource-replacement-triggers
+    trigger_words: ["replacement", "resource replaced", "recreate", "immutable property"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not accurately predict which property changes trigger
+      resource replacement vs in-place update. Some replacements are
+      conditional on the specific values.
+    actual_behavior: >
+      Resource replacement is triggered by changes to immutable properties
+      (e.g., changing an EC2 instance's AvailabilityZone, an RDS instance's
+      Engine). Change sets show "Replacement: True" or "Replacement:
+      Conditional" but conditional replacements depend on runtime values.
+    common_false_claim: "Changing this property will update the resource in place."
+    correct_action: "Always create a change set first. Check the Replacement field. For Conditional, test in a non-production environment."
+
+  - id: P8-cdk-vs-cloudformation-errors
+    trigger_words: ["CDK", "cdk synth", "cdk deploy", "construct"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs conflate CDK synth errors (local, code-level) with CDK
+      deploy errors (remote, CloudFormation-level). The troubleshooting
+      approach is completely different for each.
+    actual_behavior: >
+      CDK synth runs locally and generates a CloudFormation template.
+      Errors here are TypeScript/Python/Java code issues, missing
+      context values, or construct library bugs. CDK deploy sends the
+      template to CloudFormation. Errors here are IAM permissions,
+      resource limits, or service-specific failures.
+    common_false_claim: "The CDK deploy failed because of a code error in the construct."
+    correct_action: "Check if the error is during synth (local) or deploy (remote). Synth errors: fix code. Deploy errors: check CloudFormation stack events."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

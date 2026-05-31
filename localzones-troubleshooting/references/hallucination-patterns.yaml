@@ -1,0 +1,160 @@
+# =============================================================================
+# AWS Local Zones "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-all-services-available
+    trigger_words: ["Local Zone", "services", "available", "supported"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume all AWS services work in Local Zones like they
+      do in regular regions. Only a subset of services is available.
+    actual_behavior: >
+      Local Zones support a limited subset of AWS services. Core
+      services like EC2, EBS, VPC, ELB, and some RDS engines are
+      available. Services like Lambda, ECS Fargate, S3 (local),
+      DynamoDB, SQS, SNS, and most managed services are NOT
+      available in Local Zones. Workloads requiring unavailable
+      services must use the parent region.
+    common_false_claim: "Deploy your Lambda functions in the Local Zone for lower latency."
+    correct_action: "Check service availability per Local Zone. Use parent region for unsupported services."
+
+  - id: P2-auto-enabled
+    trigger_words: ["Local Zone", "enable", "opt-in", "activate"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Local Zones are enabled by default like regular
+      Availability Zones. They require explicit opt-in.
+    actual_behavior: >
+      Local Zones require explicit opt-in per zone group using
+      `aws ec2 modify-availability-zone-group --opt-in-status opted-in`.
+      Without opt-in, the Local Zone does not appear in describe
+      calls, subnet creation, or instance launch options. Opt-in
+      is per-account and must be done in each account that needs
+      Local Zone access.
+    common_false_claim: "Local Zones are available automatically in your account."
+    correct_action: "Opt in to each Local Zone group explicitly. Verify with describe-availability-zones."
+
+  - id: P3-same-pricing
+    trigger_words: ["Local Zone", "pricing", "cost", "same price"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Local Zone pricing matches the parent region.
+      Pricing is typically higher due to infrastructure costs.
+    actual_behavior: >
+      Local Zone pricing for EC2 instances, EBS volumes, and data
+      transfer is typically higher than the parent region. Pricing
+      varies by Local Zone location. Data transfer between Local
+      Zone and parent region incurs charges. Always check the
+      specific Local Zone pricing page before cost estimates.
+    common_false_claim: "Local Zone instances cost the same as the parent region."
+    correct_action: "Check Local Zone-specific pricing. Factor in data transfer costs between zone and region."
+
+  - id: P4-multi-az-supported
+    trigger_words: ["Local Zone", "Multi-AZ", "high availability", "redundancy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Multi-AZ deployments work in Local Zones.
+      Most Local Zones are single-zone with no Multi-AZ support.
+    actual_behavior: >
+      Most Local Zones are single availability zones. Multi-AZ
+      RDS deployments are NOT supported in Local Zones. For high
+      availability, you must architect across the Local Zone and
+      parent region, accepting the latency trade-off. Some metro
+      areas may have multiple Local Zones, but Multi-AZ RDS still
+      requires region AZs.
+    common_false_claim: "Deploy Multi-AZ RDS in the Local Zone for high availability."
+    correct_action: "Use single-AZ RDS in Local Zone with read replica in parent region for DR."
+
+  - id: P5-wavelength-confusion
+    trigger_words: ["Local Zone", "Wavelength", "5G", "edge"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Local Zones with Wavelength Zones. They are
+      different services with different use cases.
+    actual_behavior: >
+      Local Zones are AWS infrastructure in metro areas connected
+      to the parent region via AWS network. Wavelength Zones are
+      embedded in 5G carrier networks (Verizon, Vodafone, etc.)
+      for ultra-low-latency mobile applications. They have different
+      available services, different networking models, and different
+      opt-in procedures.
+    common_false_claim: "Use Local Zones for 5G edge computing."
+    correct_action: "Use Wavelength Zones for 5G edge. Use Local Zones for metro-area low-latency workloads."
+
+  - id: P6-all-instance-types
+    trigger_words: ["instance type", "Local Zone", "launch", "available instances"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any instance type can be launched in Local Zones.
+      Each zone has a limited set of supported types.
+    actual_behavior: >
+      Each Local Zone supports a specific subset of instance types,
+      typically general-purpose (t3, m5, m6i), compute-optimized
+      (c5, c6i), and GPU (g4dn) families. The exact types vary by
+      Local Zone. Specialized types (p4d, inf1, mac1, etc.) are
+      generally not available. Always check offerings before launching.
+    common_false_claim: "Launch any EC2 instance type in the Local Zone."
+    correct_action: "Check describe-instance-type-offerings for the specific Local Zone before launching."
+
+  - id: P7-unlimited-capacity
+    trigger_words: ["capacity", "scale", "unlimited", "auto scale"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Local Zones have the same capacity as full
+      regions. Capacity is significantly more constrained.
+    actual_behavior: >
+      Local Zones have substantially less capacity than full
+      regions. InsufficientInstanceCapacity errors are more common.
+      Large-scale deployments may not be possible. Capacity
+      Reservations may be available for some instance types to
+      guarantee capacity. Auto Scaling groups should use mixed
+      instance types for better availability.
+    common_false_claim: "Auto Scale to hundreds of instances in the Local Zone."
+    correct_action: "Plan for capacity constraints. Use Capacity Reservations. Configure mixed instance types in ASG."
+
+  - id: P8-direct-s3-access
+    trigger_words: ["S3", "Local Zone", "local storage", "object storage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest S3 is locally available in Local Zones.
+      S3 requests from Local Zones go to the parent region.
+    actual_behavior: >
+      S3 is a regional service. Requests from Local Zone instances
+      to S3 traverse the network to the parent region, adding
+      latency. There is no local S3 endpoint in Local Zones.
+      For low-latency storage, use EBS volumes or instance store
+      (if available) in the Local Zone. S3 access from Local Zones
+      incurs data transfer charges.
+    common_false_claim: "S3 provides low-latency storage in Local Zones."
+    correct_action: "Use EBS for low-latency Local Zone storage. Accept S3 latency to parent region."
+
+remediation_hallucinations:
+
+  - id: R1-opt-out-to-fix
+    trigger_words: ["opt out", "disable Local Zone", "remove zone"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Opting out of a Local Zone does not immediately terminate
+      resources but prevents new launches. Existing resources
+      continue running but cannot be stopped and restarted.
+    correct_approach: >
+      Before opting out, migrate all resources (instances, volumes,
+      subnets) to the parent region or another zone. Terminate
+      instances, delete volumes, and remove subnets before opting
+      out. Opting out with active resources creates orphaned
+      resources that cannot be managed.
+
+  - id: R2-move-instance-to-zone
+    trigger_words: ["move instance", "migrate to Local Zone", "relocate"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      You cannot move a running EC2 instance to a Local Zone.
+      Instances must be launched in the target zone from scratch.
+    correct_approach: >
+      Create an AMI from the existing instance. Launch a new
+      instance from the AMI in the Local Zone subnet. Migrate
+      data and update DNS/load balancer targets. Terminate the
+      old instance after verification. EBS volumes cannot be
+      moved between zones — use snapshots.

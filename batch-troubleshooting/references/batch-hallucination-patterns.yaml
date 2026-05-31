@@ -1,0 +1,149 @@
+# =============================================================================
+# AWS Batch "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-runnable-means-running
+    trigger_words: ["RUNNABLE", "job running", "job stuck", "waiting for resources"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse RUNNABLE with RUNNING because the names are
+      similar. RUNNABLE means the job is waiting for compute
+      resources, not that it is executing.
+    actual_behavior: >
+      RUNNABLE means the job is queued and waiting for compute
+      capacity. The job has NOT started executing. Common causes
+      for stuck RUNNABLE: CE not scaling (check CE status), instance
+      types unavailable in AZ, resource requests too large for any
+      instance type, VPC/subnet issues preventing instance launch,
+      or service quotas reached. RUNNING means the container is
+      actually executing.
+    common_false_claim: "The job is running but seems slow — check the container logs."
+    correct_action: "Job is RUNNABLE = waiting for resources. Check CE scaling, instance availability, and resource requests."
+
+  - id: P2-fargate-gpu
+    trigger_words: ["Fargate", "GPU", "serverless", "compute type"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using Fargate for GPU workloads because Fargate
+      is simpler. Fargate does NOT support GPUs.
+    actual_behavior: >
+      Fargate compute environments do NOT support GPUs, custom AMIs,
+      placement groups, EFA, or multi-node parallel jobs. Fargate
+      is limited to 16 vCPU and 120 GB memory. For GPU workloads,
+      you MUST use EC2 compute environments with GPU instance types
+      (p3, p4, g4, g5 families). Fargate Spot is available for
+      cost savings on non-GPU workloads.
+    common_false_claim: "Use Fargate with GPU for your ML training job."
+    correct_action: "Use EC2 compute environment with GPU instance types for GPU workloads."
+
+  - id: P3-exit-137-app-bug
+    trigger_words: ["exit code 137", "OOM", "out of memory", "killed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest exit code 137 is an application bug. It
+      specifically means the container was OOM killed (SIGKILL)
+      because it exceeded its memory limit.
+    actual_behavior: >
+      Exit code 137 = 128 + 9 (SIGKILL). This means the container
+      exceeded its memory limit and was killed by the kernel OOM
+      killer. The fix is to increase the memory allocation in the
+      job definition, NOT to debug application code (unless there
+      is a memory leak). Check container memory usage metrics.
+      Exit code 139 = segfault. Exit code 143 = SIGTERM (graceful).
+    common_false_claim: "Exit code 137 indicates a bug in your application code."
+    correct_action: "Exit code 137 = OOM killed. Increase memory in job definition or fix memory leak."
+
+  - id: P4-spot-failure
+    trigger_words: ["Spot", "interruption", "reclaimed", "Spot instance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat Spot interruptions as unexpected failures that
+      need debugging. Spot interruptions are normal and expected.
+    actual_behavior: >
+      Spot instances can be reclaimed by AWS at any time with a
+      2-minute warning. This is normal behavior, not a failure.
+      Batch automatically retries Spot-interrupted jobs if a retry
+      strategy is configured. Use SPOT_CAPACITY_NOT_AVAILABLE as
+      an evaluateOnExit condition to retry. Mix Spot and On-Demand
+      for critical workloads. Use capacity-optimized allocation
+      strategy to reduce interruption frequency.
+    common_false_claim: "Spot interruptions indicate a problem with your compute environment."
+    correct_action: "Configure retry strategy for Spot interruptions. Mix Spot and On-Demand for critical jobs."
+
+  - id: P5-instant-scaling
+    trigger_words: ["scaling", "compute environment", "capacity", "instances"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest compute environments scale instantly. Scaling
+      from 0 to first instance takes 2-5 minutes.
+    actual_behavior: >
+      Managed compute environments scale based on job queue demand
+      but scaling is not instant. Cold start (0 to first instance)
+      takes 2-5 minutes. Subsequent scaling is faster but still
+      takes time. minvCpus > 0 keeps instances warm but costs
+      money. maxvCpus limits total capacity. If scaling seems
+      stuck, check CE status, instance type availability, and
+      VPC/subnet configuration.
+    common_false_claim: "Submit the job and it will start running immediately."
+    correct_action: "Expect 2-5 minute cold start. Use minvCpus > 0 for warm capacity. Check CE scaling status."
+
+  - id: P6-array-job-atomic
+    trigger_words: ["array job", "batch array", "parallel jobs", "job array"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest array jobs are atomic — all succeed or all fail.
+      Array child jobs are independent and can have mixed results.
+    actual_behavior: >
+      Array jobs create independent child jobs (2-10,000). Each
+      child gets AWS_BATCH_JOB_ARRAY_INDEX (0 to size-1). Children
+      run independently — a failed child does NOT affect others.
+      The parent job status reflects the aggregate. Dependencies
+      between array jobs can be SEQUENTIAL or N_TO_N. Monitor
+      individual child job status for failures.
+    common_false_claim: "If one array job child fails, all children are cancelled."
+    correct_action: "Array children are independent. Monitor individual child status. Failed children don't affect others."
+
+  - id: P7-any-resource-request
+    trigger_words: ["vCPU", "memory", "resource request", "container resources"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any vCPU/memory combination works. Resource
+      requests must be satisfiable by CE instance types.
+    actual_behavior: >
+      Job resource requests (vCPU, memory, GPU) must be satisfiable
+      by at least one instance type in the compute environment.
+      Requesting 128 vCPU when the largest instance has 96 vCPU
+      causes RUNNABLE stuck. Fargate has fixed combinations (0.25-16
+      vCPU, 0.5-120 GB memory). EC2 resources depend on instance
+      types configured. Always verify requests against CE capabilities.
+    common_false_claim: "Request 256 GB memory for your job — Batch will find appropriate instances."
+    correct_action: "Verify resource requests are satisfiable by CE instance types. Check Fargate limits."
+
+  - id: P8-multi-node-fargate
+    trigger_words: ["multi-node", "parallel job", "MPI", "distributed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest multi-node parallel jobs work on Fargate.
+      Multi-node parallel requires EC2 compute environments.
+    actual_behavior: >
+      Multi-node parallel jobs are NOT supported on Fargate. They
+      require EC2 compute environments. The main node (index 0)
+      coordinates work. All nodes must communicate via the network.
+      Use placement groups for low-latency inter-node communication.
+      Node count is fixed at submission time. ECS handles task
+      placement across instances.
+    common_false_claim: "Use Fargate for your multi-node parallel MPI job."
+    correct_action: "Use EC2 compute environment for multi-node parallel. Configure placement groups for performance."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

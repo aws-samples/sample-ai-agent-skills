@@ -1,0 +1,154 @@
+# =============================================================================
+# Amazon WorkMail "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-ses-confusion
+    trigger_words: ["WorkMail", "SES", "send email", "email service"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse WorkMail with SES or suggest SES APIs for
+      mailbox management. WorkMail is a managed email service
+      with mailboxes; SES is a transactional email sending service.
+    actual_behavior: >
+      WorkMail provides full email and calendar functionality with
+      user mailboxes, similar to Exchange or Gmail. SES is used
+      by WorkMail for outbound delivery but is a separate service.
+      WorkMail APIs manage organizations, users, and mailboxes.
+      SES APIs manage sending, receiving rules, and identities.
+    common_false_claim: "Use SES send-email to send email from a WorkMail mailbox."
+    correct_action: "Users send email through WorkMail clients (web, Outlook, mobile). SES is used internally by WorkMail."
+
+  - id: P2-auto-domain-verification
+    trigger_words: ["add domain", "domain setup", "custom domain"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest domains are automatically verified when added
+      to WorkMail. DNS records must be manually configured.
+    actual_behavior: >
+      Adding a custom domain to WorkMail requires manual DNS
+      configuration: MX records for mail routing, TXT records
+      for domain ownership verification, and CNAME records for
+      DKIM email signing. Verification can take up to 72 hours
+      for DNS propagation.
+    common_false_claim: "Add the domain and WorkMail automatically configures DNS."
+    correct_action: "Add domain in WorkMail, then manually create MX, TXT, and DKIM CNAME records in DNS."
+
+  - id: P3-imap-for-mobile
+    trigger_words: ["mobile setup", "phone email", "IMAP", "POP"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest IMAP or POP for mobile device configuration.
+      WorkMail mobile sync uses Exchange ActiveSync (EAS).
+    actual_behavior: >
+      WorkMail supports Exchange ActiveSync (EAS) for mobile
+      devices, providing email, calendar, and contacts sync.
+      IMAP is available but only recommended for desktop clients
+      that don't support EAS. POP3 is not supported. Mobile
+      devices should always use EAS for full functionality.
+    common_false_claim: "Configure IMAP on your phone to access WorkMail."
+    correct_action: "Use Exchange ActiveSync (EAS) for mobile devices. Use IMAP only for desktop clients without EAS support."
+
+  - id: P4-pst-import
+    trigger_words: ["import PST", "import mailbox", "migrate email", "PST file"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest importing PST files directly into WorkMail.
+      WorkMail does not support direct PST import.
+    actual_behavior: >
+      WorkMail does not support direct import of PST, OST, or
+      EDB files. Migration from Exchange requires the Amazon
+      WorkMail Migration Tool which connects to the source
+      Exchange server via Exchange Web Services (EWS). For
+      other sources, email must be migrated through IMAP or
+      third-party migration tools.
+    common_false_claim: "Upload your PST file to import email into WorkMail."
+    correct_action: "Use the WorkMail Migration Tool for Exchange migration. Use IMAP migration for other sources."
+
+  - id: P5-unlimited-mailbox
+    trigger_words: ["mailbox size", "storage", "unlimited", "quota"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not mention mailbox size limits or suggest they
+      can be increased beyond service limits.
+    actual_behavior: >
+      Each WorkMail user mailbox has a 50 GB size limit. This
+      limit cannot be increased. When a mailbox reaches the limit,
+      incoming email is bounced. Users must delete or archive
+      email to free space. There is no option to purchase
+      additional mailbox storage.
+    common_false_claim: "Increase the mailbox size limit to 100 GB."
+    correct_action: "Mailbox limit is 50 GB and cannot be increased. Delete or archive email to free space."
+
+  - id: P6-free-service
+    trigger_words: ["pricing", "cost", "free tier", "charges"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest WorkMail is free or included with other
+      AWS services. It has per-user monthly pricing.
+    actual_behavior: >
+      WorkMail charges per user per month. Each user includes
+      50 GB of mailbox storage. There is a 30-day free trial
+      for up to 25 users. After the trial, charges apply for
+      all active users. Inactive users can be deregistered to
+      stop charges.
+    common_false_claim: "WorkMail is included free with your AWS account."
+    correct_action: "WorkMail charges per user per month. Deregister unused users to reduce costs."
+
+  - id: P7-exchange-compatible
+    trigger_words: ["Exchange", "Outlook", "MAPI", "full compatibility"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate WorkMail compatibility with Microsoft
+      Exchange features and protocols.
+    actual_behavior: >
+      WorkMail supports Exchange ActiveSync and provides basic
+      Outlook compatibility via IMAP. It does NOT support MAPI,
+      Exchange Web Services (EWS) for client access, public
+      folders, or advanced Exchange features like in-place
+      archive or eDiscovery. Outlook connects via IMAP, not
+      native Exchange protocol.
+    common_false_claim: "WorkMail is fully compatible with all Exchange/Outlook features."
+    correct_action: "WorkMail supports EAS for mobile and IMAP for desktop. Not all Exchange features are available."
+
+  - id: P8-auto-migration
+    trigger_words: ["automatic migration", "seamless migration", "one-click"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest migration to WorkMail is automatic or
+      seamless. It requires careful planning and tooling.
+    actual_behavior: >
+      Migration to WorkMail requires the WorkMail Migration Tool
+      for Exchange sources or IMAP-based migration for other
+      sources. Migration must be planned for DNS cutover, user
+      provisioning, and data transfer. There is no automatic
+      or one-click migration option.
+    common_false_claim: "Migrate from Exchange to WorkMail with one click."
+    correct_action: "Plan migration carefully. Use WorkMail Migration Tool for Exchange. Test with pilot users first."
+
+remediation_hallucinations:
+
+  - id: R1-delete-organization-to-fix
+    trigger_words: ["delete organization", "recreate organization"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Deleting a WorkMail organization permanently destroys all
+      mailboxes, email content, and configuration. This cannot
+      be undone. All user email is permanently lost.
+    correct_approach: >
+      Never delete the organization to fix issues. Troubleshoot
+      the specific problem. If organization recreation is truly
+      needed, export all mailboxes first using mailbox export jobs.
+
+  - id: R2-change-mx-records-without-planning
+    trigger_words: ["change MX", "update DNS", "switch domain"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Changing MX records without planning causes email delivery
+      failures during the DNS propagation period. Email may be
+      lost or bounced during the transition.
+    correct_approach: >
+      Plan DNS changes during low-traffic periods. Lower TTL
+      values before changes. Monitor email flow during and after
+      the change. Keep old MX records as backup until verification.

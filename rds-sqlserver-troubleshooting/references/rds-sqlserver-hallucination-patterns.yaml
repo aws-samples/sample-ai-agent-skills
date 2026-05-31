@@ -1,0 +1,132 @@
+# =============================================================================
+# RDS SQL Server "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-sysadmin-access
+    trigger_words: ["sysadmin", "sa account", "sp_addsrvrolemember", "CONTROL SERVER"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on general SQL Server documentation suggest sysadmin
+      for administrative tasks. The RDS master user does not have sysadmin
+      and it cannot be granted.
+    actual_behavior: >
+      The RDS master user has processadmin, setupadmin, and db_owner on
+      user databases. Administrative tasks use RDS-specific stored
+      procedures in msdb or rdsadmin. sysadmin cannot be granted to any
+      login on RDS SQL Server.
+    common_false_claim: "Grant sysadmin to your login for full administrative access."
+    correct_action: "Use the RDS master user with its granted roles. Use RDS-specific stored procedures for administrative tasks."
+
+  - id: P2-os-level-access
+    trigger_words: ["RDP", "xp_cmdshell", "Windows Event Viewer", "registry", "services.msc", "file system"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to OS-level troubleshooting from on-premises SQL
+      Server documentation. RDS does not provide OS access.
+    actual_behavior: >
+      No RDP or OS access on RDS SQL Server. Error logs are accessed
+      via the RDS logs API. xp_cmdshell is disabled by default and
+      has limited functionality even when enabled. Windows services,
+      registry, and Event Viewer are not accessible.
+    common_false_claim: "RDP into the server and check Windows Event Viewer for errors."
+    correct_action: "Use aws rds download-db-log-file-portion for error logs. Use CloudWatch and RDS events for monitoring."
+
+  - id: P3-manual-always-on-config
+    trigger_words: ["ALTER AVAILABILITY GROUP", "WSFC", "Failover Cluster", "AG listener", "sys.availability_groups"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest manual Always On AG configuration from on-premises
+      documentation. RDS manages AG internally for Multi-AZ and does
+      not expose AG management interfaces.
+    actual_behavior: >
+      Multi-AZ uses Always On AG under the hood but is fully managed
+      by RDS. You cannot create, modify, or failover AGs manually.
+      There is no WSFC access. RDS handles all AG operations including
+      automatic failover.
+    common_false_claim: "Configure Always On Availability Groups for high availability on RDS."
+    correct_action: "Enable Multi-AZ via modify-db-instance. RDS manages Always On AG automatically."
+
+  - id: P4-ssrs-ssis-availability
+    trigger_words: ["SSRS", "SSIS", "SSAS", "Reporting Services", "Integration Services", "Analysis Services"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume all SQL Server components are available on RDS.
+      SSRS, SSIS, and SSAS are separate services not included in
+      the RDS SQL Server offering.
+    actual_behavior: >
+      SSRS, SSIS, and SSAS are NOT available on RDS SQL Server.
+      These are separate Windows services that require OS access
+      to install and configure. RDS only provides the database
+      engine component.
+    common_false_claim: "Install SSRS on your RDS SQL Server instance for reporting."
+    correct_action: "Use SSRS/SSIS/SSAS on EC2, or use AWS Glue (ETL) and Amazon QuickSight (reporting) as alternatives."
+
+  - id: P5-direct-backup-to-disk
+    trigger_words: ["BACKUP DATABASE TO DISK", "RESTORE FROM DISK", "backup device", "backup to local"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest standard BACKUP/RESTORE T-SQL commands. On RDS,
+      native backup/restore uses msdb stored procedures with S3.
+    actual_behavior: >
+      Native backup/restore on RDS uses msdb.dbo.rds_backup_database
+      and msdb.dbo.rds_restore_database stored procedures that
+      interact with S3. Direct BACKUP DATABASE TO DISK and RESTORE
+      FROM DISK commands are not supported.
+    common_false_claim: "Run BACKUP DATABASE MyDB TO DISK = 'D:\\backups\\mydb.bak'."
+    correct_action: "Use EXEC msdb.dbo.rds_backup_database @source_db_name='MyDB', @s3_arn_to_backup_to='arn:aws:s3:::bucket/mydb.bak'."
+
+  - id: P6-collation-change
+    trigger_words: ["change collation", "ALTER SERVER COLLATION", "server collation", "rebuild master"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest rebuilding system databases or reinstalling SQL
+      Server to change collation. Server collation is immutable on RDS.
+    actual_behavior: >
+      Server-level collation is set at instance creation and cannot
+      be changed. The default is SQL_Latin1_General_CP1_CI_AS.
+      Changing requires creating a new instance with the desired
+      collation and migrating all data.
+    common_false_claim: "Rebuild the master database to change server collation."
+    correct_action: "Create a new RDS instance with the desired collation and migrate data using native backup/restore."
+
+  - id: P7-unlimited-tempdb-files
+    trigger_words: ["ADD FILE tempdb", "tempdb files", "ALTER DATABASE tempdb", "tempdb data files"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest adding tempdb files as a standard performance
+      tuning step. RDS manages tempdb file count automatically.
+    actual_behavior: >
+      RDS manages tempdb file count and sizing. On SQL Server 2016+,
+      RDS creates multiple tempdb data files based on vCPU count
+      (up to 8 files). You cannot add or remove tempdb files manually.
+      ALTER DATABASE tempdb ADD FILE is not supported.
+    common_false_claim: "Add more tempdb data files to reduce contention."
+    correct_action: "Scale to a larger instance class with more vCPUs to get more tempdb files. RDS manages tempdb automatically."
+
+  - id: P8-full-sql-agent-capabilities
+    trigger_words: ["CmdExec", "PowerShell job step", "ActiveX", "MSX", "TSX", "proxy account"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume full SQL Server Agent functionality from on-premises
+      documentation. RDS SQL Server Agent has significant limitations.
+    actual_behavior: >
+      SQL Server Agent on RDS does not support PowerShell job steps,
+      CmdExec (OS command) steps, or ActiveX steps. Only T-SQL and
+      SSIS package execution steps are available. Multi-server
+      administration (MSX/TSX) is not supported. Proxy accounts
+      have limited functionality.
+    common_false_claim: "Create a SQL Agent job with a PowerShell step to automate the task."
+    correct_action: "Use T-SQL job steps in SQL Agent. For PowerShell/OS automation, use Lambda, Systems Manager, or EC2."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

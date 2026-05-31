@@ -1,0 +1,126 @@
+# =============================================================================
+# AWS Panorama "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-software-only-deployment
+    trigger_words: ["panorama setup", "install panorama", "panorama instance"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Panorama can run as software on any device.
+      It requires dedicated physical appliance hardware.
+    actual_behavior: >
+      AWS Panorama runs exclusively on the AWS Panorama Appliance
+      hardware with an NVIDIA Jetson Xavier GPU. There is no
+      software-only, EC2-based, or container-based deployment.
+    common_false_claim: "Deploy Panorama on an EC2 instance with a GPU."
+    correct_action: "Purchase and provision a physical AWS Panorama Appliance."
+
+  - id: P2-any-camera-protocol
+    trigger_words: ["camera", "video stream", "camera connection", "IP camera"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Panorama supports multiple streaming protocols.
+      Only RTSP is supported for camera input.
+    actual_behavior: >
+      Panorama connects to cameras exclusively via RTSP protocol.
+      The camera must support RTSP and be network-reachable from
+      the appliance. HTTP streams, ONVIF, and other protocols
+      are not directly supported.
+    common_false_claim: "Connect any IP camera using HTTP or ONVIF."
+    correct_action: "Verify camera supports RTSP. Configure exact RTSP URI with credentials."
+
+  - id: P3-instant-model-deploy
+    trigger_words: ["deploy model", "model compilation", "inference"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest models can be deployed directly without compilation.
+      Models must be compiled for the specific hardware.
+    actual_behavior: >
+      ML models must be compiled using SageMaker Neo targeting
+      the Panorama appliance GPU. Compilation converts framework-
+      specific models to optimized hardware-specific format.
+      This takes 15-60 minutes. Uncompiled models cannot run.
+    common_false_claim: "Upload your TensorFlow model directly to the Panorama device."
+    correct_action: "Compile model with SageMaker Neo for panorama target. Then package and import."
+
+  - id: P4-unlimited-concurrent-apps
+    trigger_words: ["multiple applications", "concurrent models", "GPU memory"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited applications can run simultaneously.
+      The appliance has finite GPU and memory resources.
+    actual_behavior: >
+      The Panorama appliance has limited GPU memory (typically 8GB).
+      Each model and application consumes GPU resources. Running
+      too many concurrent applications causes OOM errors or
+      degraded inference performance.
+    common_false_claim: "Run as many models as you need on a single appliance."
+    correct_action: "Monitor GPU utilization. Limit concurrent applications based on model sizes."
+
+  - id: P5-instant-ota-update
+    trigger_words: ["OTA update", "firmware update", "device update"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest OTA updates are quick and safe to interrupt.
+      Updates take 30+ minutes and must not be interrupted.
+    actual_behavior: >
+      OTA updates download new system software, verify integrity,
+      and install. This takes 30+ minutes. The device reboots
+      during the process. Interrupting an update can leave the
+      device in an unrecoverable state requiring factory reset.
+    common_false_claim: "OTA updates complete in a few minutes and can be cancelled."
+    correct_action: "Ensure stable connectivity. Do not interrupt. Plan maintenance window."
+
+  - id: P6-auto-camera-discovery
+    trigger_words: ["camera discovery", "find cameras", "camera setup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Panorama auto-discovers cameras on the network.
+      Camera streams must be manually configured with exact URIs.
+    actual_behavior: >
+      Camera streams must be manually configured with the exact
+      RTSP URI, including IP address, port, path, and credentials.
+      There is no automatic camera discovery or ONVIF scanning.
+    common_false_claim: "Panorama automatically discovers cameras on your network."
+    correct_action: "Manually configure each camera stream with exact RTSP URI and credentials."
+
+  - id: P7-cloud-inference
+    trigger_words: ["cloud processing", "inference in cloud", "send frames"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest video frames are sent to AWS for processing.
+      All inference runs locally on the appliance.
+    actual_behavior: >
+      Panorama performs all ML inference locally on the appliance
+      hardware. Video frames never leave the local network for
+      inference. Only metadata, logs, and results can be sent
+      to AWS. This is a key privacy and latency benefit.
+    common_false_claim: "Panorama sends video to AWS for cloud-based inference."
+    correct_action: "Understand that inference is local. Only metadata is sent to cloud."
+
+  - id: P8-any-ml-framework
+    trigger_words: ["model framework", "model format", "supported models"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any ML framework is supported.
+      Only specific frameworks compatible with SageMaker Neo work.
+    actual_behavior: >
+      Supported frameworks for Panorama model compilation include
+      TensorFlow, PyTorch, MXNet, and ONNX. Models must be
+      exportable to these formats. Custom operators or unsupported
+      layers cause compilation failures.
+    common_false_claim: "Use any ML framework or model format with Panorama."
+    correct_action: "Verify model uses supported framework. Check for unsupported operators before compilation."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

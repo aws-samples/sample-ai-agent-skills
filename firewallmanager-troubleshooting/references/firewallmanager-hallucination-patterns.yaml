@@ -1,0 +1,155 @@
+# =============================================================================
+# AWS Firewall Manager "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-organizations-not-required
+    trigger_words: ["Firewall Manager", "FMS", "policy creation", "setup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest creating FMS policies without mentioning the
+      Organizations prerequisite. FMS absolutely requires AWS
+      Organizations with all features enabled.
+    actual_behavior: >
+      AWS Firewall Manager requires AWS Organizations with ALL
+      features enabled. Without Organizations, FMS APIs return
+      errors. Consolidated billing only is NOT sufficient. The
+      management account or a delegated administrator must set
+      up FMS. Verify with: aws organizations describe-organization.
+    common_false_claim: "Create a Firewall Manager policy to protect your accounts."
+    correct_action: "First verify Organizations is enabled with all features, then designate an FMS admin account, then create policies."
+
+  - id: P2-multiple-admin-accounts
+    trigger_words: ["FMS admin", "administrator account", "delegated admin", "management account"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest setting up multiple FMS administrator accounts
+      for different teams or regions. Only one FMS admin account
+      is allowed per organization.
+    actual_behavior: >
+      Only ONE account can be the Firewall Manager administrator
+      at any time. This can be the management account or a single
+      delegated administrator. Changing the admin account removes
+      ALL existing FMS policies. There is no way to have multiple
+      FMS admins or delegate different policy types to different
+      accounts.
+    common_false_claim: "Delegate FMS administration to separate accounts for each team."
+    correct_action: "Designate a single FMS admin account. Use IAM policies for team-level access control within that account."
+
+  - id: P3-auto-remediation-fixes-everything
+    trigger_words: ["auto-remediation", "automatic fix", "remediation enabled", "self-healing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate auto-remediation capabilities, suggesting it
+      fixes all compliance violations automatically. Auto-remediation
+      has significant limitations depending on policy type.
+    actual_behavior: >
+      Auto-remediation creates FMS-managed resources (web ACLs,
+      security groups, firewall endpoints) but cannot handle all
+      scenarios. WAF auto-remediation creates web ACLs but may not
+      associate them with all resource types. Security group
+      remediation may not handle complex rule dependencies. Network
+      Firewall remediation deploys endpoints but route tables may
+      need manual updates. Always verify remediation status.
+    common_false_claim: "Enable auto-remediation and all resources will be automatically compliant."
+    correct_action: "Enable auto-remediation but monitor compliance status. Plan for manual remediation of edge cases."
+
+  - id: P4-shield-free-with-fms
+    trigger_words: ["Shield Advanced", "DDoS protection", "Shield policy", "FMS Shield"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs omit the significant cost of Shield Advanced when
+      recommending FMS Shield policies. Shield Advanced has a
+      $3,000/month subscription fee.
+    actual_behavior: >
+      Shield Advanced costs $3,000/month per organization when
+      using consolidated billing under Organizations. FMS Shield
+      policies can enable Shield Advanced on member accounts, but
+      the subscription cost applies. Data transfer charges for
+      DDoS response are additional. Shield Standard is free and
+      automatic but provides limited protection compared to
+      Shield Advanced.
+    common_false_claim: "Create an FMS Shield policy to protect all your resources from DDoS."
+    correct_action: "Understand Shield Advanced costs ($3,000/month) before creating FMS Shield policies. Consider Shield Standard for basic protection."
+
+  - id: P5-security-group-policy-types
+    trigger_words: ["security group policy", "SG policy", "audit policy", "usage policy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate security group USAGE policies and AUDIT
+      policies. These are fundamentally different policy types
+      with different behaviors.
+    actual_behavior: >
+      FMS security group policies have two types: USAGE policies
+      enforce baseline security group rules on resources. AUDIT
+      policies report non-compliant security groups without
+      modifying them. Usage policies can auto-remediate by
+      applying required rules. Audit policies only generate
+      compliance findings. Choosing the wrong type leads to
+      unexpected behavior.
+    common_false_claim: "Create a security group policy to audit and fix non-compliant security groups."
+    correct_action: "Choose USAGE policy for enforcement/remediation or AUDIT policy for reporting. They cannot do both."
+
+  - id: P6-fms-managed-webacl-editable
+    trigger_words: ["web ACL", "WAF rules", "custom rules", "FMS WAF"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manually editing FMS-managed WAF web ACLs
+      to add custom rules. Manual changes are overwritten by FMS.
+    actual_behavior: >
+      FMS-managed web ACLs (prefixed FMManagedWebACLV2-) are
+      controlled by the FMS policy. Manual changes to these web
+      ACLs are overwritten when FMS re-evaluates the policy.
+      Custom rules must be added through the FMS policy
+      configuration using first/last rule groups. Direct
+      modification of FMS-managed web ACLs is not persistent.
+    common_false_claim: "Add your custom WAF rules directly to the FMS-managed web ACL."
+    correct_action: "Add custom rules through the FMS policy's first/last rule group configuration, not directly to managed web ACLs."
+
+  - id: P7-network-firewall-instant-deployment
+    trigger_words: ["Network Firewall", "firewall deployment", "FMS Network Firewall", "firewall endpoint"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Network Firewall deployment through FMS is
+      instant. Deployment takes several minutes and requires
+      route table configuration.
+    actual_behavior: >
+      FMS Network Firewall policies deploy firewall endpoints
+      in member account VPCs. Deployment takes several minutes
+      per VPC. Route table updates to direct traffic through
+      the firewall may require additional manual configuration
+      depending on the deployment model (distributed or
+      centralized). Firewall endpoints incur hourly charges
+      plus data processing fees.
+    common_false_claim: "Create an FMS Network Firewall policy and traffic will be inspected immediately."
+    correct_action: "Create the policy, wait for deployment, verify endpoints, then configure route tables for traffic inspection."
+
+  - id: P8-dns-firewall-blocks-all
+    trigger_words: ["DNS Firewall", "domain blocking", "DNS filtering", "domain list"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DNS Firewall blocks all malicious traffic.
+      DNS Firewall only filters DNS queries, not actual network
+      traffic.
+    actual_behavior: >
+      DNS Firewall filters DNS resolution queries through Route 53
+      Resolver. It can block, allow, or alert on DNS queries for
+      specific domains. It does NOT block actual network traffic —
+      if a client has the IP address cached or uses a non-Route 53
+      resolver, DNS Firewall is bypassed. It works at the DNS
+      layer only. FMS distributes DNS Firewall rule groups to
+      member account VPCs.
+    common_false_claim: "DNS Firewall will block all traffic to malicious domains."
+    correct_action: "DNS Firewall blocks DNS resolution only. Combine with Network Firewall or security groups for network-level blocking."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

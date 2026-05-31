@@ -1,0 +1,156 @@
+# =============================================================================
+# Amazon Managed Service for Apache Flink "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-managed-flink-cli
+    trigger_words: ["managed-flink", "flink CLI", "aws flink", "managed flink API"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest an 'aws managed-flink' or 'aws flink' CLI
+      namespace. The API namespace is kinesisanalyticsv2.
+    actual_behavior: >
+      Despite the service rename to Managed Service for Apache
+      Flink, the AWS CLI namespace remains kinesisanalyticsv2.
+      All commands use 'aws kinesisanalyticsv2'. There is no
+      'aws managed-flink' or 'aws flink' command. The service
+      endpoint is also still kinesisanalytics.
+    common_false_claim: "Use 'aws managed-flink describe-application' to check your application."
+    correct_action: "Use 'aws kinesisanalyticsv2 describe-application --application-name <name>'."
+
+  - id: P2-runtime-upgrade
+    trigger_words: ["upgrade Flink", "change runtime", "update version", "Flink version"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest you can upgrade the Flink runtime version
+      in-place. The runtime is immutable after creation.
+    actual_behavior: >
+      The Flink runtime version (FLINK-1_15, FLINK-1_18, etc.)
+      is set at application creation and cannot be changed via
+      update-application. To upgrade, you must: create a snapshot,
+      create a new application with the new runtime, restore from
+      the snapshot, and delete the old application.
+    common_false_claim: "Update the application runtime to FLINK-1_18 using update-application."
+    correct_action: "Create snapshot, create new app with new runtime, restore from snapshot, delete old app."
+
+  - id: P3-auto-checkpoint-recovery
+    trigger_words: ["checkpoint", "auto-recovery", "fault tolerance", "automatic restart"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest checkpointing guarantees zero data loss on
+      failure. Recovery depends on checkpoint success and interval.
+    actual_behavior: >
+      Checkpointing enables recovery from failures, but recovery
+      replays data from the last successful checkpoint. Data
+      processed between the last checkpoint and the failure may
+      be reprocessed (at-least-once) or lost (if checkpointing
+      was failing). Checkpoint interval determines the maximum
+      data reprocessing window.
+    common_false_claim: "Checkpointing guarantees exactly-once processing with zero data loss."
+    correct_action: "Configure appropriate checkpoint interval. Monitor checkpoint success. Use exactly-once sinks where available."
+
+  - id: P4-unlimited-parallelism
+    trigger_words: ["parallelism", "scale up", "increase parallelism", "more KPUs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest parallelism can be increased without limits.
+      There are service quotas and cost implications.
+    actual_behavior: >
+      Parallelism is limited by service quotas (default 64 KPUs
+      per application). Total parallelism = Parallelism ×
+      ParallelismPerKPU. Each KPU provides 1 vCPU and 4 GB
+      memory. Increasing parallelism increases cost linearly.
+      Source partitions (e.g., Kinesis shards) also limit
+      effective parallelism.
+    common_false_claim: "Set parallelism to 1000 for maximum throughput."
+    correct_action: "Match parallelism to source partitions. Monitor KPU utilization. Request quota increase if needed."
+
+  - id: P5-vpc-internet-access
+    trigger_words: ["VPC", "internet access", "public endpoint", "VPC connectivity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest VPC-connected Flink applications can access
+      the internet. They cannot without NAT Gateway.
+    actual_behavior: >
+      Applications configured with VPC connectivity run in your
+      VPC subnets. They have NO internet access by default. To
+      access the internet (e.g., external APIs), you need a NAT
+      Gateway. To access AWS services (Kinesis, S3, CloudWatch),
+      you need VPC endpoints or NAT Gateway.
+    common_false_claim: "VPC-connected applications can access Kinesis streams directly."
+    correct_action: "Configure VPC endpoints for AWS services or NAT Gateway for internet access."
+
+  - id: P6-studio-production
+    trigger_words: ["Studio notebook", "production", "Zeppelin", "interactive"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Studio notebooks are suitable for production
+      workloads. They are designed for development and exploration.
+    actual_behavior: >
+      Studio notebooks (Zeppelin-based) have different resource
+      limits, execution timeouts, and capabilities compared to
+      code-based applications. They are designed for interactive
+      development, data exploration, and prototyping. For
+      production, export the Flink SQL or code to a code-based
+      application.
+    common_false_claim: "Deploy your Studio notebook as a production streaming application."
+    correct_action: "Use Studio for development. Export to code-based application for production deployment."
+
+  - id: P7-savepoint-checkpoint-same
+    trigger_words: ["savepoint", "snapshot", "checkpoint", "state backup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate checkpoints and savepoints (application
+      snapshots). They serve different purposes.
+    actual_behavior: >
+      Checkpoints are automatic, periodic state snapshots managed
+      by Flink for fault tolerance. They are stored internally
+      and used for automatic recovery. Application snapshots
+      (savepoints) are user-triggered via the API, stored in S3,
+      and used for manual recovery, upgrades, and rollbacks.
+      You cannot use a checkpoint for manual recovery.
+    common_false_claim: "Use the latest checkpoint to roll back your application."
+    correct_action: "Create application snapshots before changes. Use snapshots for manual rollback."
+
+  - id: P8-instant-scaling
+    trigger_words: ["auto-scaling", "instant scale", "scale immediately", "elastic"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Managed Flink scales instantly. Scaling
+      requires application restart and state restoration.
+    actual_behavior: >
+      Scaling (changing parallelism) requires the application to
+      take a snapshot, stop, reconfigure resources, restart, and
+      restore from the snapshot. This process takes minutes to
+      tens of minutes depending on state size. During scaling,
+      the application is not processing data. Auto-scaling
+      triggers this same process.
+    common_false_claim: "Managed Flink instantly scales to handle traffic spikes."
+    correct_action: "Pre-provision adequate parallelism. Allow for scaling downtime. Monitor scaling metrics."
+
+remediation_hallucinations:
+
+  - id: R1-restart-fixes-all
+    false_fix: "Restart the application to fix Flink job failures."
+    why_wrong: >
+      Restarting without fixing the root cause will result in the
+      same failure. If checkpointing was failing, the restart may
+      lose state. If the issue is a code bug, it will recur
+      immediately after restart.
+    correct_approach: >
+      Diagnose the root cause using CloudWatch Logs and metrics.
+      Fix the underlying issue (code bug, resource exhaustion,
+      connector error). Create a snapshot before restarting.
+
+  - id: R2-increase-kpu-for-errors
+    false_fix: "Increase KPU count to fix application errors."
+    why_wrong: >
+      Most application errors are caused by code bugs, connector
+      issues, or configuration problems — not resource exhaustion.
+      Increasing KPUs wastes money without fixing the root cause.
+      Only increase KPUs if metrics show CPU or memory exhaustion.
+    correct_approach: >
+      Check CloudWatch metrics for CPU utilization, heap memory,
+      and GC time. Only increase KPUs if resource metrics show
+      saturation. Fix code or configuration issues first.

@@ -1,0 +1,95 @@
+﻿---
+title: "D3 — VPC Security Group Blocking Lambda"
+description: "Diagnose security group rules blocking Lambda VPC traffic"
+status: active
+severity: MEDIUM
+triggers:
+  - "connection.*refused"
+  - "security group.*lambda"
+owner: devops-agent
+objective: "Fix security group rules for Lambda VPC connectivity"
+context: "Lambda's security group controls outbound traffic. Lambda initiates connections (outbound), so outbound rules matter most. Inbound rules matter only if other resources need to connect back to Lambda's ENI (rare)."
+---
+
+## Common Issues
+
+- symptoms: "Lambda can't reach RDS/ElastiCache/other VPC resource"
+  diagnosis: "Lambda SG outbound or target resource SG inbound doesn't allow the traffic."
+  resolution: "Lambda SG: allow outbound to target port. Target SG: allow inbound from Lambda SG."
+
+- symptoms: "Lambda can't reach internet despite NAT gateway"
+  diagnosis: "Lambda SG outbound rules don't allow HTTPS (443) or the required port."
+  resolution: "Add outbound rule for the required port/protocol."
+
+
+## Safety Ratings
+
+```
+safety_ratings:
+  - "Network configuration changes: YELLOW - May affect connectivity"
+  - "Cache invalidation: YELLOW - Temporarily increases origin load"
+  - "Certificate/TLS changes: RED - May cause downtime if misconfigured"
+```
+
+## Escalation Conditions
+
+- Function serves a production API or critical workload
+- Fix requires changing reserved concurrency settings
+- Function is processing sensitive data (PII, financial, healthcare)
+- Resolution involves modifying VPC configuration or security groups
+- Multiple functions affected suggesting account-level issue
+
+## Data Sensitivity
+
+HIGH - Lambda function code and environment variables may contain secrets, API keys, database credentials, and encryption keys. CloudWatch logs may capture sensitive request/response data. X-Ray traces may contain PII in segment metadata.
+
+## Prohibited Actions
+
+- NEVER suggest setting reserved concurrency to 0 - this effectively disables the function
+- NEVER suggest deleting a function alias that is serving live traffic
+- NEVER recommend removing or replacing the execution role on a running function without verifying the new role has equivalent permissions
+- NEVER suggest publishing function code changes directly to a production alias without testing
+- NEVER expose environment variable values in logs or diagnostic output - they may contain secrets
+
+## Phase 3 - Rollback
+
+1. If VPC configuration was changed, restore original VPC settings: `aws lambda update-function-configuration --function-name <name> --vpc-config SubnetIds=<original>,SecurityGroupIds=<original>`
+2. If event source mapping was modified, restore original configuration: `aws lambda update-event-source-mapping --uuid <uuid> --batch-size <original>`
+## Output Format
+
+```yaml
+root_cause: "<outbound_blocked|target_sg_inbound|wrong_port>"
+severity: MEDIUM
+mitigation:
+  immediate: "Add required SG rules"
+  long_term: "Use SG references (Lambda SG → target SG) instead of CIDR-based rules"
+```
+
+## Escalation Conditions
+
+escalation_conditions:
+  - "Remediation requires modifying IAM policies in a production account"
+  - "Remediation requires disabling a security control even temporarily"
+  - "Root cause cannot be identified after 3 hypothesis pivots"
+  - "Blast radius affects more than one account or region"
+  - "Issue involves potential data loss or exposure"
+
+## Data Sensitivity
+
+data_sensitivity:
+  - command: "get-function-configuration"
+    sensitivity: MEDIUM
+    contains: "Service configuration and resource details"
+  - command: "get-policy"
+    sensitivity: MEDIUM
+    contains: "Service configuration and resource details"
+  - command: "invoke"
+    sensitivity: MEDIUM
+    contains: "Service configuration and resource details"
+
+## Prohibited Actions
+
+prohibited_actions:
+  - "NEVER suggest Resource: * in Lambda execution role"
+  - "NEVER suggest disabling VPC configuration to fix connectivity"
+  - "NEVER expose function URLs without authentication"

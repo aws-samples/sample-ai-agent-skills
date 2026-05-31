@@ -1,0 +1,142 @@
+# =============================================================================
+# AWS Transit Gateway "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-tgw-vs-vpc-route-tables
+    trigger_words: ["route table", "TGW route", "VPC route", "routing", "route entry"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate TGW route tables with VPC route tables because both
+      use similar terminology. They suggest modifying VPC route tables
+      when the issue is in TGW route tables, or vice versa.
+    actual_behavior: >
+      TGW route tables (tgw-rtb-*) and VPC route tables (rtb-*) are
+      completely independent. VPC route tables direct traffic TO the TGW.
+      TGW route tables determine where traffic goes AFTER reaching the
+      TGW. Both must be configured for end-to-end connectivity. A VPC
+      route table entry with target tgw-* only gets traffic to the TGW.
+    common_false_claim: "Add the destination CIDR to the VPC route table to fix TGW routing."
+    correct_action: "Check BOTH VPC route tables (for TGW target) AND TGW route tables (for destination attachment)."
+
+  - id: P2-peering-route-propagation
+    trigger_words: ["peering", "inter-region", "cross-region", "peering attachment", "route propagation"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling route propagation on peering attachments
+      because propagation works for VPC and VPN attachments. Inter-region
+      peering does NOT support route propagation.
+    actual_behavior: >
+      Inter-region TGW peering does not support automatic route propagation.
+      You must create static routes pointing to the peering attachment for
+      each CIDR reachable across regions. This is a fundamental limitation.
+      Peering also does not support multicast or Connect attachments.
+    common_false_claim: "Enable route propagation on the peering attachment to learn remote routes."
+    correct_action: "Create static routes in TGW route tables pointing to the peering attachment for remote CIDRs."
+
+  - id: P3-multicast-enable-later
+    trigger_words: ["multicast", "multicast domain", "IGMP", "multicast support"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling multicast on an existing TGW because most
+      TGW features can be modified after creation. Multicast is an
+      exception — it must be enabled at creation time.
+    actual_behavior: >
+      Multicast support must be enabled when creating the TGW. It cannot
+      be enabled on an existing TGW. If multicast is needed, create a new
+      TGW with MulticastSupport=enable. Not all instance types support
+      multicast. The TGW must also have multicast domains configured.
+    common_false_claim: "Enable multicast support on your existing Transit Gateway."
+    correct_action: "Create a new TGW with --options MulticastSupport=enable. Migrate attachments."
+
+  - id: P4-multiple-route-table-association
+    trigger_words: ["associate", "route table association", "multiple route tables", "attachment association"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest associating an attachment with multiple route tables
+      for complex routing scenarios. Each attachment can only associate
+      with one route table.
+    actual_behavior: >
+      Each TGW attachment can be associated with exactly ONE route table.
+      Association determines which route table evaluates traffic FROM that
+      attachment. To change association, disassociate from the current
+      table first. A route table can have many attachments associated.
+      Propagation (not association) can be enabled to multiple tables.
+    common_false_claim: "Associate the VPC attachment with both route tables for dual routing."
+    correct_action: "Associate with one route table. Use propagation to multiple tables for route sharing."
+
+  - id: P5-blackhole-auto-cleanup
+    trigger_words: ["blackhole", "deleted attachment", "stale route", "route cleanup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume blackhole routes are automatically cleaned up when
+      attachments are deleted. Blackhole routes persist and silently
+      drop traffic.
+    actual_behavior: >
+      When a TGW attachment is deleted, propagated routes from that
+      attachment become blackhole routes. These routes are NOT automatically
+      removed. They silently drop traffic matching the CIDR. You must
+      manually delete blackhole routes or create new routes pointing to
+      a valid attachment. Always search for blackhole routes after
+      deleting attachments.
+    common_false_claim: "Routes are automatically cleaned up when you delete the attachment."
+    correct_action: "Search for blackhole routes and delete them: aws ec2 delete-transit-gateway-route."
+
+  - id: P6-appliance-mode-default
+    trigger_words: ["appliance mode", "stateful", "firewall", "symmetric routing", "inspection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume TGW handles symmetric routing automatically for
+      security appliances. Without appliance mode, return traffic
+      may take a different AZ path.
+    actual_behavior: >
+      By default, TGW uses ECMP-like behavior across AZs. Return traffic
+      may use a different AZ than the original request, breaking stateful
+      firewalls. Appliance mode forces symmetric routing through the same
+      AZ for a given flow. Enable with: aws ec2 modify-transit-gateway-vpc-attachment
+      --options ApplianceModeSupport=enable.
+    common_false_claim: "TGW automatically routes return traffic through the same firewall instance."
+    correct_action: "Enable appliance mode on the VPC attachment hosting the security appliance."
+
+  - id: P7-subnet-per-az
+    trigger_words: ["AZ", "availability zone", "subnet", "VPC attachment", "cross-AZ"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest a single subnet is sufficient for a VPC attachment.
+      Without a subnet in each AZ, instances in other AZs cannot
+      directly reach the TGW.
+    actual_behavior: >
+      VPC attachments need a subnet in each AZ where instances require
+      TGW connectivity. If the attachment only has a subnet in AZ-a,
+      instances in AZ-b must cross AZ boundaries within the VPC to
+      reach the TGW, adding latency and cost. For production, specify
+      subnets in all AZs.
+    common_false_claim: "Create the VPC attachment with one subnet — traffic routes from all AZs."
+    correct_action: "Specify a subnet in each AZ: --subnet-ids subnet-az-a subnet-az-b subnet-az-c."
+
+  - id: P8-mtu-uniform
+    trigger_words: ["MTU", "packet size", "jumbo frames", "fragmentation", "packet drop"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume uniform MTU across all TGW attachment types. Different
+      attachment types support different MTU values.
+    actual_behavior: >
+      VPC attachments support MTU 8500 (jumbo frames) within the same
+      region. VPN attachments support only MTU 1500. Inter-region peering
+      supports MTU 8500. Mismatched MTU causes silent packet drops for
+      packets exceeding the lower MTU. Use path MTU discovery or
+      explicitly set MTU on instances to the lowest common value.
+    common_false_claim: "TGW supports 8500 MTU for all attachment types including VPN."
+    correct_action: "Set MTU based on attachment type. Use 1500 for paths involving VPN tunnels."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

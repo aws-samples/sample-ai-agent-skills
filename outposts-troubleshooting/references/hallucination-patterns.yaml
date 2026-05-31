@@ -1,0 +1,127 @@
+# =============================================================================
+# AWS Outposts "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-service-link-instance-impact
+    trigger_words: ["service link", "disconnected", "outpost offline", "connectivity lost"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume service link failure stops all Outpost operations.
+      Running instances and local EBS volumes continue working.
+    actual_behavior: >
+      When the service link is down, existing EC2 instances keep running
+      and local EBS volumes remain accessible. New instance launches,
+      new volume creation, and Region API calls fail. ECS tasks already
+      running continue but new task placements fail.
+    common_false_claim: "If the service link goes down, all instances on the Outpost will stop."
+    correct_action: "Verify service link status. Existing workloads continue; only new operations are affected."
+
+  - id: P2-unlimited-capacity-assumption
+    trigger_words: ["launch instance", "capacity", "InsufficientInstanceCapacity", "scale out"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs treat Outposts like Regions with elastic capacity. Outpost
+      capacity is physically limited by installed hardware.
+    actual_behavior: >
+      Outpost capacity is fixed by the hardware configuration ordered.
+      When capacity is exhausted for an instance family, launches fail
+      with InsufficientInstanceCapacity. You must free capacity or order
+      additional hardware — retrying will not help.
+    common_false_claim: "Retry the instance launch — capacity should become available shortly."
+    correct_action: "Check capacity with CloudWatch metrics. Free capacity or request additional hardware from AWS."
+
+  - id: P3-s3-standard-urls
+    trigger_words: ["S3 on Outposts", "s3 bucket", "outpost bucket", "s3-outposts"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest standard S3 bucket URLs for Outposts buckets.
+      S3 on Outposts requires access points exclusively.
+    actual_behavior: >
+      S3 on Outposts uses a different endpoint format and requires
+      S3 access points. The ARN format is
+      arn:aws:s3-outposts:<region>:<account>:outpost/<outpost-id>/bucket/<name>.
+      Standard s3.amazonaws.com URLs do not work.
+    common_false_claim: "Access your Outposts bucket at s3://my-outpost-bucket."
+    correct_action: "Use S3 access points with the s3-outposts endpoint format."
+
+  - id: P4-local-gateway-automatic
+    trigger_words: ["local gateway", "on-premises", "LGW", "CoIP", "local network"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume the local gateway is automatically configured for
+      on-premises connectivity when the Outpost is installed.
+    actual_behavior: >
+      The local gateway requires explicit configuration: route table
+      associations with VPC subnets, CoIP pool allocation, and optionally
+      BGP peering for dynamic routing. Without configuration, Outpost
+      instances cannot reach on-premises resources.
+    common_false_claim: "Outpost instances can automatically reach on-premises servers."
+    correct_action: "Configure local gateway route tables, CoIP pools, and VPC associations."
+
+  - id: P5-ebs-region-storage
+    trigger_words: ["EBS", "volume", "snapshot", "local storage", "Outpost volume"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse where EBS data is stored on Outposts vs snapshots.
+      Volumes are local; snapshots go to the Region.
+    actual_behavior: >
+      EBS volumes on Outposts are stored on the local Outpost hardware.
+      Snapshots of these volumes are stored in the parent Region's S3.
+      If Outpost hardware fails, local volume data may be lost without
+      snapshots. Volume types depend on Outpost configuration.
+    common_false_claim: "EBS volumes on Outposts are replicated to the Region automatically."
+    correct_action: "Create regular snapshots for data protection. Snapshots are stored in the Region."
+
+  - id: P6-all-instance-types-available
+    trigger_words: ["instance type", "instance family", "launch configuration", "compute"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest any EC2 instance type for Outposts. Only specific
+      families are supported and depend on the ordered configuration.
+    actual_behavior: >
+      Outposts support specific instance families (c5, m5, r5, g4dn,
+      i3en, c6g, m6g, r6g, etc.). The exact types depend on what was
+      ordered. Use get-outpost-instance-types to check availability.
+    common_false_claim: "Launch a t3.micro instance on your Outpost."
+    correct_action: "Check available types with aws outposts get-outpost-instance-types."
+
+  - id: P7-separate-vpc-required
+    trigger_words: ["VPC", "subnet", "Outpost subnet", "network configuration"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a separate VPC for Outpost resources.
+      Outpost subnets must be in an existing VPC.
+    actual_behavior: >
+      Outpost subnets are created within the same VPC as Region subnets.
+      They share security groups, NACLs, and route tables. The subnet
+      is associated with the Outpost via the Outpost ARN. No separate
+      VPC is needed or supported.
+    common_false_claim: "Create a dedicated VPC for your Outpost resources."
+    correct_action: "Create subnets in your existing VPC with the Outpost ARN association."
+
+  - id: P8-coip-pool-creation
+    trigger_words: ["CoIP", "customer-owned IP", "elastic IP", "on-premises IP"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest creating CoIP pools via CLI or console. CoIP pools
+      are configured during Outpost installation by AWS.
+    actual_behavior: >
+      Customer-owned IP (CoIP) pools are configured by AWS during
+      Outpost installation based on the IP ranges you provide. They
+      cannot be created via the API or console. Changes require AWS
+      support. CoIP Elastic IPs are different from Region Elastic IPs.
+    common_false_claim: "Create a CoIP pool using aws ec2 create-coip-pool."
+    correct_action: "CoIP pools are pre-configured. Use aws ec2 describe-coip-pools to view them."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

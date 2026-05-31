@@ -1,0 +1,142 @@
+# =============================================================================
+# Amazon GuardDuty "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-requires-flow-logs
+    trigger_words: ["VPC flow logs", "enable flow logs", "flow log prerequisite", "DNS logging"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume GuardDuty requires VPC Flow Logs and DNS logging to
+      be enabled. GuardDuty uses independent data streams and does not
+      require these to be enabled separately.
+    actual_behavior: >
+      GuardDuty accesses VPC Flow Logs, DNS logs, and CloudTrail
+      management events through its own independent data streams.
+      You do NOT need to enable VPC Flow Logs, Route 53 DNS query
+      logging, or CloudTrail for GuardDuty to function. Enabling
+      them separately is for your own analysis, not a GuardDuty
+      prerequisite.
+    common_false_claim: "Enable VPC Flow Logs before GuardDuty can detect network-based threats."
+    correct_action: "GuardDuty works without enabling Flow Logs. Check detector status and data source configuration."
+
+  - id: P2-global-findings-view
+    trigger_words: ["all regions", "global findings", "centralized findings", "cross-region findings"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest GuardDuty has a built-in global findings view.
+      Findings are regional and require explicit aggregation.
+    actual_behavior: >
+      Each region has its own detector and findings. There is no
+      built-in global view. Use Security Hub cross-region aggregation,
+      S3 export with publishing destinations, or EventBridge rules
+      to centralize findings. Always verify you are checking the
+      correct region.
+    common_false_claim: "GuardDuty provides a centralized dashboard showing findings from all regions."
+    correct_action: "Set up Security Hub cross-region aggregation or S3 export for centralized findings."
+
+  - id: P3-suppression-deletes
+    trigger_words: ["suppress finding", "suppression rule", "hide finding", "filter finding"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest suppression rules delete or remove findings.
+      Suppression only auto-archives findings — they still exist.
+    actual_behavior: >
+      Suppression rules automatically archive matching findings.
+      Suppressed findings are hidden from the default view but NOT
+      deleted. They still exist, count toward limits, and can be
+      viewed by filtering for archived findings. Removing a
+      suppression rule does not unarchive previously suppressed
+      findings.
+    common_false_claim: "Create a suppression rule to permanently remove false positive findings."
+    correct_action: "Use suppression rules to auto-archive. Understand findings still exist and are retained."
+
+  - id: P4-runtime-automatic
+    trigger_words: ["runtime monitoring", "runtime detection", "process monitoring", "OS-level threats"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume runtime monitoring works automatically once enabled.
+      It requires the GuardDuty security agent to be deployed on
+      target resources.
+    actual_behavior: >
+      Runtime monitoring requires the GuardDuty security agent on
+      EC2 instances, EKS nodes, or ECS Fargate tasks. Without the
+      agent, no runtime findings are generated. The agent can be
+      auto-managed or manually deployed. Check coverage status to
+      verify agent deployment.
+    common_false_claim: "Enable runtime monitoring in the detector settings and it starts working immediately."
+    correct_action: "Enable runtime monitoring AND verify agent deployment. Check coverage statistics."
+
+  - id: P5-malware-continuous
+    trigger_words: ["malware scan", "malware protection", "virus scan", "malware detection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest GuardDuty continuously scans all volumes for
+      malware. Malware scanning is triggered by specific finding
+      types and creates EBS snapshots.
+    actual_behavior: >
+      Malware Protection scans EBS volumes by creating snapshots
+      when triggered by specific finding types (e.g., EC2 compromise
+      indicators). It does NOT continuously scan all volumes. Snapshots
+      incur EBS costs. There are volume size limits (default 1 TB)
+      and scan timeouts. On-demand scanning is also available.
+    common_false_claim: "GuardDuty Malware Protection continuously scans all your EBS volumes for malware."
+    correct_action: "Understand malware scanning is event-triggered. Use on-demand scans for proactive scanning."
+
+  - id: P6-trusted-ip-all-findings
+    trigger_words: ["trusted IP", "whitelist IP", "IP allowlist", "trusted list"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest trusted IP lists suppress all finding types.
+      They only affect VPC Flow Log and CloudTrail-based findings.
+    actual_behavior: >
+      Trusted IP lists prevent findings for traffic from those IPs,
+      but ONLY for VPC Flow Log-based and CloudTrail-based findings.
+      DNS-based findings, malware findings, and runtime findings are
+      NOT affected by trusted IP lists. Maximum 6 lists per detector,
+      250,000 IPs per list.
+    common_false_claim: "Add the IP to the trusted list and GuardDuty will stop generating all findings for it."
+    correct_action: "Use trusted IP lists for network/API findings. Use suppression rules for other finding types."
+
+  - id: P7-disable-reversible
+    trigger_words: ["disable guardduty", "turn off guardduty", "stop guardduty", "delete detector"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs conflate suspending and disabling GuardDuty. Disabling
+      permanently deletes all findings and configuration.
+    actual_behavior: >
+      Suspending a detector stops processing but retains findings
+      and configuration. Disabling (deleting) a detector permanently
+      removes ALL findings, configurations, suppression rules, and
+      threat intel sets. Suspension is reversible — disabling is NOT.
+      Always suspend rather than disable if you plan to re-enable.
+    common_false_claim: "Disable GuardDuty temporarily and re-enable it later with all your findings intact."
+    correct_action: "Use suspension for temporary stops. Only disable if you want permanent removal."
+
+  - id: P8-finding-severity-adjustable
+    trigger_words: ["change severity", "adjust severity", "custom severity", "severity override"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest finding severity can be manually adjusted.
+      Severity is assigned by GuardDuty and cannot be changed.
+    actual_behavior: >
+      Finding severity (0.1-8.9) is assigned by GuardDuty based on
+      the finding type and context. It cannot be manually adjusted
+      or overridden. Low: 0.1-3.9, Medium: 4.0-6.9, High: 7.0-8.9.
+      To manage finding priority, use suppression rules, custom
+      actions in Security Hub, or EventBridge rules with severity
+      filters.
+    common_false_claim: "Adjust the finding severity to match your organization's risk assessment."
+    correct_action: "Use suppression rules or EventBridge filters to manage finding priority. Severity is immutable."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

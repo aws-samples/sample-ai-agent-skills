@@ -1,0 +1,116 @@
+# =============================================================================
+# Amazon CodeGuru "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-discovery
+    trigger_words: ["CodeGuru setup", "connect repository", "start reviewing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CodeGuru auto-discovers repositories.
+      Repository association must be explicitly created.
+    actual_behavior: >
+      Each repository must be explicitly associated with CodeGuru
+      Reviewer. Association requires provider-specific configuration
+      (CodeStar Connection for GitHub, IAM for CodeCommit).
+    common_false_claim: "CodeGuru automatically finds and reviews all repositories."
+    correct_action: "Create repository association. Wait for ASSOCIATED state. Then reviews work."
+
+  - id: P2-all-languages
+    trigger_words: ["language support", "any language", "code review"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CodeGuru reviews all languages.
+    actual_behavior: >
+      CodeGuru Reviewer supports Java and Python for code quality.
+      Security detector supports additional languages. Other
+      languages produce no recommendations.
+    common_false_claim: "CodeGuru reviews code in any programming language."
+    correct_action: "Check supported languages. Use for Java and Python primarily."
+
+  - id: P3-profiler-no-agent
+    trigger_words: ["profiler", "performance analysis", "CPU profiling"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest profiler works without agent integration.
+    actual_behavior: >
+      CodeGuru Profiler requires the profiler agent library
+      integrated into the application. For Java, add the agent
+      JAR. For Python, install the package. Without the agent,
+      no profiling data is collected.
+    common_false_claim: "Enable CodeGuru Profiler to analyze your application."
+    correct_action: "Integrate profiler agent into application code. Deploy. Wait for data."
+
+  - id: P4-instant-profiling
+    trigger_words: ["profiling data", "performance data", "profiler results"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest instant profiling results.
+    actual_behavior: >
+      Profiler data takes 5-15 minutes to appear. The agent
+      collects CPU samples and batches them. Anomaly detection
+      requires a baseline period (hours to days).
+    common_false_claim: "View profiling data immediately after starting the agent."
+    correct_action: "Start agent. Wait 15+ minutes for initial data. Days for anomaly baseline."
+
+  - id: P5-free-unlimited
+    trigger_words: ["pricing", "free", "cost"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs understate CodeGuru costs.
+    actual_behavior: >
+      Reviewer charges per line of code reviewed. Profiler charges
+      per profiling group per hour. Full repository scans have
+      additional costs. Free tier is limited.
+    common_false_claim: "CodeGuru is free for small projects."
+    correct_action: "Review pricing. Monitor costs. Use free tier limits wisely."
+
+  - id: P6-replaces-testing
+    trigger_words: ["code quality", "bug detection", "find all bugs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CodeGuru replaces testing.
+    actual_behavior: >
+      CodeGuru provides recommendations for common issues but
+      does not replace testing. It finds patterns, not all bugs.
+      Recommendations have confidence levels and may include
+      false positives.
+    common_false_claim: "CodeGuru finds all bugs in your code."
+    correct_action: "Use as one quality tool. Combine with testing and other reviews."
+
+  - id: P7-auto-fix
+    trigger_words: ["auto fix", "automatic remediation", "fix recommendations"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CodeGuru auto-fixes issues.
+    actual_behavior: >
+      CodeGuru provides recommendations with descriptions and
+      suggested fixes. It does NOT automatically apply fixes.
+      Developers must review and implement recommendations.
+    common_false_claim: "CodeGuru automatically fixes the issues it finds."
+    correct_action: "Review recommendations. Implement fixes manually. Verify with tests."
+
+  - id: P8-profiler-zero-overhead
+    trigger_words: ["profiler overhead", "performance impact", "agent impact"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs claim zero overhead for profiling.
+    actual_behavior: >
+      The profiler agent adds minimal but non-zero overhead,
+      typically less than 1% CPU. Memory overhead is also minimal.
+      In rare cases with very high-throughput applications,
+      overhead may be noticeable.
+    common_false_claim: "CodeGuru Profiler has zero performance impact."
+    correct_action: "Expect <1% CPU overhead. Monitor in production. Acceptable for most workloads."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

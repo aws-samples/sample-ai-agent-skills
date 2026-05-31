@@ -1,0 +1,126 @@
+# =============================================================================
+# AWS Application Discovery Service "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-agentless-all-hypervisors
+    trigger_words: ["agentless", "collector", "hypervisor", "virtual machines"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest agentless discovery works with any hypervisor.
+      It only works with VMware vCenter.
+    actual_behavior: >
+      The agentless collector is a VMware OVA that connects to vCenter
+      Server API. It only discovers VMware VMs. Hyper-V, KVM, Xen,
+      and physical servers require agent-based discovery.
+    common_false_claim: "Deploy the agentless collector to discover Hyper-V VMs."
+    correct_action: "Use agentless for VMware only. Install agents on Hyper-V, KVM, and physical servers."
+
+  - id: P2-auto-data-collection
+    trigger_words: ["install agent", "deploy agent", "start discovery"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume data collection starts automatically after agent
+      installation. It must be explicitly started.
+    actual_behavior: >
+      After installing and registering the agent, data collection
+      must be explicitly started via start-data-collection-by-agent-ids
+      API or the console. The agent registers but remains idle until
+      collection is started.
+    common_false_claim: "Install the agent and it will automatically start collecting data."
+    correct_action: "Install agent, verify registration, then start collection explicitly."
+
+  - id: P3-agentless-dependency-mapping
+    trigger_words: ["dependency", "network connections", "application dependencies"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest agentless discovery provides dependency mapping.
+      Only agent-based discovery captures network connections.
+    actual_behavior: >
+      Dependency mapping requires network connection data which is
+      only collected by Discovery Agents installed on servers.
+      Agentless discovery provides VM configuration and performance
+      but not network connection details.
+    common_false_claim: "Use agentless discovery to map application dependencies."
+    correct_action: "Deploy Discovery Agents for dependency mapping. Agentless only provides VM inventory."
+
+  - id: P4-athena-auto-setup
+    trigger_words: ["Athena", "query discovery", "SQL query", "analyze data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest querying discovery data in Athena directly.
+      Continuous export must be enabled first.
+    actual_behavior: >
+      Athena integration requires continuous export to be active.
+      Start continuous export first, which creates S3 data and
+      Athena tables automatically. Only then can you query
+      discovery data with SQL in Athena.
+    common_false_claim: "Query your discovery data in Athena immediately."
+    correct_action: "Enable continuous export first, then query via Athena."
+
+  - id: P5-any-region-discovery
+    trigger_words: ["region", "discovery region", "agent region"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest running discovery in any region. Data goes to
+      the Migration Hub home region.
+    actual_behavior: >
+      All discovery data is stored in the Migration Hub home region.
+      Agents can be deployed on servers in any location but report
+      to the home region endpoint. API calls must target the home region.
+    common_false_claim: "View discovery data in the region where agents are deployed."
+    correct_action: "Set home region first. All discovery API calls go to the home region."
+
+  - id: P6-export-continuous
+    trigger_words: ["export data", "download data", "get CSV"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs confuse one-time export with continuous export.
+      They serve different purposes.
+    actual_behavior: >
+      One-time export (start-export-task) creates a point-in-time
+      CSV snapshot. Continuous export streams data to S3 for Athena.
+      They are different features. One-time export is for ad-hoc
+      analysis; continuous export is for ongoing queries.
+    common_false_claim: "Export data once and query it in Athena."
+    correct_action: "Use continuous export for Athena. Use one-time export for CSV snapshots."
+
+  - id: P7-agent-inbound-ports
+    trigger_words: ["firewall", "ports", "agent connectivity", "network requirements"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest opening inbound ports for the agent. Only
+      outbound HTTPS is required.
+    actual_behavior: >
+      Discovery Agent only needs outbound HTTPS (port 443) to the
+      discovery service endpoint. No inbound ports need to be opened.
+      The agent initiates all connections. Proxy support is available
+      for restricted networks.
+    common_false_claim: "Open inbound port 443 for the discovery agent."
+    correct_action: "Allow outbound HTTPS (443) to discovery.<region>.amazonaws.com. No inbound needed."
+
+  - id: P8-collector-vs-agent
+    trigger_words: ["which to use", "agent or agentless", "discovery method"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs recommend one method for all scenarios. The choice
+      depends on environment and data needs.
+    actual_behavior: >
+      Use agentless for VMware environments when you need basic
+      inventory. Use agents when you need dependency mapping,
+      process data, or have non-VMware servers. Both can be used
+      together for comprehensive discovery.
+    common_false_claim: "Use agentless discovery for everything — it's easier."
+    correct_action: "Choose based on needs: agentless for VMware inventory, agents for dependencies."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

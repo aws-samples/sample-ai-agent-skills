@@ -1,0 +1,134 @@
+# =============================================================================
+# AWS Audit Manager "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-compliance
+    trigger_words: ["Audit Manager", "compliance", "automatic compliance", "compliant"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Audit Manager makes you compliant. It only
+      collects evidence and tracks compliance posture.
+    actual_behavior: >
+      Audit Manager collects evidence and helps track compliance
+      posture but does NOT make your infrastructure compliant.
+      It does not remediate non-compliant resources. It provides
+      evidence for auditors but achieving compliance requires
+      implementing the actual controls in your infrastructure.
+    common_false_claim: "Enable Audit Manager to become PCI DSS compliant."
+    correct_action: "Use Audit Manager to track and collect evidence. Implement actual controls separately to achieve compliance."
+
+  - id: P2-real-time-evidence
+    trigger_words: ["real-time", "instant evidence", "immediate", "live evidence"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest evidence collection is real-time. It follows
+      a schedule based on control type.
+    actual_behavior: >
+      Evidence collection follows schedules: Config-based controls
+      collect daily, CloudTrail-based controls collect as events
+      occur (with delay), API-based controls collect on schedule.
+      New resources may take up to 24 hours to appear in evidence.
+    common_false_claim: "Audit Manager provides real-time compliance evidence."
+    correct_action: "Evidence collection is scheduled. Allow 24 hours for new resources to appear. Check collection schedule per control type."
+
+  - id: P3-modify-standard-frameworks
+    trigger_words: ["modify framework", "edit framework", "customize CIS", "change controls"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying standard frameworks directly.
+      Standard frameworks are read-only.
+    actual_behavior: >
+      Standard frameworks (CIS, PCI DSS, SOC 2, HIPAA, etc.)
+      are read-only and cannot be modified. To customize controls,
+      create a custom framework and add/remove controls as needed.
+      Custom frameworks can include controls from multiple
+      standard frameworks.
+    common_false_claim: "Edit the CIS framework to remove controls that don't apply."
+    correct_action: "Create a custom framework based on CIS. Add only the controls that apply to your environment."
+
+  - id: P4-no-config-needed
+    trigger_words: ["setup", "enable", "get started", "configure"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs omit the AWS Config prerequisite. Most automated
+      controls require Config for evidence collection.
+    actual_behavior: >
+      AWS Config must be enabled and recording for most automated
+      controls to collect evidence. Without Config, automated
+      evidence collection fails silently — controls show no
+      evidence rather than errors. Security Hub is also needed
+      for Security Hub-based controls.
+    common_false_claim: "Just enable Audit Manager and create an assessment."
+    correct_action: "Enable AWS Config first, then Security Hub if needed, then create Audit Manager assessments."
+
+  - id: P5-auto-remediation
+    trigger_words: ["fix", "remediate", "auto-fix", "resolve findings"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Audit Manager remediates compliance issues.
+      It only collects evidence and reports.
+    actual_behavior: >
+      Audit Manager does NOT remediate non-compliant resources.
+      It collects evidence and reports compliance status. For
+      remediation, use AWS Config auto-remediation, Security Hub
+      automated response, or manual intervention. Audit Manager
+      is an evidence collection and reporting tool.
+    common_false_claim: "Audit Manager will fix non-compliant resources."
+    correct_action: "Use Audit Manager for evidence collection. Use Config auto-remediation or manual processes for fixing issues."
+
+  - id: P6-free-service
+    trigger_words: ["cost", "pricing", "free", "charges"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not accurately describe pricing. Audit Manager
+      charges per resource assessment.
+    actual_behavior: >
+      Audit Manager charges per resource assessment per month.
+      Costs depend on the number of unique resources evaluated
+      across all active assessments. Large environments with
+      many resources can incur significant costs. Check current
+      pricing on the AWS Audit Manager pricing page.
+    common_false_claim: "Audit Manager is included with AWS Config at no extra cost."
+    correct_action: "Audit Manager has separate pricing per resource assessment. Calculate costs based on resource count."
+
+  - id: P7-cross-region-assessment
+    trigger_words: ["multi-region", "all regions", "global compliance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest assessments cover all regions. Audit Manager
+      is regional.
+    actual_behavior: >
+      Audit Manager assessments are regional. An assessment in
+      us-east-1 only evaluates resources in us-east-1. For
+      multi-region compliance, create assessments in each region.
+      There is no global assessment capability.
+    common_false_claim: "Create one assessment to cover all your AWS regions."
+    correct_action: "Create assessments in each region where you have resources. Aggregate results manually or via custom reporting."
+
+  - id: P8-delegation-auto-access
+    trigger_words: ["delegate", "delegation", "assign controls", "team review"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest delegation automatically grants access.
+      Delegates need separate IAM permissions.
+    actual_behavior: >
+      Delegating a control set to a team member creates the
+      assignment but does NOT automatically grant IAM permissions.
+      The delegate must have auditmanager:* permissions (or
+      scoped permissions) in their IAM policy to access the
+      delegated assessment and control sets.
+    common_false_claim: "Delegate the control set and the team member can immediately review it."
+    correct_action: "Delegate the control set AND ensure the delegate has appropriate IAM permissions for Audit Manager."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

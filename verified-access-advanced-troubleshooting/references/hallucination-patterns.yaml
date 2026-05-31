@@ -1,0 +1,152 @@
+# =============================================================================
+# AWS Verified Access Advanced "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-iam-policy-for-cedar
+    trigger_words: ["Verified Access policy", "access policy", "Cedar policy", "authorization"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to IAM policy JSON syntax when asked about
+      Verified Access policies. Cedar is a completely different
+      language with different syntax and semantics.
+    actual_behavior: >
+      Verified Access uses Cedar policy language. Cedar policies
+      use permit/forbid statements with when/unless clauses.
+      Example: permit(principal, action, resource) when {
+      context.identity.email like "*@example.com" }; Cedar does
+      NOT use Effect, Action, Resource JSON structure.
+    common_false_claim: "Create an IAM policy with Effect Allow and attach it to the Verified Access group."
+    correct_action: "Write Cedar policies using permit/forbid syntax. Reference trust context via policy_reference_name."
+
+  - id: P2-va-replaces-vpn-completely
+    trigger_words: ["replace VPN", "no VPN needed", "VPN alternative", "zero trust"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Verified Access completely replaces VPN for
+      all use cases. It covers HTTP/HTTPS application access
+      but not all VPN use cases.
+    actual_behavior: >
+      Verified Access provides zero-trust access to HTTP/HTTPS
+      applications. It does NOT replace VPN for non-HTTP protocols
+      (SSH, RDP, database connections), full network-level access,
+      or site-to-site connectivity. It complements VPN for
+      web application access patterns.
+    common_false_claim: "Migrate all VPN users to Verified Access and decommission the VPN."
+    correct_action: "Use Verified Access for HTTP/HTTPS apps. Maintain VPN for non-HTTP access needs."
+
+  - id: P3-automatic-device-trust
+    trigger_words: ["device trust", "device posture", "device compliance", "MDM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest device trust works automatically once a
+      provider is configured. Integration requires endpoint
+      agent deployment and proper configuration.
+    actual_behavior: >
+      Device trust requires: 1) A device trust provider configured
+      in Verified Access (CrowdStrike, Jamf, etc.), 2) The
+      corresponding agent installed on end-user devices, 3) The
+      agent properly enrolled with the trust provider, 4) Cedar
+      policies that reference device context data. Missing any
+      step causes device trust evaluation to fail.
+    common_false_claim: "Just add CrowdStrike as a trust provider and device trust works automatically."
+    correct_action: "Configure trust provider, deploy agents, verify enrollment, and write Cedar policies referencing device context."
+
+  - id: P4-cedar-iam-interchangeable
+    trigger_words: ["Cedar", "IAM", "policy language", "authorization language"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat Cedar and IAM policy language as interchangeable
+      or suggest converting between them directly.
+    actual_behavior: >
+      Cedar and IAM are completely different authorization systems.
+      Cedar uses entity-based authorization with principal, action,
+      resource model. IAM uses identity-based and resource-based
+      policies with Effect/Action/Resource. They cannot be directly
+      converted. Cedar policies are evaluated by the Verified Access
+      service, not by IAM.
+    common_false_claim: "Convert your IAM policy to Cedar format for Verified Access."
+    correct_action: "Write Cedar policies from scratch based on access requirements. Do not attempt IAM-to-Cedar conversion."
+
+  - id: P5-logs-enabled-by-default
+    trigger_words: ["access logs", "logging", "audit", "log analysis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume Verified Access access logs are enabled by
+      default. Logging must be explicitly configured.
+    actual_behavior: >
+      Verified Access access logs are NOT enabled by default.
+      Logging must be explicitly configured on the Verified Access
+      instance. Logs can be sent to CloudWatch Logs, S3, or
+      Kinesis Data Firehose. Without logging enabled, there is
+      no visibility into access decisions.
+    common_false_claim: "Check the Verified Access logs to see why access was denied."
+    correct_action: "First verify logging is enabled: aws ec2 describe-verified-access-instance-logging-configurations. Enable if not configured."
+
+  - id: P6-waf-after-policy
+    trigger_words: ["WAF", "web ACL", "WAF integration", "firewall"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest WAF evaluation happens after Verified
+      Access policy evaluation, or that they are independent.
+    actual_behavior: >
+      When WAF is associated with a Verified Access instance,
+      WAF rules are evaluated FIRST. If WAF blocks the request,
+      it never reaches Verified Access Cedar policy evaluation.
+      This means WAF blocks appear as connection failures, not
+      as Verified Access policy denials in access logs.
+    common_false_claim: "Verified Access evaluates the Cedar policy first, then WAF checks the request."
+    correct_action: "Debug WAF rules first if requests are blocked. Check WAF logs before Verified Access access logs."
+
+  - id: P7-any-protocol-support
+    trigger_words: ["SSH access", "RDP", "database access", "TCP", "protocol"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Verified Access supports any protocol or
+      can replace VPN for all access patterns.
+    actual_behavior: >
+      Verified Access supports HTTP and HTTPS protocols only.
+      It cannot be used for SSH, RDP, database connections (MySQL,
+      PostgreSQL ports), or other TCP/UDP protocols. For non-HTTP
+      access, use VPN, Session Manager, or other solutions.
+    common_false_claim: "Configure Verified Access for SSH access to your EC2 instances."
+    correct_action: "Use Verified Access for HTTP/HTTPS only. Use SSM Session Manager for SSH, or maintain VPN for other protocols."
+
+  - id: P8-global-policy
+    trigger_words: ["global policy", "all regions", "cross-region", "centralized"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Verified Access policies can be applied
+      globally across regions.
+    actual_behavior: >
+      Verified Access is a regional service. Instances, groups,
+      endpoints, and policies are all regional resources. There
+      is no global policy mechanism. Each region requires its
+      own Verified Access deployment with its own policies.
+    common_false_claim: "Create a global Verified Access policy that applies to all regions."
+    correct_action: "Deploy Verified Access in each region. Use IaC (CloudFormation, Terraform) to maintain consistent policies across regions."
+
+remediation_hallucinations:
+
+  - id: R1-modify-iam-for-access
+    false_remediation: "Modify the IAM policy attached to the user to grant Verified Access permissions."
+    why_wrong: >
+      Verified Access authorization is handled by Cedar policies,
+      not IAM policies. IAM controls who can manage Verified Access
+      resources, not who can access applications through Verified Access.
+    correct_approach: >
+      Modify the Cedar policy on the Verified Access group to
+      permit the user based on trust context (identity claims,
+      device posture). Use aws ec2 modify-verified-access-group-policy.
+
+  - id: R2-restart-instance-for-policy
+    false_remediation: "Restart the Verified Access instance to apply the updated Cedar policy."
+    why_wrong: >
+      Cedar policy changes take effect immediately without
+      restarting the Verified Access instance. Restarting would
+      cause unnecessary downtime for all endpoints.
+    correct_approach: >
+      Policy changes are applied immediately. If access is still
+      denied after policy update, check access logs for the
+      actual denial reason. Verify policy_reference_name matches.

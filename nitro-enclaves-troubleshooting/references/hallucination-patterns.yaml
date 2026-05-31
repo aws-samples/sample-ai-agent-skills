@@ -1,0 +1,165 @@
+# =============================================================================
+# AWS Nitro Enclaves "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-enclave-network-access
+    trigger_words: ["enclave network", "enclave HTTP", "enclave API call", "enclave internet"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest enclaves can make network calls or access AWS
+      services directly. Enclaves have zero network access.
+    actual_behavior: >
+      Nitro Enclaves are completely isolated from the network stack.
+      They cannot make HTTP requests, DNS lookups, or any network
+      communication. The ONLY communication channel is vsock to
+      the parent instance. All AWS API calls must be proxied
+      through the parent instance via vsock.
+    common_false_claim: "The enclave can call KMS directly to decrypt data."
+    correct_action: "Implement a vsock proxy on the parent that forwards KMS requests from the enclave. Use the Nitro Enclaves SDK which handles this."
+
+  - id: P2-enclave-ssh-access
+    trigger_words: ["SSH into enclave", "connect to enclave", "enclave shell"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest SSH or interactive access to enclaves.
+      Enclaves have no interactive access mechanism.
+    actual_behavior: >
+      There is no SSH, shell, or interactive access to a running
+      enclave. The only way to observe enclave behavior is through
+      the console output (nitro-cli console) which shows stdout
+      and stderr from the enclave application. Debugging must be
+      done through application logging to stdout.
+    common_false_claim: "SSH into the enclave to debug the application."
+    correct_action: "Use nitro-cli console to view enclave stdout/stderr. Add logging to the enclave application for diagnostics."
+
+  - id: P3-pcr-manual-setting
+    trigger_words: ["set PCR", "configure PCR", "custom PCR values"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest PCR values can be manually configured or set.
+      PCR values are cryptographic measurements computed from
+      the enclave image.
+    actual_behavior: >
+      PCR values are deterministic cryptographic hashes computed
+      during enclave image build and verified at runtime. PCR0
+      is the hash of the enclave image. PCR1 is the hash of the
+      Linux kernel and boot ramfs. PCR2 is the hash of the
+      application. These cannot be manually set or modified.
+    common_false_claim: "Set the PCR0 value in the enclave configuration."
+    correct_action: "Build the enclave image and use nitro-cli describe-eif to get the PCR values. Update KMS key policies with the actual PCR values."
+
+  - id: P4-enclave-persistent-storage
+    trigger_words: ["enclave storage", "enclave disk", "save to enclave", "enclave filesystem"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enclaves have filesystem or persistent storage.
+      Enclaves have no disk access.
+    actual_behavior: >
+      Enclaves have no persistent storage. All data exists only
+      in memory and is lost when the enclave terminates. The
+      enclave has a read-only root filesystem from the EIF image.
+      Any data that needs to persist must be sent to the parent
+      instance via vsock for storage.
+    common_false_claim: "Write the encrypted data to a file in the enclave."
+    correct_action: "Keep data in memory within the enclave. Send data to parent via vsock for persistent storage. Encrypt sensitive data before sending."
+
+  - id: P5-enclave-enable-running
+    trigger_words: ["enable enclave", "turn on enclave", "activate enclave support"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enclave support can be enabled on a running
+      instance. It must be set at launch time.
+    actual_behavior: >
+      Enclave support (EnclaveOptions.Enabled) must be set when
+      the EC2 instance is launched. It cannot be enabled or
+      disabled on a running instance. To enable enclave support,
+      the instance must be terminated and a new instance launched
+      with the option enabled.
+    common_false_claim: "Enable enclave support on your running instance with a CLI command."
+    correct_action: "Launch a new instance with --enclave-options Enabled=true. Migrate workloads from the old instance."
+
+  - id: P6-multiple-enclaves
+    trigger_words: ["multiple enclaves", "second enclave", "several enclaves"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest running multiple enclaves on a single instance.
+      Only one enclave per instance is supported.
+    actual_behavior: >
+      Each EC2 instance can run exactly ONE enclave at a time.
+      Attempting to start a second enclave while one is running
+      returns an error. To run a different enclave, the current
+      one must be terminated first.
+    common_false_claim: "Run multiple enclaves on the same instance for different workloads."
+    correct_action: "Use one enclave per instance. For multiple enclave workloads, use multiple instances."
+
+  - id: P7-enclave-shared-memory
+    trigger_words: ["shared memory", "memory mapping", "mmap enclave"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest shared memory between parent and enclave for
+      high-performance communication. This is not supported.
+    actual_behavior: >
+      There is no shared memory mechanism between the parent
+      instance and the enclave. All communication must go through
+      vsock. The enclave's memory is cryptographically isolated
+      from the parent — this is the core security property of
+      Nitro Enclaves. Shared memory would defeat this purpose.
+    common_false_claim: "Use shared memory for fast data transfer between parent and enclave."
+    correct_action: "Use vsock for all communication. Optimize vsock buffer sizes and message batching for performance."
+
+  - id: P8-enclave-docker-runtime
+    trigger_words: ["Docker in enclave", "container runtime", "enclave container"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enclaves run Docker containers. Enclaves run
+      EIF images built from Docker images but do not use Docker
+      runtime.
+    actual_behavior: >
+      Enclave images (EIF files) are built FROM Docker images
+      using nitro-cli build-enclave. However, the enclave does
+      not run Docker or any container runtime. The EIF is a
+      specialized format that boots a minimal Linux kernel with
+      the application. Docker is only used as a build tool, not
+      a runtime.
+    common_false_claim: "Run your Docker container inside the Nitro Enclave."
+    correct_action: "Build an EIF from your Docker image: nitro-cli build-enclave --docker-uri <image> --output-file <output.eif>. The enclave runs the EIF, not Docker."
+
+remediation_hallucinations:
+
+  - id: R1-restart-enclave-preserves-state
+    trigger_words: ["restart enclave", "reboot enclave", "enclave state"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest restarting an enclave preserves its state.
+      All in-memory state is lost on termination.
+    actual_behavior: >
+      Terminating and restarting an enclave destroys all in-memory
+      state. There is no pause, hibernate, or restart-with-state
+      capability. The enclave starts fresh from the EIF image
+      each time. Any state that needs to survive restarts must
+      be persisted externally via vsock.
+    correct_sequence: >
+      1. Before terminating, send critical state to parent via vsock
+      2. Parent persists state to disk or external storage
+      3. Terminate enclave: nitro-cli terminate-enclave --enclave-id <id>
+      4. Start new enclave: nitro-cli run-enclave --eif-path <path> --memory <mb> --cpu-count <n>
+      5. Send persisted state back to enclave via vsock after startup
+
+  - id: R2-modify-enclave-resources
+    trigger_words: ["resize enclave", "add memory", "change CPU"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest enclave resources can be modified while running.
+      Resource allocation is fixed at enclave start time.
+    actual_behavior: >
+      Enclave memory and CPU allocation are set at launch time
+      via nitro-cli run-enclave parameters. They cannot be changed
+      while the enclave is running. To change resources, the
+      enclave must be terminated and restarted with new parameters.
+    correct_sequence: >
+      1. Save enclave state via vsock if needed
+      2. Terminate enclave: nitro-cli terminate-enclave --enclave-id <id>
+      3. Start with new resources: nitro-cli run-enclave --eif-path <path> --memory <new-mb> --cpu-count <new-n>
+      4. Restore state via vsock if needed

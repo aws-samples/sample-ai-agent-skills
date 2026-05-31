@@ -1,0 +1,121 @@
+# =============================================================================
+# ECR "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auth-token-permanent
+    trigger_words: ["ecr login", "docker login ecr", "authentication token"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest ECR auth tokens are long-lived or permanent.
+      They expire after exactly 12 hours.
+    actual_behavior: >
+      ECR authorization tokens from get-login-password are valid for
+      12 hours only. After expiry, docker push/pull fails with auth
+      errors. CI/CD must refresh tokens per job.
+    common_false_claim: "Once you log in to ECR, the session persists indefinitely."
+    correct_action: "Refresh ECR auth token before each CI/CD job or every 12 hours."
+
+  - id: P2-cross-account-iam-only
+    trigger_words: ["cross-account ecr", "pull from another account", "cross-account image"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest only IAM permissions are needed for cross-account
+      ECR access. Both IAM and repository resource policy are required.
+    actual_behavior: >
+      Cross-account ECR access requires IAM permissions in the caller's
+      account AND a repository policy in the ECR account granting access.
+      Missing either results in AccessDeniedException.
+    common_false_claim: "Just add ecr:GetDownloadUrlForLayer to the IAM role."
+    correct_action: "Configure both IAM policy on the caller and repository policy on the ECR repo."
+
+  - id: P3-lifecycle-immediate
+    trigger_words: ["lifecycle policy", "cleanup images", "delete old images"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim lifecycle policies take effect immediately after
+      creation. ECR evaluates them asynchronously within 24 hours.
+    actual_behavior: >
+      Lifecycle policy evaluation is asynchronous and typically runs
+      within 24 hours. Images matching the policy rules are not deleted
+      immediately. Check results after 24 hours.
+    common_false_claim: "The lifecycle policy will immediately delete matching images."
+    correct_action: "Wait up to 24 hours for lifecycle policy evaluation. Verify with describe-images."
+
+  - id: P4-replication-copies-policies
+    trigger_words: ["ecr replication", "replicate repository", "cross-region copy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume replication copies everything including policies.
+      Only image data is replicated, not configuration.
+    actual_behavior: >
+      ECR replication copies only image manifests and layers. Lifecycle
+      policies, repository policies, scanning config, and tag immutability
+      settings must be configured separately on destination repositories.
+    common_false_claim: "Replication will copy your lifecycle policies to the destination."
+    correct_action: "Manually configure policies and settings on each destination repository."
+
+  - id: P5-basic-scanning-continuous
+    trigger_words: ["image scanning", "vulnerability scan", "ecr scan"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate basic and enhanced scanning. Basic scanning is
+      point-in-time on push only, not continuous.
+    actual_behavior: >
+      Basic scanning runs once on image push using Clair. It does NOT
+      re-scan when new CVEs are published. Enhanced scanning (Inspector)
+      provides continuous monitoring. Check which mode is enabled.
+    common_false_claim: "ECR will automatically re-scan your images when new vulnerabilities are found."
+    correct_action: "Enable enhanced scanning for continuous monitoring. Basic scanning is push-time only."
+
+  - id: P6-ecr-public-same-api
+    trigger_words: ["ecr public", "public.ecr.aws", "public repository"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs use private ECR commands for ECR Public. The APIs and
+      endpoints are completely separate.
+    actual_behavior: >
+      ECR Public uses aws ecr-public commands and public.ecr.aws
+      endpoint. Private ECR uses aws ecr commands and
+      <account>.dkr.ecr.<region>.amazonaws.com. They are separate services.
+    common_false_claim: "Use aws ecr describe-repositories to list your public repositories."
+    correct_action: "Use aws ecr-public commands for ECR Public repositories."
+
+  - id: P7-immutability-all-tags
+    trigger_words: ["tag immutability", "immutable tags", "prevent overwrite"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may suggest tag immutability can be set per-tag. It is a
+      repository-level setting that applies to all tags.
+    actual_behavior: >
+      Tag immutability is a repository-level setting. When enabled, NO
+      existing tag can be overwritten. You cannot selectively protect
+      some tags. Use unique tags (git SHA) with immutability enabled.
+    common_false_claim: "You can set immutability only for the 'latest' tag."
+    correct_action: "Tag immutability applies to all tags. Use unique tags or disable for mutable workflows."
+
+  - id: P8-pull-through-no-credentials
+    trigger_words: ["pull-through cache", "upstream registry", "cache rule"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may omit the credential requirement for pull-through cache
+      rules connecting to authenticated upstream registries.
+    actual_behavior: >
+      Pull-through cache rules for Docker Hub, GHCR, and other
+      authenticated registries require credentials stored in Secrets
+      Manager. Without valid credentials, pulls fail with upstream
+      authentication errors.
+    common_false_claim: "Just create a pull-through cache rule and ECR handles authentication."
+    correct_action: "Store upstream registry credentials in Secrets Manager and reference in cache rule."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

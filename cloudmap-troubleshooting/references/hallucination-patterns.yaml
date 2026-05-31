@@ -1,0 +1,133 @@
+# =============================================================================
+# AWS Cloud Map "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-http-namespace-dns
+    trigger_words: ["DNS resolution", "resolve hostname", "DNS lookup", "http namespace DNS"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume all Cloud Map namespaces support DNS resolution.
+      HTTP namespaces are API-only with no DNS records.
+    actual_behavior: >
+      HTTP namespaces do not create Route 53 hosted zones or DNS
+      records. Discovery is exclusively through the DiscoverInstances
+      API. Only DNS namespaces (public or private) support DNS
+      resolution. Check the namespace type before suggesting DNS
+      troubleshooting.
+    common_false_claim: "Resolve the service hostname to find registered instances."
+    correct_action: "For HTTP namespaces, use aws servicediscovery discover-instances. For DNS namespaces, use DNS resolution."
+
+  - id: P2-auto-health-check
+    trigger_words: ["automatic health check", "Cloud Map checks health", "built-in health"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Cloud Map automatically health-checks instances.
+      Custom health checks require application-managed status updates.
+    actual_behavior: >
+      Cloud Map supports two health check types: Route 53 health checks
+      (only for public endpoints, automatically probed) and custom
+      health checks (application must call UpdateInstanceCustomHealthStatus).
+      For private endpoints, there is no automatic health checking —
+      your application is responsible for reporting health.
+    common_false_claim: "Cloud Map automatically monitors the health of all registered instances."
+    correct_action: "For private endpoints, implement custom health checks with UpdateInstanceCustomHealthStatus calls."
+
+  - id: P3-modify-ecs-resources
+    trigger_words: ["modify ECS service discovery", "change ECS Cloud Map", "update ECS instances"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest directly modifying Cloud Map resources created by
+      ECS. ECS manages these resources and direct modification causes
+      conflicts.
+    actual_behavior: >
+      When ECS service discovery is enabled, ECS creates and manages
+      Cloud Map services and instances. ECS registers instances when
+      tasks start and deregisters when tasks stop. Direct modification
+      via Cloud Map APIs can conflict with ECS management and cause
+      inconsistent state.
+    common_false_claim: "Register additional instances to the ECS service discovery service."
+    correct_action: "Modify ECS service configuration to change service discovery behavior. Do not modify Cloud Map resources directly."
+
+  - id: P4-instant-discovery
+    trigger_words: ["instant discovery", "immediate registration", "real-time update"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs imply Cloud Map changes are instant. Operations are
+      eventually consistent with DNS TTL delays.
+    actual_behavior: >
+      Cloud Map operations are eventually consistent. Instance
+      registration and deregistration take seconds to propagate.
+      DNS changes additionally depend on TTL — clients cache DNS
+      responses for the TTL duration. During this window, clients
+      may use stale data.
+    common_false_claim: "Register the instance and it will be immediately discoverable."
+    correct_action: "Register the instance and wait for propagation. For DNS, account for TTL delay."
+
+  - id: P5-route53-private-health
+    trigger_words: ["Route 53 health check private", "health check VPC", "private IP health check"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Route 53 health checks for private endpoints.
+      Route 53 health checks can only reach public endpoints.
+    actual_behavior: >
+      Route 53 health checks probe endpoints from the public internet.
+      They cannot reach private IP addresses in VPCs. For private
+      endpoints, use Cloud Map custom health checks where your
+      application reports health status via the API.
+    common_false_claim: "Configure a Route 53 health check for the private IP address."
+    correct_action: "Use custom health checks for private endpoints. Implement health reporting in your application."
+
+  - id: P6-dns-attributes
+    trigger_words: ["DNS attributes", "attribute in DNS", "filter DNS"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest instance attributes are available via DNS.
+      Attributes are only available through the API.
+    actual_behavior: >
+      Instance attributes (key-value pairs) are only available through
+      the DiscoverInstances API. DNS records only contain IP addresses
+      (A records) or port/IP combinations (SRV records). Attribute-based
+      filtering requires API-based discovery, not DNS.
+    common_false_claim: "Query DNS with attributes to filter instances."
+    correct_action: "Use DiscoverInstances API with QueryParameters for attribute-based filtering."
+
+  - id: P7-cascade-delete
+    trigger_words: ["delete namespace", "cascade delete", "force delete"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest namespace deletion is simple. It requires
+      cascading manual cleanup of instances and services first.
+    actual_behavior: >
+      Namespace deletion requires all services to be deleted first.
+      Service deletion requires all instances to be deregistered first.
+      There is no cascade delete. You must deregister instances →
+      delete services → delete namespace in order.
+    common_false_claim: "Delete the namespace and all services and instances will be cleaned up."
+    correct_action: "Deregister all instances, delete all services, then delete the namespace."
+
+  - id: P8-single-vpc-association
+    trigger_words: ["VPC association", "private namespace VPC", "one VPC"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may suggest private namespaces are limited to one VPC.
+      Multiple VPCs can be associated.
+    actual_behavior: >
+      Private DNS namespaces create Route 53 private hosted zones
+      that can be associated with multiple VPCs. The initial VPC is
+      specified at namespace creation. Additional VPCs can be
+      associated via Route 53 AssociateVPCWithHostedZone API.
+    common_false_claim: "Private namespaces can only be used in the VPC specified at creation."
+    correct_action: "Associate additional VPCs with the private hosted zone using Route 53 API."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

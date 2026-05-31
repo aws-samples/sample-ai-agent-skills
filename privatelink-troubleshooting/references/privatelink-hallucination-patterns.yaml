@@ -1,0 +1,161 @@
+# =============================================================================
+# AWS PrivateLink "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-gateway-vs-interface
+    trigger_words: ["PrivateLink", "VPC endpoint", "gateway endpoint", "interface endpoint", "S3 endpoint"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate gateway endpoints and interface endpoints because
+      both are called "VPC endpoints." They suggest PrivateLink for
+      S3/DynamoDB (which use gateway endpoints) or suggest gateway
+      endpoints for services that require interface endpoints.
+    actual_behavior: >
+      Gateway endpoints are for S3 and DynamoDB ONLY. They are free,
+      modify route tables, and do not create ENIs. Interface endpoints
+      (PrivateLink) create ENIs with private IPs in your subnets,
+      have hourly + data processing charges, and support security
+      groups. PrivateLink is the technology behind interface endpoints.
+      Do not suggest creating a gateway endpoint for services other
+      than S3 and DynamoDB.
+    common_false_claim: "Create a PrivateLink gateway endpoint for the service."
+    correct_action: "Use interface endpoints (PrivateLink) for AWS services other than S3/DynamoDB. Use gateway endpoints for S3/DynamoDB."
+
+  - id: P2-alb-endpoint-service
+    trigger_words: ["endpoint service", "ALB", "Application Load Balancer", "load balancer", "service provider"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using an ALB to create an endpoint service because
+      ALBs are more commonly used. Only NLBs (or GWLBs) can be used
+      with endpoint services.
+    actual_behavior: >
+      VPC endpoint services require a Network Load Balancer (NLB) or
+      Gateway Load Balancer (GWLB). Application Load Balancers (ALB)
+      and Classic Load Balancers (CLB) are NOT supported. If you need
+      ALB features (path-based routing, host-based routing), place an
+      ALB behind the NLB. The NLB must be in the same region as the
+      endpoint service.
+    common_false_claim: "Create an endpoint service with your ALB to expose it via PrivateLink."
+    correct_action: "Create an NLB and associate it with the endpoint service. Place ALB behind NLB if needed."
+
+  - id: P3-private-dns-auto-enabled
+    trigger_words: ["private DNS", "DNS resolution", "endpoint DNS", "resolve to private"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume private DNS works automatically when creating an
+      interface endpoint. Private DNS requires VPC DNS attributes
+      to be enabled and may need explicit opt-in.
+    actual_behavior: >
+      Private DNS for interface endpoints requires: (1) enableDnsSupport=true
+      on the VPC, (2) enableDnsHostnames=true on the VPC, and (3)
+      privateDnsEnabled=true on the endpoint (default for AWS service
+      endpoints). Without all three, the service's public DNS name
+      will NOT resolve to the endpoint's private IPs. For custom
+      endpoint services, the provider must configure a private DNS
+      name and verify domain ownership.
+    common_false_claim: "Private DNS is automatically configured when you create an interface endpoint."
+    correct_action: "Verify VPC has enableDnsSupport=true and enableDnsHostnames=true. Check privateDnsEnabled on endpoint."
+
+  - id: P4-endpoint-policy-grants-access
+    trigger_words: ["endpoint policy", "VPC endpoint policy", "restrict access", "policy document"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest endpoint policies can grant access independently
+      of IAM policies. Endpoint policies only restrict — they cannot
+      grant permissions that IAM denies.
+    actual_behavior: >
+      Endpoint policies are resource policies that work IN ADDITION
+      to IAM policies. Both the endpoint policy AND the IAM policy
+      must allow the action. An endpoint policy cannot grant access
+      that IAM denies. The default endpoint policy allows all
+      principals and all actions. Restrictive endpoint policies
+      are additive restrictions, not standalone grants. They use
+      the same JSON policy language as IAM but are evaluated
+      separately.
+    common_false_claim: "Add an endpoint policy to grant access to the service through the endpoint."
+    correct_action: "Endpoint policies restrict, not grant. Ensure BOTH IAM policy and endpoint policy allow the action."
+
+  - id: P5-no-security-groups-needed
+    trigger_words: ["security group", "endpoint ENI", "firewall", "network access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overlook security groups on interface endpoint ENIs,
+      assuming traffic flows freely once the endpoint is created.
+      Endpoint ENIs have security groups that must allow inbound
+      traffic.
+    actual_behavior: >
+      Interface endpoints create ENIs in your subnets. These ENIs
+      have security groups that control inbound traffic. The security
+      group must allow inbound traffic on the service port (typically
+      443) from client CIDRs or security groups. The default VPC
+      security group allows all traffic from the same security group
+      only — it may NOT allow traffic from other instances. Both
+      client outbound and endpoint inbound rules must permit traffic.
+    common_false_claim: "Create the interface endpoint and traffic will flow automatically."
+    correct_action: "Configure security groups on endpoint ENIs to allow inbound traffic on the service port from clients."
+
+  - id: P6-unlimited-endpoints-per-vpc
+    trigger_words: ["multiple endpoints", "second endpoint", "additional endpoint", "endpoint limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating multiple interface endpoints for the
+      same service in a single VPC for different use cases. Only
+      one endpoint per service per VPC is allowed.
+    actual_behavior: >
+      You can create only ONE interface endpoint per VPC for each
+      AWS service or custom endpoint service. Attempting to create
+      a second endpoint for the same service fails. A single endpoint
+      can have ENIs in multiple subnets (one per AZ). To use different
+      endpoint policies for different workloads, use separate VPCs
+      or use IAM policies for fine-grained access control.
+    common_false_claim: "Create a separate endpoint with a different policy for this workload."
+    correct_action: "One endpoint per VPC per service. Use IAM policies for workload-specific access control."
+
+  - id: P7-auto-accept-default
+    trigger_words: ["endpoint connection", "pending acceptance", "accept connection", "connection request"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume endpoint service connections are automatically
+      accepted. By default, connections require manual acceptance
+      by the service provider.
+    actual_behavior: >
+      By default, endpoint service connections require manual
+      acceptance. The connection stays in "pendingAcceptance" state
+      and does NOT pass traffic until accepted. Auto-accept can be
+      enabled on the endpoint service configuration. AWS service
+      endpoints (com.amazonaws.*) are automatically accepted. Custom
+      endpoint services default to manual acceptance. Check with
+      describe-vpc-endpoint-service-configurations.
+    common_false_claim: "Create the endpoint and it will connect automatically to the service."
+    correct_action: "Check if auto-accept is enabled. Accept pending connections: aws ec2 accept-vpc-endpoint-connections."
+
+  - id: P8-cross-az-free
+    trigger_words: ["cross-AZ", "availability zone", "AZ placement", "multi-AZ endpoint"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest placing endpoint ENIs in a single AZ for
+      simplicity, ignoring cross-AZ data transfer costs and
+      availability implications.
+    actual_behavior: >
+      Traffic from a client in AZ-a to an endpoint ENI in AZ-b
+      incurs cross-AZ data transfer charges. To minimize costs,
+      create endpoint ENIs in all AZs where clients reside. For
+      high availability, place ENIs in multiple AZs. Some services
+      provide AZ-specific DNS names to route traffic to the local
+      AZ endpoint ENI. Cross-AZ charges are typically $0.01/GB
+      in each direction.
+    common_false_claim: "Create the endpoint in one AZ — traffic will route efficiently."
+    correct_action: "Create endpoint ENIs in all AZs where clients reside to avoid cross-AZ charges."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

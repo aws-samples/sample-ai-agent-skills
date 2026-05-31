@@ -1,0 +1,128 @@
+# =============================================================================
+# ECS "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about ECS behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-task-role-execution-role
+    trigger_words: ["task role", "execution role", "IAM", "permissions"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate task role and execution role because both are IAM roles
+      attached to ECS tasks. They serve completely different purposes.
+    actual_behavior: >
+      Execution role: used by ECS agent for infrastructure operations
+      (pull images, push logs, get secrets). Task role: used by the
+      application code for AWS API calls (DynamoDB, S3, SQS).
+    common_false_claim: >
+      "Add S3 permissions to the execution role so your application can access S3."
+    correct_action: "Add S3 permissions to the TASK role, not the execution role."
+
+  - id: P2-exit-code-137-always-oom
+    trigger_words: ["exit code 137", "OOM", "killed", "SIGKILL"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs associate 137 exclusively with OOM because it's the most common
+      cause. But 137 = SIGKILL, which has multiple causes.
+    actual_behavior: >
+      Exit code 137 = SIGKILL. Causes: OOM kill (hard memory limit exceeded),
+      manual task stop, service scale-down, deployment replacement.
+      Check stoppedReason for "OutOfMemoryError" to confirm OOM.
+    common_false_claim: >
+      "Exit code 137 means the container ran out of memory."
+    correct_action: "Check stoppedReason. 137 is SIGKILL, not necessarily OOM."
+
+  - id: P3-fargate-internet-default
+    trigger_words: ["Fargate", "internet", "ECR", "pull image"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume managed services have internet access by default.
+      Fargate tasks in private subnets have no internet access.
+    actual_behavior: >
+      Fargate in private subnet: NO internet, NO ECR access without
+      NAT gateway or VPC endpoints. In public subnet: needs
+      assignPublicIp=ENABLED.
+    common_false_claim: >
+      "Fargate handles networking automatically, your task can pull from ECR."
+    correct_action: "Add NAT gateway or VPC endpoints (ecr.api, ecr.dkr, s3) for private subnets."
+
+  - id: P4-memory-hard-soft-confusion
+    trigger_words: ["memory", "memoryReservation", "memory limit", "soft limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse memory (hard limit) with memoryReservation (soft limit).
+      They have very different effects.
+    actual_behavior: >
+      memory = hard limit. Exceeding it = OOM kill (exit 137).
+      memoryReservation = soft limit for scheduling only. Container
+      can use more than reservation if host has available memory (EC2 only).
+    common_false_claim: >
+      "Set memoryReservation to prevent OOM kills."
+    correct_action: "Set memory (hard limit) high enough. memoryReservation is for scheduling only."
+
+  - id: P5-container-health-vs-elb-health
+    trigger_words: ["health check", "unhealthy", "target health"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat ECS container health checks and ELB health checks as
+      the same thing. They are independent systems.
+    actual_behavior: >
+      Container health check: defined in task definition, checked by ECS agent.
+      ELB health check: defined on target group, checked by load balancer.
+      Both must pass. Failing either causes different symptoms.
+    common_false_claim: >
+      "The ALB health check is failing because the container health check is unhealthy."
+    correct_action: "Check both independently. They have different configurations and endpoints."
+
+  - id: P6-awsvpc-eni-unlimited
+    trigger_words: ["awsvpc", "ENI", "network mode", "task networking"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs recommend awsvpc mode without mentioning ENI limits on EC2.
+      Each task consumes an ENI, and instances have hard ENI limits.
+    actual_behavior: >
+      awsvpc mode: one ENI per task. EC2 instances have ENI limits
+      (e.g., t3.medium = 3 ENIs = 2 tasks max). Enable ENI trunking
+      for higher density. Fargate handles this automatically.
+    common_false_claim: >
+      "Use awsvpc mode for all tasks, it's the best practice."
+    correct_action: "Use awsvpc but enable ENI trunking on EC2, or use Fargate."
+
+  - id: P7-service-events-permanent
+    trigger_words: ["service events", "event history", "past events"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume service events are retained indefinitely like CloudTrail.
+      ECS only keeps the last 100 events.
+    actual_behavior: >
+      ECS service events retain only the last 100 entries. Older events
+      are permanently lost. There is no way to retrieve them.
+    common_false_claim: >
+      "Check the service events from last week to see what happened."
+    correct_action: "Check events immediately. For historical data, use CloudTrail or CloudWatch."
+
+  - id: P8-fargate-assign-public-ip
+    trigger_words: ["assignPublicIp", "public subnet", "Fargate public"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs sometimes claim assignPublicIp works in private subnets,
+      or that it's not needed in public subnets.
+    actual_behavior: >
+      assignPublicIp=ENABLED only works in public subnets (with IGW route).
+      In private subnets, it has no effect — use NAT gateway instead.
+      In public subnets, it's REQUIRED for internet access.
+    common_false_claim: >
+      "Set assignPublicIp=ENABLED in your private subnet for internet access."
+    correct_action: "Use NAT for private subnets. assignPublicIp only works in public subnets."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

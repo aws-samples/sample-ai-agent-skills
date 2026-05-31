@@ -1,0 +1,153 @@
+# =============================================================================
+# AWS Backup Gateway "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-cloud-only-service
+    trigger_words: ["Backup Gateway", "cloud service", "managed service", "serverless"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs treat Backup Gateway as a fully managed cloud service.
+      It requires an on-premises virtual appliance.
+    actual_behavior: >
+      Backup Gateway is a hybrid service. It requires deploying a
+      virtual appliance (OVA) on-premises in the VMware environment.
+      The gateway VM runs on ESXi and communicates with both vCenter
+      and AWS. On-premises infrastructure issues (network, storage,
+      compute) directly affect gateway operations.
+    common_false_claim: "Backup Gateway is a fully managed AWS service that requires no on-premises components."
+    correct_action: "Verify on-premises gateway VM health, network connectivity, and resource allocation."
+
+  - id: P2-restore-overwrites
+    trigger_words: ["restore", "overwrite", "replace VM", "in-place restore"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest restore overwrites the original VM. Restore
+      always creates a new VM.
+    actual_behavior: >
+      Restore operations create a NEW virtual machine in the target
+      vCenter/ESXi environment. The original VM is NOT modified,
+      overwritten, or replaced. The restored VM gets a new UUID,
+      new MAC addresses, and requires post-restore network and
+      storage configuration.
+    common_false_claim: "Restore will replace the failed VM with the backup copy."
+    correct_action: "Plan for a new VM creation. Configure network, IP, DNS after restore. Decommission the old VM separately."
+
+  - id: P3-real-time-discovery
+    trigger_words: ["real-time", "instant discovery", "immediate", "live VM list"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest VM discovery is real-time. Discovery is periodic
+      and may have delays.
+    actual_behavior: >
+      VM discovery from vCenter is periodic. New VMs, renamed VMs,
+      or VMs moved between folders/clusters may take time to appear
+      in the discovered VM list. The discovery interval is not
+      configurable by the user.
+    common_false_claim: "Backup Gateway instantly discovers all VMs in your vCenter environment."
+    correct_action: "Wait for the next discovery cycle. Verify the VM exists in vCenter directly if not appearing in the list."
+
+  - id: P4-agentless-always
+    trigger_words: ["agentless", "no agent", "agent-free", "application consistent"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Backup Gateway provides application-consistent
+      backups without any in-guest components.
+    actual_behavior: >
+      Backup Gateway performs crash-consistent backups at the VM
+      level using VMware snapshots. For application-consistent
+      backups (e.g., databases), VMware Tools must be installed
+      in the guest OS to enable quiescing. Without VMware Tools,
+      backups are crash-consistent only.
+    common_false_claim: "Backup Gateway provides application-consistent backups without any agents."
+    correct_action: "Install VMware Tools in guest VMs for application-consistent backups. Verify quiescing is enabled."
+
+  - id: P5-unlimited-bandwidth
+    trigger_words: ["bandwidth", "unlimited", "no throttling", "fast backup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest backup bandwidth is unlimited. Bandwidth is
+      constrained by gateway resources and network capacity.
+    actual_behavior: >
+      Backup throughput is limited by: gateway VM resources (CPU,
+      memory, disk I/O), network bandwidth between gateway and
+      vCenter, network bandwidth between gateway and AWS, and
+      concurrent operation count. Multiple simultaneous backups
+      share available bandwidth.
+    common_false_claim: "Backup Gateway provides unlimited backup throughput."
+    correct_action: "Size the gateway VM appropriately. Schedule backups to avoid contention. Monitor bandwidth metrics."
+
+  - id: P6-all-vmware-versions
+    trigger_words: ["any VMware", "all versions", "VMware compatible"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Backup Gateway works with all VMware versions.
+      Only specific versions are supported.
+    actual_behavior: >
+      Backup Gateway supports specific VMware vSphere versions.
+      Unsupported versions may partially work but are not tested
+      or guaranteed. Check AWS documentation for the current
+      supported version matrix before deployment.
+    common_false_claim: "Backup Gateway works with any version of VMware vSphere."
+    correct_action: "Verify VMware vSphere version is on the supported list before deploying the gateway."
+
+  - id: P7-automatic-network-config
+    trigger_words: ["automatic network", "auto-configure", "plug and play"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the gateway automatically configures network
+      settings. Network configuration is manual.
+    actual_behavior: >
+      The gateway requires manual network configuration including:
+      IP address (DHCP or static), DNS servers, NTP servers, proxy
+      settings (if applicable), and firewall rules for AWS endpoints
+      on port 443. Incorrect network configuration is the most
+      common cause of gateway deployment failures.
+    common_false_claim: "Deploy the gateway OVA and it automatically connects to AWS."
+    correct_action: "Configure network settings during OVA deployment. Verify DNS, NTP, and firewall rules before activation."
+
+  - id: P8-backup-vault-local
+    trigger_words: ["local storage", "gateway storage", "on-premises backup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest backup data is stored on the gateway. Data is
+      stored in AWS Backup vaults.
+    actual_behavior: >
+      The gateway is a data transfer appliance. Backup data is
+      transferred through the gateway and stored in AWS Backup
+      vaults in the cloud. The gateway uses local disk for
+      caching and staging but does NOT store backup data
+      permanently. If the gateway is lost, backup data in AWS
+      is unaffected.
+    common_false_claim: "Backup data is stored on the gateway appliance."
+    correct_action: "Backup data is in AWS Backup vaults. Gateway loss does not affect stored backups. Deploy a new gateway to resume operations."
+
+remediation_hallucinations:
+
+  - id: R1-delete-gateway-fix
+    trigger_words: ["delete gateway", "recreate gateway", "redeploy"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Deleting a gateway disconnects all hypervisor associations
+      and disrupts all backup schedules. Re-deployment requires
+      full reconfiguration of hypervisor connections and VM
+      assignments.
+    correct_approach: >
+      Troubleshoot the existing gateway first. Check network
+      connectivity, credentials, and resource allocation. Only
+      delete and redeploy as a last resort after exhausting all
+      other options. Plan for reconfiguration time.
+
+  - id: R2-disable-cbt
+    trigger_words: ["disable CBT", "turn off CBT", "Changed Block Tracking"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Disabling Changed Block Tracking forces all subsequent
+      backups to be full backups, dramatically increasing backup
+      time, bandwidth usage, and storage costs.
+    correct_approach: >
+      Keep CBT enabled. If CBT is causing issues, reset CBT on
+      the specific VM rather than disabling it. After CBT reset,
+      the next backup will be full, but subsequent backups will
+      be incremental again.

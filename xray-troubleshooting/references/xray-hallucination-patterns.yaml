@@ -1,0 +1,138 @@
+# =============================================================================
+# AWS X-Ray "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-automatic-full-tracing
+    trigger_words: ["X-Ray tracing", "enable tracing", "automatic tracing", "full trace"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs claim that enabling X-Ray tracing on a service automatically
+      traces all downstream calls. In reality, only the service's own
+      segment is captured. Downstream visibility requires SDK instrumentation.
+    actual_behavior: >
+      Enabling X-Ray on API Gateway or Lambda only captures that service's
+      segment. To trace downstream calls (DynamoDB, S3, HTTP, SQL), the
+      application code must be instrumented with the X-Ray SDK or
+      OpenTelemetry SDK. Without instrumentation, downstream calls are
+      invisible in the trace.
+    common_false_claim: "Enable X-Ray tracing on Lambda to see all downstream service calls."
+    correct_action: "Enable X-Ray on Lambda AND instrument the function code with X-Ray SDK for downstream visibility."
+
+  - id: P2-daemon-not-needed
+    trigger_words: ["daemon", "X-Ray daemon", "UDP 2000", "segment forwarding"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs sometimes skip daemon verification or claim the SDK sends
+      directly to the X-Ray API. The SDK sends to the daemon on UDP
+      2000, which batches and forwards to the API.
+    actual_behavior: >
+      For non-Lambda services, the X-Ray daemon must be running and
+      reachable on UDP port 2000. The SDK sends segments to the daemon,
+      not directly to the X-Ray API. If the daemon is unreachable,
+      segments are silently dropped. Lambda is the exception — it has
+      built-in daemon functionality.
+    common_false_claim: "The X-Ray SDK sends traces directly to the X-Ray service."
+    correct_action: "Verify the X-Ray daemon is running on UDP 2000. For ECS, use a sidecar container."
+
+  - id: P3-sampling-ignores-priority
+    trigger_words: ["sampling", "sampling rule", "sample rate", "trace percentage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating sampling rules without considering priority
+      order. Rules are evaluated from lowest priority number first, and
+      the first match wins.
+    actual_behavior: >
+      Sampling rules are evaluated in priority order (lowest number first).
+      The first matching rule determines the sampling rate. A rule with
+      priority 1 and rate 0 will suppress all traces matching its criteria,
+      even if a rule with priority 100 would sample them. The default rule
+      (priority 10000) is the catch-all.
+    common_false_claim: "Create a sampling rule with 100% rate to capture all traces for this service."
+    correct_action: "Check existing rules with lower priority numbers that may match first and override your rule."
+
+  - id: P4-traces-retained-forever
+    trigger_words: ["trace history", "old traces", "historical traces", "trace retention"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest querying traces from months ago without considering
+      the 30-day retention limit.
+    actual_behavior: >
+      X-Ray retains trace data for 30 days only. After 30 days, traces
+      are permanently deleted. There is no way to extend retention within
+      X-Ray. For long-term analysis, export trace data to S3 or use
+      CloudWatch metrics. Service map data is also limited to 30 days.
+    common_false_claim: "Query X-Ray traces from 3 months ago to analyze the historical issue."
+    correct_action: "Traces older than 30 days are gone. Check CloudWatch metrics or exported data for historical analysis."
+
+  - id: P5-segment-size-unlimited
+    trigger_words: ["segment", "metadata", "annotations", "subsegment", "segment document"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest adding extensive metadata and annotations to segments
+      without considering the 64KB document size limit.
+    actual_behavior: >
+      Each segment document has a 64KB size limit. Exceeding this limit
+      causes the segment to be truncated or rejected. Annotations are
+      indexed and searchable but count toward the limit. Metadata is
+      not indexed but also counts toward the limit. Keep annotations
+      minimal and use metadata judiciously.
+    common_false_claim: "Add the full request/response body as metadata for debugging."
+    correct_action: "Keep segment documents under 64KB. Use small annotations for search. Avoid large metadata payloads."
+
+  - id: P6-service-map-realtime
+    trigger_words: ["service map", "dependency map", "service graph", "topology"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs present the service map as a real-time view. It's generated
+      from trace data and defaults to the last 6 hours.
+    actual_behavior: >
+      The service map is generated from sampled trace data, not real-time
+      monitoring. It defaults to showing the last 6 hours. Services that
+      were not sampled during the selected time range won't appear. The
+      map reflects sampling rates — low sampling means incomplete maps.
+      Adjust the time range to see different periods.
+    common_false_claim: "The service map shows all services in real-time."
+    correct_action: "Adjust the time range. Increase sampling rates if the map is incomplete."
+
+  - id: P7-otel-xray-interchangeable
+    trigger_words: ["OpenTelemetry", "OTEL", "ADOT", "X-Ray SDK", "instrumentation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs mix X-Ray SDK and OpenTelemetry SDK instrumentation code,
+      suggesting both can be used together in the same application.
+    actual_behavior: >
+      X-Ray SDK and OpenTelemetry SDK are different instrumentation
+      approaches. Do not mix them in the same application. X-Ray SDK
+      is AWS-specific. OpenTelemetry uses the ADOT collector to export
+      to X-Ray. Choose one approach. OpenTelemetry is the newer standard
+      and supports multiple backends.
+    common_false_claim: "Add OpenTelemetry instrumentation alongside your existing X-Ray SDK code."
+    correct_action: "Choose either X-Ray SDK or OpenTelemetry SDK. Do not mix both in the same application."
+
+  - id: P8-lambda-no-permissions-needed
+    trigger_words: ["Lambda tracing", "Lambda X-Ray", "function tracing", "active tracing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim Lambda X-Ray tracing works by just enabling it on the
+      function, without mentioning the IAM permission requirement.
+    actual_behavior: >
+      Lambda X-Ray tracing requires the function's execution role to have
+      xray:PutTraceSegments and xray:PutTelemetryRecords permissions.
+      Without these, traces are silently lost — no error in function logs.
+      The AWSXRayDaemonWriteAccess managed policy provides these permissions.
+      Additionally, downstream SDK calls still need X-Ray SDK instrumentation.
+    common_false_claim: "Just enable active tracing on the Lambda function to get traces."
+    correct_action: "Enable active tracing AND add xray:PutTraceSegments permission to the execution role."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,147 @@
+# =============================================================================
+# AWS Elastic Beanstalk "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-ebextensions-execution-order
+    trigger_words: ["ebextensions", ".ebextensions", "config files", "extension order"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest .ebextensions files run in parallel or in an undefined
+      order. They execute in strict lexicographic (alphabetical) order.
+    actual_behavior: >
+      Files in .ebextensions/ are processed in alphabetical order by
+      filename. 01_packages.config runs before 02_services.config. A
+      failure in any file aborts the entire deployment. Commands within
+      a single file execute in the order listed. container_commands
+      run after the application is extracted but before deployment.
+    common_false_claim: "The .ebextensions files are processed in parallel for faster deployment."
+    correct_action: "Use numeric prefixes to enforce ordering. Ensure dependencies are in earlier-named files."
+
+  - id: P2-immutable-in-place
+    trigger_words: ["immutable deployment", "immutable update", "zero downtime", "deployment type"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs describe immutable deployments as updating instances in place
+      with rollback capability. Immutable deployments create entirely
+      new instances in a temporary ASG.
+    actual_behavior: >
+      Immutable deployments create a new temporary Auto Scaling group
+      with fresh instances running the new application version. If health
+      checks pass, instances are moved to the original ASG and old
+      instances are terminated. If checks fail, the temporary ASG is
+      deleted entirely. This temporarily doubles instance count and cost.
+    common_false_claim: "Immutable deployment updates each instance in place and rolls back if it fails."
+    correct_action: "Understand that immutable creates new instances. Plan for temporary double capacity and cost."
+
+  - id: P3-worker-tier-http
+    trigger_words: ["worker tier", "worker environment", "background processing", "SQS worker"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest worker tier environments can receive direct HTTP
+      traffic or be accessed via a URL. Worker tiers only process
+      SQS messages via a local daemon.
+    actual_behavior: >
+      Worker tier environments do NOT have an ELB and do NOT receive
+      direct HTTP traffic. The Beanstalk sqsd daemon polls an SQS queue
+      and POSTs messages to http://localhost/ on the instance. The daemon
+      manages message visibility timeout, retry, and dead-letter queue
+      routing. The application must expose an HTTP endpoint on localhost.
+    common_false_claim: "Access your worker environment at the environment URL to trigger background jobs."
+    correct_action: "Send messages to the SQS queue. The worker daemon delivers them to the local application."
+
+  - id: P4-enhanced-health-always-available
+    trigger_words: ["enhanced health", "health reporting", "health dashboard", "instance health"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume enhanced health reporting is always available on all
+      Beanstalk environments. It requires the health agent and a
+      supported platform version.
+    actual_behavior: >
+      Enhanced health requires the Elastic Beanstalk health agent on
+      each instance. Amazon Linux 2 and later platforms include it
+      automatically. Older platforms or custom AMIs may lack the agent.
+      Enhanced health must be enabled in the environment configuration
+      (aws:elasticbeanstalk:healthreporting:system SystemType=enhanced).
+      Without it, only basic ELB-based health is available.
+    common_false_claim: "Enhanced health is enabled by default on all Elastic Beanstalk environments."
+    correct_action: "Verify the platform supports enhanced health and the SystemType is set to 'enhanced'."
+
+  - id: P5-platform-branch-in-place-change
+    trigger_words: ["platform upgrade", "platform migration", "change platform", "Amazon Linux 2023"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest changing platform branches (e.g., AL2 to AL2023)
+      via a simple environment update. Branch changes require blue/green
+      deployment or environment rebuild.
+    actual_behavior: >
+      Managed platform updates and in-place updates only move between
+      versions within the SAME platform branch. Changing branches
+      (e.g., Amazon Linux 2 to Amazon Linux 2023, or Python to Node.js)
+      requires creating a new environment with the target branch and
+      performing a blue/green deployment (CNAME swap). In-place branch
+      changes are not supported and will fail.
+    common_false_claim: "Update your environment to Amazon Linux 2023 by changing the platform version setting."
+    correct_action: "Create a new environment on the target branch. Test, then swap CNAMEs for blue/green cutover."
+
+  - id: P6-clone-copies-data
+    trigger_words: ["clone environment", "environment clone", "copy environment", "duplicate environment"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cloning an environment creates a complete copy
+      including database data and persistent storage. Cloning only
+      copies configuration.
+    actual_behavior: >
+      Environment cloning creates a new environment with the same
+      configuration, platform version, and application version. It does
+      NOT copy RDS data, S3 objects, EFS files, or any persistent state.
+      A coupled RDS instance results in a new empty database in the clone.
+      Decoupled RDS instances are not included at all. Environment
+      variables are copied but secrets may need re-configuration.
+    common_false_claim: "Clone your production environment to get an exact copy including the database."
+    correct_action: "Clone for configuration only. Separately migrate data using RDS snapshots or data export/import."
+
+  - id: P7-tier-change-after-creation
+    trigger_words: ["change tier", "switch tier", "web to worker", "worker to web"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest changing an environment's tier from web server to
+      worker (or vice versa) via configuration update. The tier is
+      immutable after creation.
+    actual_behavior: >
+      The environment tier (web server or worker) is set at creation
+      time and CANNOT be changed. Web server tier includes an ELB and
+      receives HTTP traffic. Worker tier includes an SQS queue and
+      daemon. To switch tiers, you must create a new environment with
+      the desired tier and redeploy your application.
+    common_false_claim: "Update the environment tier setting to switch from web server to worker."
+    correct_action: "Create a new environment with the desired tier. Migrate application code and configuration."
+
+  - id: P8-leader-only-idempotency
+    trigger_words: ["leader_only", "leader only", "database migration", "one-time command"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest leader_only guarantees a command runs exactly once
+      across all deployments. It runs on one instance per deployment
+      but may re-run if the leader is replaced.
+    actual_behavior: >
+      leader_only: true in .ebextensions container_commands runs the
+      command on only one instance (the leader) during each deployment.
+      If the leader instance is terminated and replaced, the command
+      runs again on the new leader during the next deployment. The
+      command is NOT guaranteed to run exactly once across the lifetime
+      of the environment. Commands must be idempotent (safe to re-run).
+    common_false_claim: "Use leader_only to run database migrations exactly once, guaranteed."
+    correct_action: "Use leader_only for one-per-deployment tasks but ensure commands are idempotent."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,173 @@
+# =============================================================================
+# AWS IoT Device Management "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-fleet-provisioning-auto-certificate
+    trigger_words: ["fleet provisioning", "auto certificate", "automatic cert"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest fleet provisioning automatically generates and
+      installs certificates on devices. The device must initiate
+      the provisioning flow.
+    actual_behavior: >
+      Fleet provisioning requires the device to connect using a
+      claim certificate (claim-based) or an authorized user to
+      call RegisterThing (trusted-user). The device initiates
+      the MQTT-based provisioning flow, receives a new certificate,
+      and must store it locally. IoT Core does not push certificates
+      to devices.
+    common_false_claim: "Fleet provisioning automatically installs certificates on your devices."
+    correct_action: "Device firmware must implement the provisioning flow using the claim certificate to request a production certificate."
+
+  - id: P2-job-automatic-retry
+    trigger_words: ["job retry", "automatic retry", "job rerun"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest IoT jobs automatically retry on failure.
+      Jobs do not retry unless explicitly configured with retry criteria.
+    actual_behavior: >
+      IoT job executions that fail remain in FAILED status. There
+      is no automatic retry. Job retry can be configured using
+      RetryCriteria in the job configuration, specifying failure
+      types (FAILED, TIMED_OUT, ALL) and number of retries. Without
+      explicit retry configuration, failed executions stay failed.
+    common_false_claim: "IoT jobs automatically retry failed executions on devices."
+    correct_action: "Configure RetryCriteria in the job document if retry behavior is needed. Check job execution details for failure reasons."
+
+  - id: P3-secure-tunnel-ssh-direct
+    trigger_words: ["secure tunnel", "SSH", "remote access", "direct connect"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest secure tunneling provides direct SSH access.
+      It provides a WebSocket tunnel that requires local proxy
+      applications on both ends.
+    actual_behavior: >
+      Secure tunneling creates a WebSocket-based tunnel between
+      a source and destination. Both ends require a local proxy
+      application. The source proxy listens on a local port and
+      forwards traffic through the tunnel. The destination proxy
+      connects to the local service (e.g., SSH on port 22). Without
+      proxies, no traffic flows through the tunnel.
+    common_false_claim: "Open a secure tunnel to SSH directly into your IoT device."
+    correct_action: "Deploy local proxy on both source and destination. Configure source proxy to listen on a local port, then SSH to localhost:port."
+
+  - id: P4-shadow-merge-capability
+    trigger_words: ["shadow merge", "shadow conflict", "shadow resolution"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest device shadows have automatic conflict resolution
+      or merge capabilities. Shadows use last-writer-wins.
+    actual_behavior: >
+      Device shadows use a simple last-writer-wins model. When
+      both the device and cloud update the same property, the
+      last update overwrites the previous value. There is no
+      automatic merge, conflict detection, or resolution. The
+      shadow version number increments with each update and can
+      be used for optimistic locking via conditional updates.
+    common_false_claim: "Device shadows automatically merge conflicting updates from device and cloud."
+    correct_action: "Use shadow version numbers for optimistic locking. Implement application-level conflict detection."
+
+  - id: P5-fleet-indexing-real-time
+    trigger_words: ["fleet indexing", "real-time query", "instant search"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest fleet indexing provides real-time search results.
+      Indexing is eventually consistent.
+    actual_behavior: >
+      Fleet indexing updates are eventually consistent. After
+      creating, updating, or deleting a thing, the index may
+      take several minutes to reflect the change. Queries against
+      the index may return stale results during this window.
+      The indexing backfill for existing things can take hours
+      for large fleets.
+    common_false_claim: "Fleet indexing provides real-time search across all your devices."
+    correct_action: "Allow several minutes for index updates. Do not use fleet indexing for time-critical provisioning decisions."
+
+  - id: P6-ota-automatic-rollback
+    trigger_words: ["OTA rollback", "automatic rollback", "firmware rollback"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest OTA updates have automatic rollback on failure.
+      OTA updates do not include built-in rollback.
+    actual_behavior: >
+      AWS IoT OTA updates do not have automatic rollback capability.
+      If a firmware update fails or causes issues, the device
+      remains on the failed firmware unless the device bootloader
+      implements rollback logic. Abort criteria can stop the
+      rollout to remaining devices but cannot revert already-updated
+      devices.
+    common_false_claim: "OTA updates automatically roll back if the new firmware fails."
+    correct_action: "Implement rollback logic in device bootloader. Use abort criteria to stop rollout. Test firmware on a small group first."
+
+  - id: P7-thing-type-modification
+    trigger_words: ["modify thing type", "update thing type", "change attributes"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest thing type attributes can be modified after
+      creation. Thing types are immutable.
+    actual_behavior: >
+      Thing type properties (searchable attributes) cannot be
+      modified after creation. The only mutable aspect is the
+      deprecation status. To change attributes, you must deprecate
+      the existing thing type, wait 5 minutes, optionally delete
+      it, create a new thing type with desired attributes, and
+      update things to use the new type.
+    common_false_claim: "Update the thing type to add new attributes."
+    correct_action: "Create a new thing type with desired attributes. Migrate things to the new type. Deprecate and delete the old type."
+
+  - id: P8-bulk-registration-partial-success
+    trigger_words: ["bulk registration", "batch register", "register all"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest bulk registration is atomic — either all
+      succeed or all fail. It processes line by line.
+    actual_behavior: >
+      Bulk registration processes the S3 input file line by line.
+      Individual lines can fail while others succeed. The task
+      reports overall status and generates an error log in S3
+      for failed registrations. A task with status COMPLETED may
+      still have individual line failures recorded in the error log.
+    common_false_claim: "Bulk registration either registers all devices or none."
+    correct_action: "Always check the error log S3 object after bulk registration. Parse per-line results for failures."
+
+remediation_hallucinations:
+
+  - id: R1-delete-thing-with-certificates
+    trigger_words: ["delete thing", "remove device", "deregister"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      LLMs suggest deleting a thing directly. Things with attached
+      certificates and policies must have those detached first.
+    actual_behavior: >
+      A thing cannot be deleted if it has attached certificates.
+      Certificates must be detached from the thing, then deactivated,
+      then the policies detached from the certificate, before the
+      thing can be deleted. Deleting in the wrong order causes errors.
+    correct_sequence: >
+      1. Detach certificate from thing: aws iot detach-thing-principal
+      2. Deactivate certificate: aws iot update-certificate --new-status INACTIVE
+      3. Detach policies from certificate: aws iot detach-policy
+      4. Delete certificate: aws iot delete-certificate
+      5. Delete thing: aws iot delete-thing
+
+  - id: R2-force-cancel-job
+    trigger_words: ["cancel job", "force cancel", "stop job"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      LLMs suggest force-canceling jobs without considering
+      devices mid-execution. Force cancel can leave devices
+      in an inconsistent state.
+    actual_behavior: >
+      Force-canceling a job (--force flag) immediately cancels
+      all pending and in-progress executions. Devices currently
+      executing the job may be left in an inconsistent state if
+      the job document involves multi-step operations. Non-force
+      cancel only cancels QUEUED executions and waits for
+      IN_PROGRESS executions to complete.
+    correct_sequence: >
+      1. Check in-progress executions: aws iot list-job-executions-for-job --job-id <id> --status IN_PROGRESS
+      2. If safe, cancel without force: aws iot cancel-job --job-id <id>
+      3. Only use --force if devices can handle abrupt cancellation
+      4. Monitor device states after cancellation

@@ -1,0 +1,138 @@
+# =============================================================================
+# AWS IoT Greengrass V2 "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-v2-vs-v1-confusion
+    trigger_words: ["Greengrass group", "subscription table", "V1 Lambda", "group deployment"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs mix Greengrass V1 and V2 concepts. V1 uses groups and
+      subscription tables; V2 uses components and deployments.
+    actual_behavior: >
+      Greengrass V2 has no concept of Greengrass groups or subscription
+      tables. V2 uses a component model with recipes and artifacts.
+      Deployments target thing groups or individual core devices.
+      IPC replaces the V1 subscription routing. The nucleus replaces
+      the V1 Greengrass daemon.
+    common_false_claim: "Create a Greengrass group and add the Lambda function to it."
+    correct_action: "Create a component recipe for the Lambda and deploy it to the core device."
+
+  - id: P2-automatic-mqtt-bridging
+    trigger_words: ["MQTT bridge", "cloud messages", "local to cloud", "message forwarding"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume messages automatically flow between local MQTT
+      and cloud IoT Core. The MQTT bridge requires explicit config.
+    actual_behavior: >
+      The aws.greengrass.clientdevices.mqtt.Bridge component must be
+      deployed and configured with explicit topic mappings. Each
+      mapping specifies source topic, target topic, and direction.
+      Without mappings, no messages cross between local and cloud.
+      Wildcards (+, #) are supported in topic mappings.
+    common_false_claim: "Messages published locally are automatically sent to IoT Core."
+    correct_action: "Deploy MQTT bridge component with explicit topic mapping configuration."
+
+  - id: P3-tes-unlimited-permissions
+    trigger_words: ["token exchange", "device credentials", "AWS access", "TES role"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest components can access any AWS service without
+      considering TES role permissions.
+    actual_behavior: >
+      Components get AWS credentials from the token exchange service
+      which assumes an IAM role. The role must explicitly grant
+      permissions for each AWS service the component needs. The
+      role alias maps the device certificate to the IAM role.
+      Missing permissions cause AccessDenied errors in components.
+    common_false_claim: "The component can write to S3 since it runs on a Greengrass device."
+    correct_action: "Add s3:PutObject permission to the TES IAM role for the target bucket."
+
+  - id: P4-component-auto-dependency
+    trigger_words: ["component dependency", "auto resolve", "implicit dependency"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume the nucleus automatically resolves all dependencies.
+      Dependencies must be declared in the component recipe.
+    actual_behavior: >
+      Component dependencies must be explicitly declared in the recipe
+      under ComponentDependencies. The nucleus resolves declared
+      dependencies and deploys them in order. Undeclared dependencies
+      are not deployed. Hard dependencies (type: HARD) prevent
+      startup if the dependency fails. Soft dependencies (type: SOFT)
+      allow startup regardless.
+    common_false_claim: "The nucleus automatically detects and installs required dependencies."
+    correct_action: "Declare all dependencies in the component recipe with version constraints."
+
+  - id: P5-local-shadow-mqtt
+    trigger_words: ["local shadow", "shadow MQTT", "shadow topics", "device shadow local"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using MQTT topics for local shadow operations
+      like in IoT Core. Local shadows use IPC.
+    actual_behavior: >
+      Local shadow operations use IPC (inter-process communication)
+      via the aws.greengrass.ShadowManager component. Components
+      call GetThingShadow, UpdateThingShadow, DeleteThingShadow
+      via IPC, not MQTT. Cloud shadow sync is a separate feature
+      that must be explicitly enabled per shadow.
+    common_false_claim: "Publish to $aws/things/shadow/update on local MQTT to update the shadow."
+    correct_action: "Use IPC to call UpdateThingShadow on the local shadow manager component."
+
+  - id: P6-stream-manager-unlimited
+    trigger_words: ["stream manager", "data export", "stream storage", "edge buffering"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest stream manager can buffer unlimited data locally.
+      It has configurable but finite storage limits.
+    actual_behavior: >
+      Stream manager default storage is 256 MB (configurable). When
+      storage is full, behavior depends on the overflow strategy:
+      REJECT_NEW_DATA or OVERWRITE_OLDEST_DATA. Export destinations
+      include S3, Kinesis Data Streams, and IoT Analytics. Export
+      failures cause data accumulation. Monitor disk usage.
+    common_false_claim: "Stream manager will buffer all data until connectivity is restored."
+    correct_action: "Configure appropriate storage limits and overflow strategy for your use case."
+
+  - id: P7-deployment-instant
+    trigger_words: ["deploy component", "deployment status", "component update"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deployments are instant. Deployments go through
+      multiple phases and can take minutes to complete.
+    actual_behavior: >
+      Deployments go through phases: QUEUED, IN_PROGRESS, COMPLETED
+      or FAILED. The device must be connected to receive the
+      deployment. Large artifacts take time to download. Component
+      lifecycle scripts (install, run) execute sequentially.
+      Multiple deployments to the same device are merged.
+    common_false_claim: "The component will be running immediately after creating the deployment."
+    correct_action: "Monitor deployment status and check effective deployments on the device."
+
+  - id: P8-nucleus-auto-update
+    trigger_words: ["nucleus update", "Greengrass update", "core update", "runtime update"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the nucleus auto-updates. Nucleus updates require
+      explicit deployment or the managed update component.
+    actual_behavior: >
+      The nucleus does not auto-update by default. Updates require
+      either a deployment specifying a new nucleus version or the
+      aws.greengrass.NucleusUpdate component for managed updates.
+      Nucleus updates restart all components. Failed nucleus updates
+      can leave the device in a broken state. Always test updates
+      on non-production devices first.
+    common_false_claim: "The Greengrass nucleus automatically updates to the latest version."
+    correct_action: "Deploy nucleus update explicitly or use the managed update component."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

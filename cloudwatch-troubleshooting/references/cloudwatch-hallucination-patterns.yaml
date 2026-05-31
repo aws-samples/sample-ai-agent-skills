@@ -1,0 +1,129 @@
+# =============================================================================
+# CloudWatch "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-insufficient-data-means-down
+    trigger_words: ["INSUFFICIENT_DATA", "alarm state", "no data alarm"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs interpret INSUFFICIENT_DATA as an error or outage indicator.
+      It simply means no metric data was received during the evaluation
+      period, which is normal for idle resources.
+    actual_behavior: >
+      INSUFFICIENT_DATA occurs when CloudWatch receives no datapoints
+      for the metric during the alarm's evaluation period. This is
+      expected for resources that are not actively emitting data (stopped
+      instances, uninvoked Lambda functions, idle load balancers).
+    common_false_claim: "INSUFFICIENT_DATA means the resource is down or unhealthy."
+    correct_action: "Check if the resource is actively emitting metrics. Verify the metric namespace, name, and dimensions are correct."
+
+  - id: P2-log-retention-auto-delete
+    trigger_words: ["log retention", "log storage", "log group cost"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume log groups have a default retention period. CloudWatch
+      Logs retains data indefinitely by default.
+    actual_behavior: >
+      Log group retention defaults to Never Expire. Logs accumulate
+      forever unless an explicit retention policy is set. This is a
+      common source of unexpected CloudWatch Logs costs.
+    common_false_claim: "Log groups automatically delete logs after 30 days."
+    correct_action: "Check retention with describe-log-groups. Set explicit retention policy with put-retention-policy."
+
+  - id: P3-composite-alarm-inherits-actions
+    trigger_words: ["composite alarm", "alarm actions", "parent alarm"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume composite alarms inherit SNS actions from their child
+      alarms. Composite alarms have their own independent action configuration.
+    actual_behavior: >
+      Composite alarms evaluate a rule expression over child alarm states
+      but have their own separate alarm actions, OK actions, and
+      insufficient data actions. These must be configured independently.
+    common_false_claim: "The composite alarm will automatically send the same SNS notifications as its child alarms."
+    correct_action: "Configure alarm actions directly on the composite alarm. Child alarm actions are independent."
+
+  - id: P4-metric-math-missing-data
+    trigger_words: ["metric math", "METRICS function", "math expression"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest metric math as a solution for combining sparse metrics
+      without addressing that missing data in any input makes the entire
+      expression result missing.
+    actual_behavior: >
+      If any input metric in a metric math expression has no datapoint
+      for a given period, the expression result is also missing for that
+      period. The FILL function can address this, but it must be used
+      explicitly.
+    common_false_claim: "Use metric math to combine metrics and the alarm will handle missing data."
+    correct_action: "Use FILL() function in metric math to handle missing data, or ensure all input metrics publish consistently."
+
+  - id: P5-high-resolution-all-metrics
+    trigger_words: ["1-second metrics", "high resolution", "sub-minute"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest querying AWS service metrics at 1-second resolution.
+      High-resolution is only available for custom metrics published
+      with StorageResolution=1.
+    actual_behavior: >
+      AWS service metrics (EC2, RDS, ELB, etc.) are published at standard
+      resolution (1-minute minimum period). Only custom metrics published
+      via PutMetricData with StorageResolution=1 support high-resolution
+      (1-second) queries.
+    common_false_claim: "Query EC2 CPUUtilization at 1-second resolution for more detail."
+    correct_action: "AWS service metrics minimum period is 60 seconds. Use high-resolution only for custom metrics published with StorageResolution=1."
+
+  - id: P6-subscription-filter-unlimited
+    trigger_words: ["subscription filter", "log destination", "stream logs"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest adding multiple subscription filters without noting
+      the per-log-group limit.
+    actual_behavior: >
+      Each log group supports a maximum of 2 subscription filters. This
+      limit includes account-level subscription policies. Attempting to
+      create a third filter returns a LimitExceededException.
+    common_false_claim: "Add subscription filters for each destination you need."
+    correct_action: "Check existing filters with describe-subscription-filters. Maximum 2 per log group. Use Kinesis Data Firehose to fan out to multiple destinations if needed."
+
+  - id: P7-canary-not-lambda
+    trigger_words: ["canary timeout", "canary memory", "canary VPC"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs troubleshoot canary issues without considering that canaries
+      run on Lambda and inherit its constraints.
+    actual_behavior: >
+      Synthetics canaries execute on Lambda functions managed by the
+      service. They are subject to Lambda limits including 15-minute
+      max execution time, memory allocation, /tmp storage (512 MB
+      default, up to 10 GB), and VPC networking behavior.
+    common_false_claim: "Increase the canary timeout beyond 15 minutes for long-running tests."
+    correct_action: "Canary max timeout is limited by Lambda's 15-minute limit. Break long tests into multiple canaries or optimize the script."
+
+  - id: P8-cross-account-automatic
+    trigger_words: ["cross-account metrics", "cross-account logs", "multi-account"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs imply cross-account observability works automatically or
+      with just IAM roles. It requires explicit OAM sink/link setup.
+    actual_behavior: >
+      Cross-account observability requires CloudWatch Observability
+      Access Manager (OAM). The monitoring account creates a sink,
+      and each source account creates a link to that sink specifying
+      which resource types to share (metrics, logs, traces, Application
+      Signals).
+    common_false_claim: "Set up a cross-account IAM role to view metrics from another account."
+    correct_action: "Use OAM: create a sink in the monitoring account, then create links from each source account to the sink."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

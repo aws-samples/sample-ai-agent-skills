@@ -1,0 +1,124 @@
+# =============================================================================
+# Amazon Pinpoint "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-email-auto-verified
+    trigger_words: ["email channel", "send email", "email delivery"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume Pinpoint email works immediately. Email requires
+      SES verified identity and may be in sandbox mode.
+    actual_behavior: >
+      Pinpoint email channel uses SES. The sending identity must be
+      verified. New accounts are in sandbox mode (verified recipients
+      only, limited volume). Production access must be requested.
+    common_false_claim: "Configure the email channel and start sending emails."
+    correct_action: "Verify sending identity in SES. Check sandbox status. Request production access if needed."
+
+  - id: P2-sms-just-works
+    trigger_words: ["SMS", "text message", "sms delivery", "send sms"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest SMS works by just enabling the channel.
+      SMS requires provisioned numbers and possibly 10DLC registration.
+    actual_behavior: >
+      SMS requires a provisioned origination number. US long code
+      traffic requires 10DLC registration or messages are silently
+      filtered by carriers. Spending limit defaults to $1.00/month.
+    common_false_claim: "Enable the SMS channel and send messages to any number."
+    correct_action: "Provision origination number. Register for 10DLC if targeting US. Increase spending limit."
+
+  - id: P3-campaign-instant-delivery
+    trigger_words: ["campaign", "campaign delivery", "send campaign"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest campaigns deliver instantly to all endpoints.
+      Delivery is throttled and metrics are delayed.
+    actual_behavior: >
+      Campaign delivery is throttled based on channel limits and
+      account quotas. Large campaigns take time to process all
+      endpoints. Metrics (delivery, opens, clicks) are not real-time
+      and may take hours to fully populate.
+    common_false_claim: "The campaign will deliver to all endpoints immediately."
+    correct_action: "Monitor campaign activities. Allow time for delivery and metrics. Check per-channel throttling."
+
+  - id: P4-segment-realtime
+    trigger_words: ["segment", "dynamic segment", "endpoint", "segment size"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest segments reflect real-time endpoint data.
+      Segments are eventually consistent.
+    actual_behavior: >
+      Dynamic segments compute membership based on endpoint
+      attributes but are eventually consistent. Recent endpoint
+      updates may not be reflected immediately. Large segments
+      take longer to compute. Import segments are available
+      after the import job completes.
+    common_false_claim: "The segment immediately reflects all endpoint changes."
+    correct_action: "Allow propagation time. Verify segment size before campaign launch. Use import for time-sensitive segments."
+
+  - id: P5-journey-unlimited
+    trigger_words: ["journey", "journey duration", "journey execution"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest journeys can run indefinitely.
+      Journeys have a maximum 18-month duration.
+    actual_behavior: >
+      Journeys have a maximum duration of 18 months. After this,
+      no new participants enter. Journey activities have individual
+      wait time limits. Journeys process participants asynchronously.
+    common_false_claim: "Create a journey that runs continuously for years."
+    correct_action: "Plan journey lifecycle within 18-month limit. Create new journeys for ongoing engagement."
+
+  - id: P6-push-universal-config
+    trigger_words: ["push notification", "APNs", "FCM", "push channel"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest a single push configuration works for all platforms.
+      Each platform requires separate credentials.
+    actual_behavior: >
+      APNs (iOS) requires a signing key or certificate from Apple.
+      FCM (Android) requires a server key or service account JSON.
+      ADM (Kindle) requires client ID and secret. Each must be
+      configured separately. Expired credentials cause silent failures.
+    common_false_claim: "Configure push notifications with a single API key."
+    correct_action: "Configure each push platform separately with platform-specific credentials."
+
+  - id: P7-sms-no-spending-limit
+    trigger_words: ["SMS cost", "SMS spending", "SMS limit", "SMS budget"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention the default $1.00/month SMS spending limit.
+    actual_behavior: >
+      New accounts have a $1.00/month SMS spending limit. Once
+      reached, all SMS sending stops until the next month or the
+      limit is increased. Request increase through AWS Support.
+    common_false_claim: "SMS sending scales automatically with your usage."
+    correct_action: "Check current spending limit. Request increase through AWS Support before production launch."
+
+  - id: P8-optout-manual
+    trigger_words: ["opt-out", "unsubscribe", "STOP", "consent"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest opt-out must be manually implemented.
+      Pinpoint handles opt-out automatically per channel.
+    actual_behavior: >
+      Pinpoint automatically processes opt-out: SMS STOP keywords
+      opt out the number, email unsubscribe triggers opt-out.
+      Opted-out endpoints are silently skipped during delivery.
+      They don't appear as delivery failures.
+    common_false_claim: "You need to build custom opt-out handling logic."
+    correct_action: "Pinpoint handles opt-out automatically. Check OptOut status on endpoints. Use opt-out override only when legally permitted."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

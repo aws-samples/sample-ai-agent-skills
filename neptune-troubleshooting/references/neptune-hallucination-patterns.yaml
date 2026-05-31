@@ -1,0 +1,133 @@
+# =============================================================================
+# Amazon Neptune "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-neptune-public-access
+    trigger_words: ["public endpoint", "public access", "internet access", "publicly accessible"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling public access on Neptune because RDS and Aurora
+      support it. Neptune is VPC-only with no public endpoint option.
+    actual_behavior: >
+      Neptune clusters can only be accessed from within a VPC. There is no
+      publicly-accessible option. Access from outside the VPC requires a
+      bastion host, VPN, Direct Connect, VPC peering, or an ALB/NLB proxy.
+      This is a fundamental security design of Neptune.
+    common_false_claim: "Enable public accessibility on your Neptune cluster to connect from the internet."
+    correct_action: "Use a bastion host, VPN, or ALB proxy for external access. Neptune is VPC-only."
+
+  - id: P2-gremlin-sparql-interop
+    trigger_words: ["query gremlin with sparql", "sparql on gremlin data", "convert gremlin to sparql", "both query languages"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume that because Neptune supports both Gremlin and SPARQL,
+      data loaded in one format can be queried with the other language.
+    actual_behavior: >
+      Gremlin (property graph) and SPARQL (RDF) use completely different
+      data models. Data loaded as property graph vertices/edges cannot be
+      queried with SPARQL. RDF triples cannot be queried with Gremlin.
+      They share the same cluster infrastructure but maintain separate
+      data stores.
+    common_false_claim: "You can query your Gremlin graph data using SPARQL for more complex queries."
+    correct_action: "Choose one data model per use case. Do not mix Gremlin and SPARQL data."
+
+  - id: P3-username-password-auth
+    trigger_words: ["username password", "database credentials", "master password", "login credentials"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest username/password authentication because most databases
+      use it. Neptune uses IAM authentication with SigV4 signing only.
+    actual_behavior: >
+      Neptune does not support username/password authentication. When IAM
+      auth is enabled, all requests must be signed with AWS Signature
+      Version 4. Without IAM auth, access is controlled by VPC security
+      groups only. There is no master username/password like RDS.
+    common_false_claim: "Connect to Neptune using the master username and password."
+    correct_action: "Use IAM auth with SigV4 signing or rely on VPC security group controls."
+
+  - id: P4-cross-region-replicas
+    trigger_words: ["cross-region replica", "read replica other region", "replica in us-west"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cross-region read replicas because Aurora supports them.
+      Neptune requires Global Database for cross-region replication.
+    actual_behavior: >
+      Neptune does not support cross-region read replicas. For cross-region
+      disaster recovery or read scaling, use Neptune Global Database which
+      replicates the entire storage volume to secondary regions. Global
+      database provides typical replication lag under 1 second.
+    common_false_claim: "Create a cross-region read replica for disaster recovery."
+    correct_action: "Use Neptune Global Database for cross-region replication and DR."
+
+  - id: P5-direct-data-loading
+    trigger_words: ["insert millions", "load data directly", "batch insert queries"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest loading large datasets via individual Gremlin/SPARQL
+      insert queries. The bulk loader via S3 is orders of magnitude faster.
+    actual_behavior: >
+      Neptune's bulk loader reads data from S3 and is the recommended way
+      to load large datasets. It requires an IAM role with S3 access
+      attached to the cluster. Loading millions of records via individual
+      addV()/addE() Gremlin queries or SPARQL INSERT is extremely slow
+      and can take hours vs minutes with the bulk loader.
+    common_false_claim: "Use a loop to insert millions of vertices with g.addV() queries."
+    correct_action: "Use the Neptune bulk loader with data in S3 for large data loads."
+
+  - id: P6-serverless-instant-scaling
+    trigger_words: ["instant scaling", "immediate scale", "no latency scaling", "zero downtime scaling"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim Neptune Serverless scales instantly like Lambda.
+      Serverless scaling has brief pauses during scale-up events.
+    actual_behavior: >
+      Neptune Serverless scales automatically between min and max NCU
+      settings, but scaling is not instantaneous. Scale-up events may
+      cause brief pauses or increased latency. Scale-down is more
+      gradual. For latency-sensitive workloads, set the minimum NCU
+      high enough to handle baseline traffic without scaling.
+    common_false_claim: "Neptune Serverless scales instantly with zero impact on queries."
+    correct_action: "Set minimum NCUs to handle baseline load. Expect brief pauses during scale-up."
+
+  - id: P7-storage-shrink
+    trigger_words: ["shrink storage", "reclaim space", "reduce storage", "storage decrease"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest that deleting data will reduce storage consumption.
+      Neptune storage does not automatically shrink after data deletion.
+    actual_behavior: >
+      Neptune storage auto-grows but does not automatically shrink when
+      data is deleted. Deleted data space is reused for new data but
+      the allocated storage volume does not decrease. To reclaim storage,
+      clone the cluster (which only copies active data) or restore from
+      a snapshot.
+    common_false_claim: "Delete unused data to reduce your Neptune storage costs."
+    correct_action: "Clone the cluster or restore from snapshot to reclaim storage space."
+
+  - id: P8-t-instance-production
+    trigger_words: ["t3 production", "t4g production", "burstable neptune", "cheap instance"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs recommend burstable T-class instances for production to save
+      costs. T instances have CPU credit limits unsuitable for production.
+    actual_behavior: >
+      db.t3 and db.t4g instances are designed for development and testing
+      only. They have CPU credit limitations that cause performance
+      degradation when credits are exhausted. Production workloads should
+      use db.r5 or db.r6g instances which provide consistent performance.
+      T instances may appear to work initially but fail under sustained load.
+    common_false_claim: "Use db.t3.medium for your production Neptune cluster to save costs."
+    correct_action: "Use db.r5 or db.r6g instances for production. T instances are for dev/test only."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

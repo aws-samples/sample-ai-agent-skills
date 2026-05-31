@@ -1,0 +1,121 @@
+# =============================================================================
+# Cognito "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-user-pool-identity-pool-conflation
+    trigger_words: ["user pool", "identity pool", "cognito pool", "authentication pool"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs frequently conflate user pools (authentication) with identity pools
+      (authorization/AWS credentials). They are separate services with different
+      APIs, configurations, and purposes.
+    actual_behavior: >
+      User pools handle sign-up/sign-in and issue JWT tokens. Identity pools
+      exchange tokens for temporary AWS credentials via STS. They can work
+      together or independently.
+    common_false_claim: "Configure the identity pool to handle user sign-in."
+    correct_action: "Use user pools for authentication, identity pools for AWS credential vending."
+
+  - id: P2-app-client-secret-spa
+    trigger_words: ["client secret", "app client", "SPA", "mobile app", "JavaScript"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using app client secrets in browser/mobile apps. These
+      clients cannot securely store secrets and the SDK will reject them.
+    actual_behavior: >
+      App clients for SPA/mobile must be created WITHOUT a client secret.
+      The Amplify SDK and hosted UI for public clients do not support secrets.
+      Server-side apps can use secrets.
+    common_false_claim: "Add the client secret to your JavaScript app configuration."
+    correct_action: "Create a new app client without a secret for SPA/mobile use."
+
+  - id: P3-trigger-timeout-increase
+    trigger_words: ["trigger timeout", "Lambda trigger", "increase timeout", "trigger slow"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest increasing the Lambda function timeout to fix trigger
+      timeouts. Cognito enforces a 5-second hard limit regardless of the
+      Lambda function's configured timeout.
+    actual_behavior: >
+      Cognito Lambda triggers have a hard 5-second timeout enforced by
+      Cognito, not Lambda. The Lambda function timeout setting is irrelevant
+      if it exceeds 5 seconds.
+    common_false_claim: "Increase the Lambda function timeout to 30 seconds."
+    correct_action: "Optimize trigger code to complete within 5 seconds. Move heavy work to async post-processing."
+
+  - id: P4-token-expiry-configurable
+    trigger_words: ["ID token expiry", "change ID token", "token lifetime", "extend token"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim ID token expiry can be configured. Only access token
+      and refresh token lifetimes are configurable.
+    actual_behavior: >
+      ID token lifetime is fixed at 1 hour. Access token lifetime is
+      configurable (5 minutes to 24 hours). Refresh token lifetime is
+      configurable (1 hour to 3,650 days).
+    common_false_claim: "Set the ID token expiry to 24 hours in the app client settings."
+    correct_action: "ID tokens are always 1 hour. Use refresh tokens to obtain new ID tokens."
+
+  - id: P5-custom-auth-partial-triggers
+    trigger_words: ["custom auth", "custom challenge", "passwordless", "OTP auth"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest implementing only one or two of the three required
+      Lambda triggers for custom auth flows.
+    actual_behavior: >
+      Custom authentication requires ALL three triggers: Define Auth Challenge,
+      Create Auth Challenge, and Verify Auth Challenge Response. Missing any
+      one causes the flow to fail.
+    common_false_claim: "Create a Verify Auth Challenge Lambda to implement OTP."
+    correct_action: "Implement all three triggers: Define, Create, and Verify Auth Challenge."
+
+  - id: P6-user-pool-recovery
+    trigger_words: ["recover user pool", "restore user pool", "undelete pool", "deleted pool"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest recovery options for deleted user pools. Deletion is
+      permanent with no recovery mechanism.
+    actual_behavior: >
+      User pool deletion is permanent and irreversible. All users, groups,
+      app clients, triggers, and configurations are permanently lost.
+    common_false_claim: "Contact AWS Support to restore the deleted user pool."
+    correct_action: "Recreate the user pool and re-import users from backup. Always export users before deletion."
+
+  - id: P7-saml-case-sensitivity
+    trigger_words: ["SAML", "attribute mapping", "federation", "IdP attributes"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs provide generic SAML attribute names that may not match the
+      exact case and format of the IdP's assertion.
+    actual_behavior: >
+      SAML attribute mapping is case-sensitive. The attribute name in
+      Cognito must exactly match the attribute name in the SAML assertion
+      from the IdP. Common IdPs use different formats.
+    common_false_claim: "Map 'email' to the Cognito email attribute."
+    correct_action: "Check the actual SAML assertion from the IdP for exact attribute names (e.g., 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress')."
+
+  - id: P8-hosted-ui-customization
+    trigger_words: ["hosted UI", "customize login", "custom login page", "branding"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest full HTML/JS customization of the hosted UI. Only
+      CSS and logo changes are supported.
+    actual_behavior: >
+      Hosted UI customization is limited to CSS (max 200 KB) and logo
+      (max 100 KB). Custom HTML, JavaScript, or layout changes are not
+      supported. For full control, build a custom UI.
+    common_false_claim: "Upload a custom HTML template for the hosted UI."
+    correct_action: "Use CSS-only customization or build a custom UI with the Cognito API."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

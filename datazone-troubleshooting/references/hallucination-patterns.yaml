@@ -1,0 +1,127 @@
+# =============================================================================
+# Amazon DataZone "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-datazone-stores-data
+    trigger_words: ["store data", "data storage", "upload data", "DataZone database"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest DataZone stores data. It's a governance and
+      catalog service that manages metadata.
+    actual_behavior: >
+      DataZone manages metadata, governance policies, and data access
+      controls. Actual data resides in Glue Data Catalog, Redshift,
+      S3, Athena, or other sources. DataZone provides discovery,
+      governance, and access management on top of these services.
+    common_false_claim: "Upload your data to DataZone for cataloging."
+    correct_action: "Store data in Glue/Redshift/S3. Use DataZone to catalog, govern, and share."
+
+  - id: P2-instant-subscription
+    trigger_words: ["subscribe", "access data", "get data", "subscription"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest subscriptions grant instant access. Subscriptions
+      require an approval workflow.
+    actual_behavior: >
+      Subscription requests go through an approval workflow. The data
+      producer (or auto-approval policy) must approve the request.
+      Only after approval is access granted. This governance step
+      is intentional and cannot be bypassed.
+    common_false_claim: "Subscribe to the asset and immediately access the data."
+    correct_action: "Request subscription, wait for approval, then access data through environment."
+
+  - id: P3-no-domain-needed
+    trigger_words: ["create project", "publish asset", "start with DataZone"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs skip domain creation. All DataZone resources require
+      a domain.
+    actual_behavior: >
+      A domain must be created first. All resources (projects, assets,
+      glossaries, subscriptions) exist within a domain. The domain
+      provides the portal URL and organizational boundary.
+    common_false_claim: "Create a project to start using DataZone."
+    correct_action: "Create domain first, then create projects within the domain."
+
+  - id: P4-environment-optional
+    trigger_words: ["environment", "data access", "connect to data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest environments are optional. They're required for
+      actual data access.
+    actual_behavior: >
+      Environments provide the actual connection to data sources
+      (Glue, Redshift, Athena). Without environments, projects can
+      catalog data but cannot access it. Environment blueprints
+      must be enabled in the domain first.
+    common_false_claim: "Access data directly through the DataZone catalog."
+    correct_action: "Create environment in project with appropriate blueprint for data source access."
+
+  - id: P5-asset-contains-data
+    trigger_words: ["data asset", "asset data", "asset content"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest data assets contain actual data. They're
+      metadata references.
+    actual_behavior: >
+      Data assets are metadata entries describing data: schema,
+      location, owner, quality metrics, glossary terms. The actual
+      data remains in the source (Glue table, Redshift table, S3).
+      Publishing an asset makes it discoverable in the catalog.
+    common_false_claim: "The data asset contains your dataset."
+    correct_action: "Assets are metadata. Access actual data through subscriptions and environments."
+
+  - id: P6-iam-only-permissions
+    trigger_words: ["permissions", "access control", "who can access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest IAM alone controls DataZone access. There are
+      two permission layers.
+    actual_behavior: >
+      IAM controls who can call DataZone APIs. DataZone's internal
+      model controls project membership, asset access, and subscription
+      approval. Both layers must be configured. A user needs IAM
+      permissions AND DataZone project membership.
+    common_false_claim: "Grant IAM permissions to give users DataZone access."
+    correct_action: "Configure both IAM permissions for API access AND DataZone project membership."
+
+  - id: P7-auto-quality-checks
+    trigger_words: ["data quality", "quality rules", "quality checks"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest DataZone runs quality checks independently.
+      Quality execution uses Glue Data Quality.
+    actual_behavior: >
+      DataZone provides the governance framework for data quality
+      rules. Actual quality rule execution is performed by Glue
+      Data Quality. DataZone displays results and can enforce
+      quality gates on subscriptions.
+    common_false_claim: "DataZone automatically checks data quality."
+    correct_action: "Define quality rules in DataZone, they execute via Glue Data Quality."
+
+  - id: P8-glossary-auto-applied
+    trigger_words: ["glossary", "business terms", "terminology"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest glossary terms are automatically applied to
+      assets. Terms must be manually associated.
+    actual_behavior: >
+      Business glossary terms must be manually associated with data
+      assets. While DataZone can suggest terms based on metadata,
+      the association is not automatic. Terms provide standardized
+      definitions for consistent understanding across the organization.
+    common_false_claim: "DataZone automatically tags assets with glossary terms."
+    correct_action: "Create glossary terms, then manually associate them with relevant data assets."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

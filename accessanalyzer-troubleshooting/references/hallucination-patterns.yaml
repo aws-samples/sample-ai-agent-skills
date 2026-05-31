@@ -1,0 +1,137 @@
+# =============================================================================
+# IAM Access Analyzer "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-remediation
+    trigger_words: ["Access Analyzer", "fix permissions", "auto-fix", "remediate"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Access Analyzer automatically fixes permission
+      issues. It only identifies and reports findings.
+    actual_behavior: >
+      Access Analyzer identifies external access and unused access
+      but does NOT automatically remediate findings. It reports
+      findings that must be reviewed and resolved manually. There
+      is no auto-fix capability. Remediation requires modifying
+      resource policies, IAM policies, or resource configurations.
+    common_false_claim: "Access Analyzer will automatically fix overly permissive policies."
+    correct_action: "Review findings and manually remediate by updating policies or resource configurations."
+
+  - id: P2-real-time-detection
+    trigger_words: ["real-time", "instant detection", "immediate", "live monitoring"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Access Analyzer detects issues in real-time.
+      Analysis is asynchronous and can take hours.
+    actual_behavior: >
+      Access Analyzer generates findings asynchronously. After a
+      resource policy change, it may take up to 24 hours for
+      findings to be generated or resolved. For new analyzers,
+      initial analysis of all resources takes time proportional
+      to the number of resources.
+    common_false_claim: "Access Analyzer immediately detects when a resource is made public."
+    correct_action: "Allow up to 24 hours for findings. Use S3 Block Public Access and SCPs for immediate prevention."
+
+  - id: P3-validates-permissions
+    trigger_words: ["validate policy", "check permissions", "policy validation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest policy validation checks if permissions are
+      correct. It only checks syntax and best practices.
+    actual_behavior: >
+      Policy validation (validate-policy) checks IAM policy
+      grammar, syntax, and adherence to best practices. It does
+      NOT check if the policy grants the intended permissions,
+      if the policy is effective, or if it follows least privilege.
+      It catches structural issues like invalid actions, malformed
+      ARNs, and deprecated elements.
+    common_false_claim: "Use validate-policy to check if your IAM policy grants the right permissions."
+    correct_action: "Use validate-policy for syntax/grammar checks. Use IAM Policy Simulator for permission testing."
+
+  - id: P4-all-resources-analyzed
+    trigger_words: ["all resources", "every resource", "complete analysis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Access Analyzer analyzes all AWS resource types.
+      Only specific resource types are supported.
+    actual_behavior: >
+      External access analysis supports specific resource types:
+      S3 buckets, IAM roles, KMS keys, Lambda functions, SQS
+      queues, Secrets Manager secrets, SNS topics, EBS snapshots,
+      RDS snapshots, ECR repositories, and EFS file systems.
+      Other resource types (EC2 security groups, VPC endpoints,
+      etc.) are NOT analyzed.
+    common_false_claim: "Access Analyzer checks all your AWS resources for external access."
+    correct_action: "Check supported resource types. Use other tools (Config rules, Security Hub) for unsupported types."
+
+  - id: P5-policy-generation-instant
+    trigger_words: ["generate policy", "policy generation", "least privilege"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest policy generation is instant and complete.
+      It requires CloudTrail history and produces approximate results.
+    actual_behavior: >
+      Policy generation analyzes CloudTrail logs to create
+      least-privilege policies. It requires at least 90 days of
+      CloudTrail data for accurate results. Generation takes
+      minutes to hours. Results are approximate — they may miss
+      infrequently used permissions or include permissions from
+      one-time operations.
+    common_false_claim: "Generate a perfect least-privilege policy instantly."
+    correct_action: "Ensure 90+ days of CloudTrail data. Review and refine generated policies before applying."
+
+  - id: P6-archive-deletes-findings
+    trigger_words: ["archive", "archive rule", "dismiss finding", "delete finding"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest archiving deletes findings. Archived findings
+      are preserved and can be unarchived.
+    actual_behavior: >
+      Archiving a finding moves it from ACTIVE to ARCHIVED status.
+      The finding is NOT deleted. It can be viewed by filtering
+      for archived findings and can be unarchived. Archive rules
+      automatically archive future findings matching criteria.
+    common_false_claim: "Archive the finding to delete it permanently."
+    correct_action: "Archive findings you've reviewed and accepted. They remain accessible in archived state."
+
+  - id: P7-organization-auto-setup
+    trigger_words: ["organization analyzer", "all accounts", "org-wide"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest organization analyzers work automatically
+      across all accounts. Setup requires admin configuration.
+    actual_behavior: >
+      Organization analyzers must be created from the management
+      account or delegated administrator. They analyze resources
+      across all member accounts but require proper Organizations
+      setup. Member accounts cannot create organization analyzers.
+    common_false_claim: "Create an analyzer and it automatically covers all organization accounts."
+    correct_action: "Create organization analyzer from management account or delegated admin. Verify Organizations is enabled."
+
+  - id: P8-unused-access-free
+    trigger_words: ["unused access", "cost", "pricing", "free"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not distinguish pricing between external access
+      and unused access analysis.
+    actual_behavior: >
+      External access analysis is included at no additional cost.
+      Unused access analysis has separate pricing — charged per
+      IAM role and user analyzed per month. For organizations
+      with thousands of IAM entities, unused access costs can
+      be significant. Check current pricing before enabling.
+    common_false_claim: "Access Analyzer is free for all features."
+    correct_action: "External access is free. Unused access has per-entity monthly charges. Calculate costs before enabling."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

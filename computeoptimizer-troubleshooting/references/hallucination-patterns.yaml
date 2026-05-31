@@ -1,0 +1,110 @@
+# =============================================================================
+# AWS Compute Optimizer "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-enrolled
+    trigger_words: ["Compute Optimizer", "recommendations", "get started"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest recommendations are available by default.
+      Account must be enrolled first.
+    actual_behavior: >
+      Compute Optimizer requires explicit enrollment. Without
+      opt-in, no recommendations are generated for any resource.
+    common_false_claim: "Check Compute Optimizer for your EC2 recommendations."
+    correct_action: "Enroll account first. Wait 14+ days. Then check recommendations."
+
+  - id: P2-instant-recommendations
+    trigger_words: ["new instance", "just launched", "immediate recommendation"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest instant recommendations for new resources.
+    actual_behavior: >
+      Resources need 14+ days of CloudWatch metric data before
+      recommendations appear. New resources show no recommendations.
+    common_false_claim: "Launch an instance and check Compute Optimizer for sizing."
+    correct_action: "Wait 14+ days after launch. Then check recommendations."
+
+  - id: P3-guaranteed-savings
+    trigger_words: ["savings", "cost reduction", "save money"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs present savings estimates as guaranteed.
+    actual_behavior: >
+      Savings estimates are approximate based on On-Demand pricing.
+      Actual savings depend on pricing model, workload changes,
+      and implementation timing.
+    common_false_claim: "Compute Optimizer guarantees 30% cost savings."
+    correct_action: "Use estimates as guidance. Test changes. Actual savings vary."
+
+  - id: P4-auto-resize
+    trigger_words: ["auto resize", "automatic optimization", "auto right-size"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Compute Optimizer auto-resizes resources.
+    actual_behavior: >
+      Compute Optimizer only provides recommendations. It does
+      NOT automatically resize or modify resources. Changes
+      must be implemented manually or via automation.
+    common_false_claim: "Compute Optimizer automatically right-sizes your instances."
+    correct_action: "Review recommendations. Implement changes manually. Test after changes."
+
+  - id: P5-all-resource-types
+    trigger_words: ["any resource", "all services", "resource types"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest all AWS resources are covered.
+    actual_behavior: >
+      Compute Optimizer supports EC2 instances, Auto Scaling groups,
+      Lambda functions, EBS volumes, and ECS services on Fargate.
+      Other resource types are not supported.
+    common_false_claim: "Get recommendations for any AWS resource."
+    correct_action: "Check supported resource types. Use for EC2, Lambda, EBS, ECS."
+
+  - id: P6-memory-included
+    trigger_words: ["memory recommendation", "memory utilization", "RAM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume memory data is always available for EC2.
+    actual_behavior: >
+      EC2 memory utilization requires CloudWatch agent installation.
+      Without the agent, Compute Optimizer cannot analyze memory
+      and recommendations may be less accurate.
+    common_false_claim: "Compute Optimizer analyzes EC2 memory utilization by default."
+    correct_action: "Install CloudWatch agent for memory metrics. Better recommendations."
+
+  - id: P7-free-enhanced
+    trigger_words: ["enhanced metrics", "3-month lookback", "extended analysis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enhanced metrics are free.
+    actual_behavior: >
+      Enhanced infrastructure metrics extends lookback to 3 months
+      but incurs per-resource charges. Default 14-day lookback
+      is free.
+    common_false_claim: "Enable enhanced metrics for free."
+    correct_action: "Enhanced metrics have costs. Evaluate benefit vs cost."
+
+  - id: P8-cross-region
+    trigger_words: ["cross-region", "global recommendations", "all regions"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest global recommendations.
+    actual_behavior: >
+      Recommendations are per-region. Each region must be checked
+      separately. Export can aggregate across regions.
+    common_false_claim: "View all recommendations in a single region."
+    correct_action: "Check each region. Use export for cross-region aggregation."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

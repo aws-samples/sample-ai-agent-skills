@@ -1,0 +1,121 @@
+# =============================================================================
+# Event-Driven Architecture "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-fifo-global-ordering
+    trigger_words: ["FIFO ordering", "message order", "out of order", "sequence"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume FIFO queues guarantee total ordering across all messages.
+      Ordering is only guaranteed within a single MessageGroupId.
+    actual_behavior: >
+      SQS FIFO queues guarantee ordering per MessageGroupId. Messages with
+      different MessageGroupIds can be processed in parallel and out of
+      order relative to each other.
+    common_false_claim: "FIFO queues guarantee all messages are processed in the exact order they were sent."
+    correct_action: "Verify MessageGroupId usage. Ordering is per group, not global."
+
+  - id: P2-eventbridge-exactly-once
+    trigger_words: ["EventBridge delivery", "exactly once", "duplicate events"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may claim EventBridge guarantees exactly-once delivery.
+      EventBridge provides at-least-once delivery; duplicates are possible.
+    actual_behavior: >
+      EventBridge delivers events at least once. Duplicate deliveries can
+      occur. Target applications must be designed to be idempotent.
+    common_false_claim: "EventBridge guarantees each event is delivered exactly once."
+    correct_action: "Design targets to be idempotent. Use deduplication logic in consumers."
+
+  - id: P3-sns-filter-scope
+    trigger_words: ["SNS filter", "filter policy", "message filtering", "subscription filter"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume filter policies always match on message attributes.
+      FilterPolicyScope must be set to "MessageBody" to filter on the body.
+    actual_behavior: >
+      SNS filter policies default to matching on MessageAttributes. To
+      filter on the message body, set FilterPolicyScope to "MessageBody".
+      Mismatched scope silently passes or rejects all messages.
+    common_false_claim: "Set a filter policy on the subscription to filter by message body content."
+    correct_action: "Check FilterPolicyScope. Set to 'MessageBody' for body-based filtering."
+
+  - id: P4-visibility-timeout-retention
+    trigger_words: ["visibility timeout", "message retention", "message disappeared", "message lost"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate visibility timeout with message retention. They are
+      independent settings controlling different behaviors.
+    actual_behavior: >
+      VisibilityTimeout (max 12h) controls how long a message is hidden
+      after receive. MessageRetentionPeriod (max 14 days) controls how
+      long undeleted messages persist before automatic deletion.
+    common_false_claim: "Increase the visibility timeout to keep messages longer in the queue."
+    correct_action: "Use VisibilityTimeout for processing time. Use MessageRetentionPeriod for storage duration."
+
+  - id: P5-eventbridge-pattern-case
+    trigger_words: ["EventBridge pattern", "rule not matching", "event pattern", "content filter"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs generate patterns without considering case sensitivity.
+      EventBridge patterns are case-sensitive.
+    actual_behavior: >
+      EventBridge rule patterns perform case-sensitive matching. A pattern
+      with "EC2" will not match an event with "ec2". Field names and
+      values must match exactly.
+    common_false_claim: "The pattern will match regardless of case."
+    correct_action: "Verify exact casing in the event pattern. Use test-event-pattern to validate."
+
+  - id: P6-cross-account-one-side
+    trigger_words: ["cross-account", "other account", "event bus policy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may only configure one side of cross-account access and miss
+      the other side.
+    actual_behavior: >
+      Cross-account event delivery requires BOTH: the target event bus
+      policy allowing PutEvents from the source AND the source IAM policy
+      allowing events:PutEvents on the target bus ARN.
+    common_false_claim: "Add the event bus policy and cross-account delivery will work."
+    correct_action: "Configure BOTH the source IAM policy and the target event bus policy."
+
+  - id: P7-dlq-receive-count
+    trigger_words: ["DLQ", "dead letter", "maxReceiveCount", "redrive"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not explain that receive count increments on every receive
+      attempt, including visibility timeout expirations.
+    actual_behavior: >
+      The receive count increments on every ReceiveMessage that returns
+      the message. Visibility timeout expiration makes the message visible
+      again, and the next receive increments the count. After
+      maxReceiveCount, the message moves to the DLQ.
+    common_false_claim: "The receive count only increments when the consumer explicitly receives the message."
+    correct_action: "Account for visibility timeout expirations when setting maxReceiveCount."
+
+  - id: P8-sns-raw-delivery
+    trigger_words: ["raw message", "SNS wrapper", "message format", "RawMessageDelivery"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not mention that enabling raw delivery changes the message
+      format and can break consumers expecting the SNS JSON envelope.
+    actual_behavior: >
+      RawMessageDelivery sends the original message without the SNS JSON
+      wrapper (Message, MessageId, TopicArn, etc.). Only supported for
+      SQS and HTTP/S subscriptions. Lambda subscriptions always receive
+      the SNS envelope.
+    common_false_claim: "Enable raw message delivery on all subscriptions for better performance."
+    correct_action: "Only enable raw delivery if consumers handle the raw format. Not supported for Lambda."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

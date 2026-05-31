@@ -1,0 +1,160 @@
+# =============================================================================
+# Athena "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about Athena behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-persistent-compute-resources
+    trigger_words: ["instance", "cluster", "server", "node", "SSH", "EC2", "resize"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on traditional database documentation suggest
+      checking server instances, resizing clusters, or SSH-ing into
+      nodes. Athena is fully serverless — there are no instances.
+    actual_behavior: >
+      Athena is a serverless query service. Each query runs on
+      ephemeral compute that is provisioned automatically and
+      released after the query completes. There are no instances
+      to manage, resize, or access. Performance tuning is done
+      through query optimization, data format, and partitioning —
+      not infrastructure scaling.
+    common_false_claim: >
+      "Resize the Athena cluster to handle larger queries."
+    correct_action: "Optimize queries using partitioning, columnar formats, and predicate pushdown. Use workgroup per-query data scan limits."
+
+  - id: P2-update-delete-regular-tables
+    trigger_words: ["UPDATE", "DELETE FROM", "MERGE INTO", "UPSERT", "modify rows"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on SQL databases assume standard DML operations
+      work on all tables. Athena only supports UPDATE/DELETE/MERGE
+      on Apache Iceberg tables, not regular Hive tables.
+    actual_behavior: >
+      Regular Athena tables (Hive format) are read-only — you can
+      SELECT, INSERT INTO, and CTAS, but not UPDATE or DELETE.
+      For mutable data operations, create the table using Iceberg
+      format (TBLPROPERTIES 'table_type'='ICEBERG') on engine v3.
+      Iceberg tables support MERGE, UPDATE, DELETE, and time travel.
+    common_false_claim: >
+      "Run UPDATE table SET column = value WHERE condition to fix the data."
+    correct_action: "Use Iceberg table format for DML operations, or use CTAS to create a corrected table and swap."
+
+  - id: P3-free-or-flat-pricing
+    trigger_words: ["free tier", "no cost", "flat rate", "unlimited queries", "fixed price"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may understate Athena costs or suggest it is free.
+      Athena charges per TB of data scanned, which can be
+      significant for large unoptimized datasets.
+    actual_behavior: >
+      Athena charges $5 per TB of data scanned (standard pricing,
+      varies by region). DDL queries and failed queries are free.
+      Cancelled queries are charged for data scanned before
+      cancellation. Minimum charge is 10MB per query. Provisioned
+      capacity offers a different pricing model with DPU-hours.
+    common_false_claim: >
+      "Athena queries are free — you only pay for S3 storage."
+    correct_action: "Calculate cost as $5/TB scanned. Use EXPLAIN to estimate data scanned. Optimize with partitioning and columnar formats."
+
+  - id: P4-server-side-configuration
+    trigger_words: ["config file", "athena.conf", "properties file", "server settings", "restart service"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs trained on Presto/Trino documentation suggest editing
+      server configuration files. Athena has no user-accessible
+      configuration files or server processes.
+    actual_behavior: >
+      Athena configuration is managed through workgroups (AWS API
+      or Console), table properties (Glue Data Catalog), and query
+      session properties (SET commands within a query). There are
+      no config files to edit, no services to restart, and no
+      JVM settings to tune. Use workgroup settings for query
+      timeout, result location, and engine version.
+    common_false_claim: >
+      "Edit the Presto config.properties file to increase memory allocation."
+    correct_action: "Use workgroup configuration for Athena settings. Use table properties in Glue for table-level config."
+
+  - id: P5-unlimited-concurrency
+    trigger_words: ["unlimited concurrent", "no query limit", "infinite parallelism", "scale to any"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may describe Athena as having unlimited concurrency
+      because it is serverless. Athena has per-account DML and
+      DDL query concurrency limits.
+    actual_behavior: >
+      Athena has default concurrency limits: typically 20-25
+      concurrent DML queries and 20 concurrent DDL queries per
+      account per region (varies). Exceeding these limits causes
+      queries to be queued or throttled with TooManyRequestsException.
+      Limits can be increased via Service Quotas. Workgroups can
+      further restrict concurrency.
+    common_false_claim: >
+      "Athena automatically scales to handle any number of concurrent queries."
+    correct_action: "Check Service Quotas for DML/DDL concurrency limits. Use workgroup query queuing. Request limit increases if needed."
+
+  - id: P6-real-time-results
+    trigger_words: ["real-time", "streaming", "live data", "instant results", "sub-second"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest Athena for real-time analytics. Athena is
+      a batch query engine with query startup overhead measured
+      in seconds.
+    actual_behavior: >
+      Athena queries have a startup overhead of several seconds
+      (query planning, S3 listing, compute provisioning) before
+      data processing begins. Simple queries on small datasets
+      may complete in 2-5 seconds, but this is not real-time.
+      For sub-second analytics, use services like Kinesis Data
+      Analytics, Redshift, or DynamoDB. Athena is optimized for
+      ad-hoc analytical queries on S3 data.
+    common_false_claim: >
+      "Use Athena for real-time dashboards with sub-second latency."
+    correct_action: "Use Athena for ad-hoc and batch analytics. For real-time, consider Kinesis, Redshift, or purpose-built databases."
+
+  - id: P7-native-jdbc-without-driver
+    trigger_words: ["JDBC URL", "jdbc:athena", "native JDBC", "connect directly"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest connecting to Athena via JDBC without
+      mentioning the required Athena JDBC driver. Standard JDBC
+      drivers do not work with Athena.
+    actual_behavior: >
+      Athena requires the Athena JDBC driver (SimbaAthenaJDBC)
+      or ODBC driver for programmatic access. The JDBC URL format
+      is jdbc:awsathena://athena.<region>.amazonaws.com:443 with
+      the Simba driver. Authentication uses IAM credentials, not
+      database username/password. The driver handles SigV4 signing
+      and result pagination.
+    common_false_claim: >
+      "Connect using jdbc:presto://athena.amazonaws.com with any JDBC driver."
+    correct_action: "Download the Athena JDBC driver from AWS. Use jdbc:awsathena:// URL format with IAM authentication."
+
+  - id: P8-automatic-schema-evolution
+    trigger_words: ["auto schema", "schema evolution", "automatic column", "self-updating schema"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest Athena automatically detects schema changes
+      in S3 data. Athena reads schema from Glue Data Catalog, not
+      from the data files (except for self-describing formats).
+    actual_behavior: >
+      Athena uses the schema defined in the Glue Data Catalog table
+      definition. If the underlying data schema changes (new columns,
+      type changes), the Glue table must be updated manually, via
+      crawler, or via ALTER TABLE. Parquet and ORC files are
+      self-describing but Athena still uses the Glue schema for
+      column mapping. Schema mismatches cause NULL values or errors.
+    common_false_claim: >
+      "Athena automatically detects new columns added to your data files."
+    correct_action: "Update Glue table schema when data format changes. Use Glue crawlers for automatic schema detection, or ALTER TABLE ADD COLUMNS."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

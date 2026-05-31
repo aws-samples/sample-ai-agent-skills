@@ -1,0 +1,159 @@
+# =============================================================================
+# Amazon GameLift "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-scaling-predictive
+    trigger_words: ["GameLift", "auto-scaling", "predict", "scale ahead"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest GameLift auto-scaling predicts future demand
+      and scales proactively. It only reacts to current metrics.
+    actual_behavior: >
+      GameLift auto-scaling policies (target-based and rule-based)
+      react to CloudWatch metrics like AvailableGameSessions or
+      PercentAvailableGameSessions. They do NOT predict future
+      demand. There is a delay between metric change and scaling
+      action (instance launch takes minutes). For predictable
+      demand spikes, use manual scaling or scheduled actions.
+    common_false_claim: "GameLift auto-scaling will predict your peak hours and scale up in advance."
+    correct_action: "Use target-based scaling with buffer capacity. For predictable peaks, use manual scaling or scheduled scaling."
+
+  - id: P2-build-hot-update
+    trigger_words: ["update build", "hot update", "patch server", "update fleet"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest updating a build on an existing fleet. Builds
+      are immutable and fleets cannot change builds.
+    actual_behavior: >
+      GameLift builds are immutable once uploaded. A fleet is
+      permanently associated with the build used at creation.
+      To deploy a new build, you must create a new fleet with
+      the new build, redirect traffic via queue updates, and
+      then delete the old fleet. There is no in-place update.
+    common_false_claim: "Upload a new build and the fleet will automatically update."
+    correct_action: "Create a new fleet with the new build. Update queue destinations to point to the new fleet. Drain and delete the old fleet."
+
+  - id: P3-direct-ssh-access
+    trigger_words: ["SSH", "connect to instance", "remote access", "debug server"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SSH access to GameLift instances like regular
+      EC2 instances.
+    actual_behavior: >
+      GameLift managed EC2 instances do not allow direct SSH
+      access by default. Remote access must be explicitly enabled
+      during fleet creation with an EC2 key pair. Even then,
+      access is limited and security groups must allow inbound
+      SSH. For debugging, use game session logs and CloudWatch.
+    common_false_claim: "SSH into the GameLift instance to debug the server process."
+    correct_action: "Enable remote access during fleet creation. Use game session logs for debugging. Consider Anywhere fleets for development."
+
+  - id: P4-unlimited-game-sessions
+    trigger_words: ["game sessions", "concurrent", "unlimited", "session limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs do not account for per-instance game session limits
+      defined by the runtime configuration.
+    actual_behavior: >
+      The number of concurrent game sessions per instance is
+      determined by the runtime configuration's
+      ServerProcesses count. Each server process hosts one
+      game session. The total fleet capacity is instances ×
+      server processes per instance. Resource limits (CPU,
+      memory, ports) constrain how many processes can run.
+    common_false_claim: "GameLift can host unlimited game sessions on a single instance."
+    correct_action: "Configure server processes per instance based on resource requirements. Scale instances for more capacity."
+
+  - id: P5-realtime-compiled-server
+    trigger_words: ["Realtime Servers", "compiled", "binary", "executable"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Realtime Servers (JavaScript) with custom
+      game servers (compiled executables).
+    actual_behavior: >
+      Realtime Servers use JavaScript scripts, not compiled
+      executables. They provide a lightweight framework for
+      games that don't need custom server logic. Custom game
+      servers use compiled builds (C++, C#, etc.) with the
+      GameLift Server SDK. The two approaches are fundamentally
+      different and use different fleet configurations.
+    common_false_claim: "Upload your compiled server binary as a Realtime Server script."
+    correct_action: "Use builds for compiled executables. Use scripts for Realtime Servers JavaScript. Choose the right fleet type."
+
+  - id: P6-change-instance-type
+    trigger_words: ["change instance type", "resize fleet", "upgrade instance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest changing the instance type of an existing
+      fleet like EC2 instance type changes.
+    actual_behavior: >
+      GameLift fleet instance type cannot be changed after
+      creation. To use a different instance type, create a
+      new fleet with the desired type, redirect traffic via
+      queue updates, and delete the old fleet. This is a
+      fleet replacement, not a modification.
+    common_false_claim: "Change the fleet instance type to c5.xlarge for better performance."
+    correct_action: "Create a new fleet with the desired instance type. Update queue destinations. Drain and delete the old fleet."
+
+  - id: P7-spot-always-available
+    trigger_words: ["Spot fleet", "Spot instances", "cost savings", "cheap instances"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs recommend Spot fleets without mentioning interruption
+      risk or the need for On-Demand fallback.
+    actual_behavior: >
+      Spot instances can be interrupted by AWS with only a
+      2-minute warning. Game sessions on interrupted instances
+      are terminated. Spot fleets should ALWAYS be paired with
+      On-Demand fleets in a queue for fallback. The queue
+      prioritizes Spot but falls back to On-Demand when Spot
+      is unavailable.
+    common_false_claim: "Use Spot fleets to save costs with no downside."
+    correct_action: "Use Spot fleets with On-Demand fallback in queues. Implement graceful shutdown handling for 2-minute Spot warnings."
+
+  - id: P8-matchmaking-instant
+    trigger_words: ["matchmaking", "instant match", "FlexMatch", "match players"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest matchmaking is instant. FlexMatch has
+      configurable timeout and expansion rules.
+    actual_behavior: >
+      FlexMatch matchmaking takes time based on player pool
+      size, rule complexity, and expansion configuration.
+      Matches are not instant. The matchmaking timeout
+      (default 300 seconds) defines how long to wait.
+      Expansion rules relax matching criteria over time to
+      find matches. Small player pools may never find matches.
+    common_false_claim: "FlexMatch instantly matches players based on skill level."
+    correct_action: "Configure appropriate timeout and expansion rules. Monitor matchmaking metrics. Ensure sufficient player pool."
+
+remediation_hallucinations:
+
+  - id: R1-delete-fleet-with-sessions
+    trigger_words: ["delete fleet", "remove fleet", "terminate fleet"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting a fleet terminates all active game sessions and
+      disconnects all players immediately. This causes data
+      loss for any unsaved game state.
+    correct_approach: >
+      First scale the fleet to 0 desired instances. Wait for
+      all game sessions to complete naturally. Remove the fleet
+      from all queues. Then delete the fleet. For urgent cases,
+      notify players before deletion.
+
+  - id: R2-force-stop-server-process
+    trigger_words: ["kill process", "force stop", "terminate process"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Force-stopping a server process terminates the game
+      session and disconnects all players without saving
+      game state. The GameLift service may also mark the
+      instance as unhealthy.
+    correct_approach: >
+      Use the GameLift Server SDK's ProcessEnding() call for
+      graceful shutdown. Allow the game session to complete
+      or use game-level mechanisms to save state before
+      stopping the process.

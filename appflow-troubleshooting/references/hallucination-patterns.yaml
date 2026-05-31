@@ -1,0 +1,150 @@
+# =============================================================================
+# Amazon AppFlow "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-schema-sync
+    trigger_words: ["AppFlow", "schema sync", "auto-detect", "schema changes"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest AppFlow automatically detects and adapts to
+      source schema changes. It does not.
+    actual_behavior: >
+      AppFlow captures the source schema at flow creation or when
+      you explicitly refresh it. If the source schema changes
+      (e.g., a Salesforce field is renamed or removed), the flow
+      will fail with mapping errors. You must manually re-fetch
+      the source schema and update field mappings.
+    common_false_claim: "AppFlow automatically detects when Salesforce fields change and updates mappings."
+    correct_action: "Manually update the flow source schema and fix field mappings after source changes."
+
+  - id: P2-unlimited-data-transfer
+    trigger_words: ["data volume", "unlimited", "large dataset", "no limits"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest AppFlow can transfer unlimited data volumes
+      in a single execution. There are per-execution limits.
+    actual_behavior: >
+      AppFlow has per-flow execution limits that vary by connector.
+      Salesforce has API call limits per 24-hour period. Individual
+      flow executions have record count and data size limits.
+      Large transfers may need to be partitioned using filters
+      or incremental transfer patterns.
+    common_false_claim: "AppFlow can transfer millions of records in a single flow execution without limits."
+    correct_action: "Check connector-specific limits. Use incremental transfers and date filters for large datasets."
+
+  - id: P3-real-time-streaming
+    trigger_words: ["real-time", "streaming", "instant sync", "live data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest AppFlow provides real-time streaming from SaaS
+      sources. Most connectors use batch or event-triggered patterns.
+    actual_behavior: >
+      AppFlow supports three trigger types: on-demand, scheduled,
+      and event-driven. Event-driven flows (e.g., Salesforce
+      Platform Events) are near-real-time but not true streaming.
+      Most connectors only support on-demand and scheduled triggers.
+      True real-time streaming is not available.
+    common_false_claim: "Use AppFlow for real-time streaming from Salesforce to S3."
+    correct_action: "Use event-driven flows for near-real-time. For true streaming, consider Kinesis or EventBridge."
+
+  - id: P4-automatic-type-conversion
+    trigger_words: ["data types", "type conversion", "auto-convert", "type mapping"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest AppFlow automatically converts data types
+      between source and destination. It does not.
+    actual_behavior: >
+      AppFlow maps fields between source and destination but does
+      NOT automatically convert incompatible data types. A
+      Salesforce picklist mapped to a Redshift INTEGER will fail.
+      A datetime field mapped to a VARCHAR may lose formatting.
+      You must ensure type compatibility in your field mappings.
+    common_false_claim: "AppFlow automatically converts Salesforce data types to match Redshift column types."
+    correct_action: "Verify type compatibility between source and destination fields. Use tasks to transform data."
+
+  - id: P5-connector-profile-sharing
+    trigger_words: ["connector profile", "share", "cross-region", "reuse"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest connector profiles can be shared across regions
+      or accounts. They are region-specific.
+    actual_behavior: >
+      Connector profiles are region-specific resources. A Salesforce
+      connector profile in us-east-1 cannot be used by a flow in
+      eu-west-1. Each region requires its own connector profile
+      with separate OAuth authentication. Profiles cannot be
+      shared across AWS accounts.
+    common_false_claim: "Create one Salesforce connector profile and use it across all regions."
+    correct_action: "Create separate connector profiles in each region. Re-authenticate OAuth for each profile."
+
+  - id: P6-s3-flat-output
+    trigger_words: ["S3 output", "file path", "S3 destination", "output location"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest AppFlow writes to a simple S3 path. It uses
+      a structured prefix with flow name and execution ID.
+    actual_behavior: >
+      AppFlow writes to S3 using a structured prefix pattern:
+      <configured-prefix>/<flow-name>/<execution-id>/. Output
+      files are partitioned by execution. You cannot write to a
+      flat path or control the exact file name. File format
+      (JSON, CSV, Parquet) is configured at the flow level.
+    common_false_claim: "AppFlow writes output to s3://bucket/prefix/data.csv."
+    correct_action: "Expect structured output paths. Use S3 event notifications or Glue crawlers for downstream processing."
+
+  - id: P7-redshift-direct-write
+    trigger_words: ["Redshift", "direct write", "Redshift destination", "load data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest AppFlow writes directly to Redshift tables.
+      It uses intermediate S3 staging.
+    actual_behavior: >
+      AppFlow Redshift destination uses an intermediate S3 bucket
+      for staging. Data is first written to S3, then loaded into
+      Redshift using the COPY command. Both the S3 bucket
+      permissions and the Redshift IAM role for COPY must be
+      correctly configured. Failures can occur at either stage.
+    common_false_claim: "AppFlow directly inserts records into Redshift tables."
+    correct_action: "Configure both S3 staging bucket and Redshift COPY role. Check both for errors."
+
+  - id: P8-private-link-auto-setup
+    trigger_words: ["private connection", "PrivateLink", "VPC", "private"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest private connections are automatically configured.
+      They require manual VPC endpoint setup.
+    actual_behavior: >
+      Private connections require creating a VPC endpoint for the
+      SaaS provider, configuring security groups to allow traffic,
+      ensuring DNS resolution works, and creating the private
+      connection in AppFlow referencing the VPC endpoint. The
+      endpoint must be in AVAILABLE state and in the same region.
+    common_false_claim: "Enable private connection and AppFlow automatically sets up PrivateLink."
+    correct_action: "Manually create VPC endpoint, configure security groups, verify DNS, then create private connection."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-flow
+    false_fix: "Delete and recreate the flow to fix execution errors."
+    why_wrong: >
+      Deleting a flow removes execution history and configuration.
+      Most execution errors are caused by connector profile issues,
+      source schema changes, or destination permission problems
+      that persist after recreation.
+    correct_approach: >
+      Diagnose the root cause using describe-flow-execution-records.
+      Fix the underlying issue (refresh OAuth token, update schema,
+      fix permissions) without deleting the flow.
+
+  - id: R2-disable-encryption
+    false_fix: "Disable KMS encryption to fix flow execution errors."
+    why_wrong: >
+      KMS encryption errors are caused by missing key permissions,
+      not by encryption itself. Disabling encryption reduces
+      security posture and may violate compliance requirements.
+    correct_approach: >
+      Update the KMS key policy to grant appflow.amazonaws.com
+      permissions for GenerateDataKey and Decrypt. Verify the
+      flow's IAM role has kms:GenerateDataKey and kms:Decrypt.

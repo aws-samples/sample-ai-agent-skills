@@ -1,0 +1,121 @@
+# =============================================================================
+# AWS Glue DataBrew "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-glue-etl-confusion
+    trigger_words: ["DataBrew job", "Glue job", "ETL job", "DataBrew transform"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate DataBrew with Glue ETL because both are under AWS Glue.
+      They suggest Glue ETL APIs, PySpark scripts, or glue: IAM actions.
+    actual_behavior: >
+      DataBrew uses databrew: IAM actions, visual recipes, and its own API
+      (aws databrew). Glue ETL uses glue: IAM actions and PySpark/Scala.
+      They are separate services with different job types and configurations.
+    common_false_claim: "Use aws glue start-job-run to run your DataBrew job."
+    correct_action: "Use aws databrew start-job-run --name <job-name> for DataBrew jobs."
+
+  - id: P2-streaming-support
+    trigger_words: ["streaming data", "real-time", "Kinesis", "DataBrew stream"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DataBrew can process streaming data because Glue ETL
+      supports streaming. DataBrew is batch-only.
+    actual_behavior: >
+      DataBrew processes batch data from S3, JDBC, or Data Catalog only.
+      It does not support streaming sources. For streaming data preparation,
+      use Glue ETL streaming jobs or Kinesis Data Analytics.
+    common_false_claim: "Configure DataBrew to read from your Kinesis stream."
+    correct_action: "DataBrew is batch-only. Use Glue ETL streaming or Kinesis for real-time data."
+
+  - id: P3-recipe-is-script
+    trigger_words: ["recipe script", "DataBrew code", "recipe Python"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest writing Python/PySpark code for DataBrew recipes.
+      Recipes are JSON-defined step sequences, not scripts.
+    actual_behavior: >
+      DataBrew recipes are sequences of transformation steps defined in
+      JSON format. Each step has a type and parameters. Recipes are created
+      visually or via API, not as Python scripts. Custom transforms use
+      DataBrew's built-in functions, not arbitrary code.
+    common_false_claim: "Write a Python script for your DataBrew recipe."
+    correct_action: "Define recipe steps using DataBrew's transformation types (FILTER, RENAME, FORMAT, etc.)."
+
+  - id: P4-profile-transforms
+    trigger_words: ["profile job transform", "profile job clean", "profile output"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse profile jobs with recipe jobs. Profile jobs analyze
+      data; they don't transform it.
+    actual_behavior: >
+      Profile jobs compute statistics (null counts, distributions, patterns)
+      and evaluate data quality rules. They do NOT modify or transform data.
+      Recipe jobs apply transformations. Profile job output is a statistics
+      report, not transformed data.
+    common_false_claim: "Use a profile job to clean your data."
+    correct_action: "Use a recipe job to transform data. Use a profile job to analyze data quality."
+
+  - id: P5-dataset-stores-data
+    trigger_words: ["dataset storage", "data in dataset", "dataset contains"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs imply datasets store data. Datasets are metadata pointers.
+    actual_behavior: >
+      A DataBrew dataset is a configuration pointing to data in S3, a
+      database, or Data Catalog. It defines format, location, and connection
+      details. The actual data remains in the source location.
+    common_false_claim: "Upload data to the DataBrew dataset."
+    correct_action: "Upload data to S3, then create a dataset pointing to the S3 location."
+
+  - id: P6-output-per-project
+    trigger_words: ["project output", "project output format", "default output"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest output format is a project-level setting. It's per job.
+    actual_behavior: >
+      Output format, compression, S3 location, and overwrite behavior are
+      configured on each job independently. A project can have multiple
+      jobs with different output configurations.
+    common_false_claim: "Set the output format in the project settings."
+    correct_action: "Configure output format in the job definition using --output parameter."
+
+  - id: P7-iam-glue-actions
+    trigger_words: ["DataBrew IAM", "DataBrew permissions", "glue:StartJobRun"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs use glue: IAM action prefixes for DataBrew. DataBrew uses
+      databrew: prefix.
+    actual_behavior: >
+      DataBrew IAM actions use the databrew: prefix (e.g., databrew:StartJobRun,
+      databrew:CreateProject). Glue ETL uses glue: prefix. Using glue:
+      actions for DataBrew results in permission denied errors.
+    common_false_claim: "Add glue:StartJobRun permission for DataBrew."
+    correct_action: "Add databrew:StartJobRun permission. DataBrew uses databrew: IAM action prefix."
+
+  - id: P8-schedule-rate-syntax
+    trigger_words: ["DataBrew schedule", "schedule expression", "cron schedule"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs use incorrect cron syntax or Linux cron format instead of
+      AWS cron format for DataBrew schedules.
+    actual_behavior: >
+      DataBrew schedules use AWS cron format with 6 fields:
+      cron(minutes hours day-of-month month day-of-week year).
+      Day-of-week and day-of-month cannot both be specified — use ? for one.
+      This differs from Linux 5-field cron.
+    common_false_claim: "Use cron(0 12 * * 1) for weekly Monday runs."
+    correct_action: "Use cron(0 12 ? * MON *) — note the ? for day-of-month and 6 fields."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

@@ -1,0 +1,146 @@
+# =============================================================================
+# AWS Chatbot Advanced "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-guardrails-are-iam
+    trigger_words: ["guardrail", "channel policy", "restrict commands", "chatbot permissions"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate Chatbot channel guardrails with IAM policies.
+      They suggest modifying IAM policies to change guardrail behavior.
+    actual_behavior: >
+      Channel guardrails use IAM policy syntax but are evaluated
+      by Chatbot independently of IAM. They are configured per
+      channel configuration and restrict what commands can be run
+      from that specific channel. Modifying the channel IAM role
+      does not change guardrail restrictions. Guardrails and IAM
+      role permissions are both required — commands must pass both.
+    common_false_claim: "Modify the IAM policy to allow this command in the chat channel."
+    correct_action: "Update the channel guardrail policy in the Chatbot configuration. Also verify the IAM role has the required permissions."
+
+  - id: P2-teams-same-as-slack
+    trigger_words: ["Teams", "Microsoft Teams", "Teams integration", "Teams setup"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs apply Slack integration steps to Microsoft Teams.
+      The integration models are fundamentally different.
+    actual_behavior: >
+      Microsoft Teams integration requires Azure AD app registration,
+      tenant-level admin consent, and Chatbot workspace configuration
+      before channel setup. Slack uses a simpler OAuth flow managed
+      by Chatbot. Teams requires workspace → channel configuration
+      hierarchy. Slack does not have this workspace concept.
+    common_false_claim: "Set up Teams the same way as Slack — just add the Chatbot app to your channel."
+    correct_action: "Follow Teams-specific setup: Azure AD app → tenant consent → Chatbot workspace → channel configuration."
+
+  - id: P3-custom-actions-auto-available
+    trigger_words: ["custom action", "run action", "chat command", "action button"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest custom actions are automatically available
+      once the IAM role has permissions. Actions must be explicitly
+      configured.
+    actual_behavior: >
+      Custom actions require explicit definition in the channel
+      configuration. Having IAM permissions alone is not sufficient.
+      The action must be defined with its command template, and
+      the channel guardrails must allow it. Both configuration
+      and IAM permissions are required.
+    common_false_claim: "Just add the IAM permission and the action will appear in chat."
+    correct_action: "Define the custom action in the channel configuration. Ensure guardrails allow it. Verify IAM role permissions."
+
+  - id: P4-all-events-notified
+    trigger_words: ["notification", "event notification", "alert", "all events"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Chatbot notifies on all AWS events by default.
+      Only events matching configured SNS topics and patterns are delivered.
+    actual_behavior: >
+      Chatbot only delivers notifications for events published to
+      SNS topics that are configured in the channel configuration.
+      Events must match the notification preferences and any event
+      pattern filters. Unmatched events are silently dropped with
+      no error indication.
+    common_false_claim: "Chatbot will notify you about all AWS events in your account."
+    correct_action: "Configure SNS topics, set notification preferences, and verify event patterns match the desired events."
+
+  - id: P5-run-command-any-instance
+    trigger_words: ["run command", "SSM command", "execute command", "instance command"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest run command from chat works on any EC2 instance.
+      Instances must have SSM agent and the channel role needs permissions.
+    actual_behavior: >
+      Running SSM commands from chat requires: the channel IAM role
+      has ssm:SendCommand permission, target instances have SSM agent
+      installed and running, instances are registered with SSM, and
+      the channel guardrails allow SSM commands. Missing any of these
+      causes command failure.
+    common_false_claim: "Just type the command in chat and it will run on your instance."
+    correct_action: "Verify SSM agent on instances, channel role has ssm:SendCommand, and guardrails allow SSM operations."
+
+  - id: P6-lambda-unlimited-response
+    trigger_words: ["Lambda", "invoke Lambda", "Lambda response", "function output"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Lambda responses are fully displayed in chat.
+      Responses are truncated and must be formatted for the platform.
+    actual_behavior: >
+      Lambda function responses invoked from chat have size limits
+      and are truncated if too large. The response must be formatted
+      appropriately for the target platform (Slack Block Kit or
+      Teams Adaptive Cards). Raw JSON or large text responses
+      render poorly or are cut off.
+    common_false_claim: "The Lambda function can return any amount of data and it will display in chat."
+    correct_action: "Format Lambda responses for the target platform. Keep responses concise. Use S3 presigned URLs for large outputs."
+
+  - id: P7-cross-account-auto-subscribe
+    trigger_words: ["cross-account", "other account", "multi-account notification"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cross-account notifications work by simply
+      adding the topic ARN. The SNS topic needs a resource policy.
+    actual_behavior: >
+      Cross-account notifications require the SNS topic in the
+      source account to have a resource policy allowing the
+      Chatbot service in the destination account to subscribe.
+      Simply adding the cross-account topic ARN to the Chatbot
+      configuration will fail without the topic policy update.
+    common_false_claim: "Add the cross-account SNS topic ARN to your Chatbot configuration."
+    correct_action: "Update the SNS topic resource policy in the source account to allow cross-account subscription. Then configure the topic in Chatbot."
+
+  - id: P8-audit-logs-messages
+    trigger_words: ["audit", "logging", "chat history", "message log"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CloudTrail captures chat message content.
+      It only captures API calls and command executions.
+    actual_behavior: >
+      CloudTrail logs Chatbot API calls (configuration changes,
+      command executions) but does NOT log chat message content,
+      conversational context, or notification delivery details.
+      For chat message history, use the native Slack or Teams
+      audit capabilities.
+    common_false_claim: "Check CloudTrail for the chat message history."
+    correct_action: "Use CloudTrail for API/command audit. Use Slack/Teams native audit for message history."
+
+remediation_hallucinations:
+
+  - id: R1-reinstall-chatbot-app
+    false_fix: "Reinstall the Chatbot app in Slack/Teams to fix notification issues."
+    why_wrong: >
+      Reinstalling the app resets OAuth tokens and may break
+      existing channel configurations. Notification issues are
+      usually caused by SNS topic configuration, guardrails,
+      or event pattern mismatches.
+    correct_fix: "Check SNS topic subscriptions, channel notification preferences, and event patterns. Reinstall only as a last resort after backing up configurations."
+
+  - id: R2-remove-all-guardrails
+    false_fix: "Remove all guardrails to allow commands to work from chat."
+    why_wrong: >
+      Removing guardrails eliminates security controls and allows
+      any command to be run from chat. This violates least-privilege
+      and may expose sensitive operations to unauthorized users.
+    correct_fix: "Update guardrails to allow specific required commands while maintaining security restrictions. Follow least-privilege for chat operations."

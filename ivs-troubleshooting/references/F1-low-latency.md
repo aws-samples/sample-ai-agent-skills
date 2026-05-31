@@ -1,0 +1,95 @@
+# F1 — IVS Low-Latency Optimization
+
+## Symptoms
+- Latency higher than expected (>5 seconds)
+- Latency spikes during playback
+- Low-latency mode not engaging
+
+## Triage Commands
+
+```bash
+aws ivs get-channel --arn <channel-arn> | jq '.channel.latencyMode'
+aws ivs get-stream-session --channel-arn <channel-arn> --stream-id <stream-id>
+aws cloudwatch get-metric-statistics --namespace AWS/IVS --metric-name LiveLatency --dimensions Name=Channel,Value=<channel-arn> --start-time <start> --end-time <end> --period 60 --statistics Average
+```
+
+## Latency Factors
+
+| Factor | Impact | Optimization |
+|--------|--------|-------------|
+| Channel latencyMode | HIGH: sets LOW mode | Set to LOW |
+| Encoder keyframe | 2s recommended | Reduce to 1-2s |
+| Player SDK | Required for <3s | Use IVS Player SDK |
+| Network | Variable | CDN handles this |
+| Encoder buffer | Adds latency | Minimize buffer |
+
+## Resolution
+
+- Set channel `latencyMode` to `LOW`
+- Use IVS Player SDK with `setLiveLowLatencyEnabled(true)`
+- Configure encoder: keyframe interval 2s, low-latency mode if available
+- Minimize encoder output buffer
+- For sub-second: IVS Player SDK uses WebRTC when conditions allow
+- Trade-off: lower latency may reduce quality on poor connections
+
+## Safety Ratings
+```
+safety_ratings:
+  - "Triage commands (describe/list/get): GREEN — read-only"
+  - "Configuration changes: YELLOW — recoverable"
+  - "Delete/terminate operations: RED — irreversible"
+```
+
+## Escalation Conditions
+- "Resource serves production workload"
+- "Fix requires deleting or recreating resources"
+- "Fix involves security or encryption changes"
+- "Blast radius affects multiple dependent services"
+
+## Data Sensitivity
+- HIGH: credentials, PII, security configurations
+- MEDIUM: resource configurations, metrics
+- LOW: status information, error messages
+
+## Prohibited Actions
+- Never delete channels during active live streams
+- Never reset stream keys without coordinating with the streaming source
+- Never modify recording configurations during active recording sessions
+- Never delete chat rooms with active participants
+- Never change stage configurations during live real-time sessions
+
+## Phase 3 — Rollback
+- "Document current state before any changes"
+- "If fix worsens the issue, revert to documented state"
+- Restore previous channel configuration if streaming quality degrades
+- Regenerate stream keys and update encoder settings if ingest breaks
+- Revert recording configuration changes if auto-recording stops working
+
+## Escalation Conditions
+
+escalation_conditions:
+  - "Remediation requires modifying IAM policies in a production account"
+  - "Remediation requires disabling a security control even temporarily"
+  - "Root cause cannot be identified after 3 hypothesis pivots"
+  - "Blast radius affects more than one account or region"
+  - "Issue involves potential data loss or exposure"
+
+## Data Sensitivity
+
+data_sensitivity:
+  - command: "describe-* commands"
+    sensitivity: MEDIUM
+    contains: "Service configuration and resource details"
+  - command: "get-* commands"
+    sensitivity: MEDIUM
+    contains: "Service configuration and resource details"
+  - command: "list-* commands"
+    sensitivity: MEDIUM
+    contains: "Service configuration and resource details"
+
+## Prohibited Actions
+
+prohibited_actions:
+  - "NEVER suggest overly broad IAM permissions as a fix"
+  - "NEVER suggest disabling security controls for troubleshooting"
+  - "NEVER suggest deleting resources without confirmation"

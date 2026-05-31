@@ -1,0 +1,151 @@
+# =============================================================================
+# EKS Anywhere "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-eks-api-confusion
+    trigger_words: ["EKS Anywhere", "eks describe-cluster", "eks update-cluster", "managed node group"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate EKS Anywhere with Amazon EKS and suggest
+      EKS-specific APIs and managed node groups.
+    actual_behavior: >
+      EKS Anywhere clusters are NOT managed by the EKS service.
+      They run on-premises using Cluster API. There are no managed
+      node groups, Fargate profiles, or EKS add-ons. Use eksctl-anywhere
+      CLI and kubectl to manage clusters. AWS APIs like
+      eks:DescribeCluster will not find EKS Anywhere clusters.
+    common_false_claim: "Run aws eks describe-cluster to check your EKS Anywhere cluster status."
+    correct_action: "Use kubectl get clusters.anywhere.eks.amazonaws.com and eksctl anywhere commands."
+
+  - id: P2-cni-replacement
+    trigger_words: ["replace Cilium", "install Calico", "change CNI", "custom CNI"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest replacing Cilium with other CNIs as a
+      troubleshooting step. Cilium is the only supported CNI.
+    actual_behavior: >
+      EKS Anywhere exclusively supports Cilium as the CNI plugin.
+      Replacing Cilium with Calico, Flannel, or any other CNI is
+      NOT supported and will break cluster networking. Cilium
+      configuration can be customized through the cluster spec
+      but the CNI itself cannot be swapped.
+    common_false_claim: "If Cilium is causing issues, replace it with Calico for better compatibility."
+    correct_action: "Troubleshoot Cilium directly. Check cilium-agent pods, cilium status, and Cilium configuration in cluster spec."
+
+  - id: P3-skip-version-upgrade
+    trigger_words: ["upgrade", "skip version", "jump to latest", "upgrade directly"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest upgrading directly to the latest version,
+      skipping intermediate versions.
+    actual_behavior: >
+      EKS Anywhere requires sequential Kubernetes minor version
+      upgrades. You cannot skip versions (e.g., 1.27 to 1.29
+      directly). Each minor version upgrade must complete before
+      the next. The eksctl-anywhere CLI enforces this constraint
+      and will reject skip-version upgrades.
+    common_false_claim: "Upgrade directly from 1.27 to 1.30 to get the latest features."
+    correct_action: "Upgrade sequentially: 1.27→1.28→1.29→1.30. Verify each upgrade completes before proceeding."
+
+  - id: P4-management-cluster-deletion
+    trigger_words: ["delete management cluster", "remove management", "clean up management"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest deleting the management cluster without
+      understanding it manages all workload clusters.
+    actual_behavior: >
+      The management cluster runs CAPI controllers that manage
+      all workload clusters. Deleting the management cluster
+      orphans all workload clusters — they continue running but
+      cannot be upgraded, scaled, or managed. Recovery requires
+      re-creating the management cluster and re-importing workload
+      cluster state.
+    common_false_claim: "Delete the management cluster to clean up resources."
+    correct_action: "Delete workload clusters first, then the management cluster. Or move management to a workload cluster before deletion."
+
+  - id: P5-auto-scaling
+    trigger_words: ["autoscaler", "auto-scale", "HPA", "cluster autoscaler"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Kubernetes Cluster Autoscaler works with
+      EKS Anywhere like it does with cloud providers.
+    actual_behavior: >
+      EKS Anywhere supports autoscaling through the Cluster
+      Autoscaler with the CAPI provider, not the AWS cloud
+      provider. Configuration is different from EKS. For bare
+      metal, autoscaling is limited by physical hardware
+      availability. HPA works normally for pod-level scaling.
+    common_false_claim: "Install Cluster Autoscaler with the AWS provider for EKS Anywhere."
+    correct_action: "Use Cluster Autoscaler with the Cluster API provider. For bare metal, ensure spare hardware is available."
+
+  - id: P6-ecr-token-permanent
+    trigger_words: ["ECR token", "package registry", "curated packages auth"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest ECR authentication tokens are permanent
+      or that packages work without AWS credentials.
+    actual_behavior: >
+      ECR authentication tokens expire every 12 hours. Curated
+      packages require periodic token refresh. If tokens expire,
+      package installations and updates fail with authentication
+      errors. A CronJob or automation must refresh tokens regularly.
+    common_false_claim: "Authenticate to ECR once and packages will always work."
+    correct_action: "Set up automated ECR token refresh. Check token expiry when package operations fail."
+
+  - id: P7-vsphere-template-reuse
+    trigger_words: ["vSphere template", "VM template", "OVA", "template version"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest any Ubuntu/Bottlerocket OVA works as a
+      vSphere template for EKS Anywhere.
+    actual_behavior: >
+      EKS Anywhere requires specific OVA templates built for
+      each Kubernetes version and OS combination. Templates are
+      published by AWS and must match the target EKS Anywhere
+      and Kubernetes version. Using generic OS images or
+      mismatched template versions causes provisioning failures.
+    common_false_claim: "Use any Ubuntu 22.04 OVA as the vSphere template."
+    correct_action: "Download the correct OVA from the EKS Anywhere releases page matching your target Kubernetes version."
+
+  - id: P8-kubectl-direct-changes
+    trigger_words: ["kubectl apply", "kubectl edit", "manual change", "direct edit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using kubectl to directly modify cluster
+      resources when GitOps is enabled.
+    actual_behavior: >
+      When Flux GitOps is enabled, direct kubectl changes to
+      managed resources are automatically reverted by Flux
+      reconciliation. Changes must be committed to the Git
+      repository. Direct kubectl changes only persist for
+      resources NOT managed by Flux.
+    common_false_claim: "Use kubectl edit to change the cluster configuration."
+    correct_action: "Commit changes to the GitOps repository. Flux will reconcile automatically."
+
+remediation_hallucinations:
+
+  - id: R1-eksctl-anywhere-delete-force
+    false_fix: "Use eksctl anywhere delete cluster --force to fix a stuck cluster."
+    why_wrong: >
+      Force deletion bypasses cleanup procedures and can leave
+      orphaned infrastructure resources (VMs, load balancers,
+      DHCP leases) that must be manually cleaned up.
+    correct_approach: >
+      Investigate why the cluster is stuck first. Check CAPI
+      controller logs and machine status. Use force deletion
+      only as a last resort and plan for manual infrastructure
+      cleanup afterward.
+
+  - id: R2-restart-all-pods
+    false_fix: "Delete all pods in eksa-system namespace to fix controller issues."
+    why_wrong: >
+      Deleting all CAPI and EKS Anywhere controller pods
+      simultaneously can cause race conditions during restart
+      and may lose in-progress operations like upgrades.
+    correct_approach: >
+      Restart specific problematic controllers one at a time.
+      Check controller logs first to identify the failing
+      component. Use kubectl rollout restart deployment for
+      controlled restarts.

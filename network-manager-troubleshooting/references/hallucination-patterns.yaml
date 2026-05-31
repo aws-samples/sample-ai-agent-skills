@@ -1,0 +1,150 @@
+# =============================================================================
+# AWS Network Manager / Cloud WAN "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-policy-auto-applies
+    trigger_words: ["core network policy", "update policy", "policy change"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest that creating or updating a core network policy
+      automatically activates it. Policy changes require explicit
+      execution of the change set.
+    actual_behavior: >
+      Core network policy changes create a new policy version with
+      a change set. The change set must be explicitly executed via
+      execute-core-network-change-set. Until executed, the previous
+      LIVE policy version remains active. There is no auto-apply.
+    common_false_claim: "Update the core network policy and the changes will take effect immediately."
+    correct_action: "Create the policy version, review the change set, then execute it explicitly."
+
+  - id: P2-attachment-instant-available
+    trigger_words: ["create attachment", "attach VPC", "attachment available"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest attachments become available instantly after
+      creation. Attachments go through a lifecycle that takes minutes.
+    actual_behavior: >
+      Attachments follow a lifecycle: CREATING → AVAILABLE. This
+      transition takes several minutes. During CREATING state, the
+      attachment cannot be used for routing. Additionally, the core
+      network policy's attachment-policies section may REJECT the
+      attachment if it does not match any accept rule.
+    common_false_claim: "Create the VPC attachment and it will be immediately available for routing."
+    correct_action: "Create the attachment, wait for AVAILABLE state, then verify it was accepted by the policy."
+
+  - id: P3-segments-auto-connected
+    trigger_words: ["segments", "cross-segment", "segment routing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest segments in a core network can communicate by
+      default. Segments are isolated unless explicitly connected.
+    actual_behavior: >
+      Core network segments provide network isolation by default.
+      Traffic between segments is blocked unless the core network
+      policy includes segment-actions with mode share or
+      route-between. Each segment has its own route table.
+    common_false_claim: "Resources in different segments can communicate through the core network."
+    correct_action: "Add segment-actions (share or route-between) in the core network policy to enable cross-segment traffic."
+
+  - id: P4-tgw-auto-registered
+    trigger_words: ["transit gateway", "TGW", "register transit gateway"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest transit gateways are automatically registered
+      when a global network is created. Registration is manual.
+    actual_behavior: >
+      Transit gateways must be explicitly registered in the global
+      network using register-transit-gateway. Registration is
+      per-region. A TGW must be registered before it can be used
+      as a core network attachment or for route analysis.
+    common_false_claim: "The transit gateway is automatically part of the global network."
+    correct_action: "Explicitly register the TGW: aws networkmanager register-transit-gateway --global-network-id <id> --transit-gateway-arn <arn>."
+
+  - id: P5-route-analysis-real-time
+    trigger_words: ["route analysis", "network routes", "routing table"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest route analysis shows real-time routing state.
+      It reflects the executed policy, not live traffic paths.
+    actual_behavior: >
+      Route analysis via get-network-routes shows routes based on
+      the currently EXECUTED core network policy version. It does
+      not reflect pending policy changes, real-time traffic flows,
+      or transient routing states. Route propagation after policy
+      execution can take several minutes.
+    common_false_claim: "Use route analysis to see real-time traffic paths in your network."
+    correct_action: "Use route analysis to verify expected routes after policy execution. Use VPC Flow Logs for actual traffic analysis."
+
+  - id: P6-peering-one-sided
+    trigger_words: ["peering", "core network peering", "connect networks"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a peering from one side completes the
+      connection. Peering requires acceptance from both sides.
+    actual_behavior: >
+      Core network peering requires both sides to accept. Creating
+      a peering sends a request to the remote core network. The
+      remote owner must accept via accept-attachment. Cross-account
+      peering also requires AWS RAM resource sharing. A peering
+      stuck in CREATING usually means the remote side has not accepted.
+    common_false_claim: "Create the peering connection and traffic will flow between core networks."
+    correct_action: "Create peering, share via RAM if cross-account, then have the remote owner accept the peering request."
+
+  - id: P7-vpn-attachment-equals-tunnel-up
+    trigger_words: ["VPN attachment", "VPN tunnel", "site-to-site VPN"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate VPN attachment state with tunnel status.
+      An AVAILABLE attachment does not mean tunnels are UP.
+    actual_behavior: >
+      A VPN attachment in AVAILABLE state means the attachment
+      resource is provisioned in the core network. The actual
+      IPsec tunnels must be configured on the customer gateway
+      and may be DOWN even when the attachment is AVAILABLE.
+      Check tunnel status via aws ec2 describe-vpn-connections.
+    common_false_claim: "The VPN attachment is available so the VPN tunnel is up."
+    correct_action: "Verify attachment state AND tunnel status separately. Use describe-vpn-connections for tunnel health."
+
+  - id: P8-global-network-creates-infra
+    trigger_words: ["global network", "create global network", "network infrastructure"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a global network provisions physical
+      network infrastructure. It is a logical container only.
+    actual_behavior: >
+      A global network is a logical management container. It does
+      not create any physical infrastructure, VPCs, transit gateways,
+      or network connections. It groups existing resources for
+      centralized management, monitoring, and policy application.
+    common_false_claim: "Create a global network to set up your AWS network infrastructure."
+    correct_action: "Create a global network as a management container, then register existing TGWs and create core networks within it."
+
+remediation_hallucinations:
+
+  - id: R1-delete-and-recreate-core-network
+    trigger_words: ["delete core network", "recreate", "start over"]
+    hallucination_risk: CRITICAL
+    why_dangerous: >
+      Deleting a core network destroys all attachments, routes,
+      and peering connections. This causes complete network outage
+      for all connected VPCs and VPNs.
+    correct_approach: >
+      Create a new policy version to fix issues. Use
+      get-core-network-change-set to preview changes before
+      executing. Only delete a core network as an absolute
+      last resort with full outage approval.
+
+  - id: R2-force-execute-policy
+    trigger_words: ["force execute", "skip validation", "override policy"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      There is no force-execute option for core network policies.
+      Policy validation errors must be fixed in the policy document.
+      Suggesting a bypass that does not exist wastes time.
+    correct_approach: >
+      Fix policy validation errors by reviewing the error messages
+      from put-core-network-policy. Common issues include invalid
+      edge locations, duplicate segment names, and malformed
+      attachment-policies conditions.

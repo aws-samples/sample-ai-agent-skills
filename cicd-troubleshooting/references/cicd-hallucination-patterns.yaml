@@ -1,0 +1,155 @@
+# =============================================================================
+# AWS CI/CD "Looks Real but Wrong" Hallucination Patterns
+# Patterns that LLMs commonly misinterpret about CI/CD behavior
+# =============================================================================
+
+patterns:
+
+  - id: P1-parallel-stages
+    trigger_words: ["parallel stages", "concurrent stages", "stages simultaneously", "stage order"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse stage-level and action-level parallelism. They may
+      suggest running stages in parallel for faster pipelines.
+      CodePipeline stages are strictly sequential — only actions
+      within a single stage can run in parallel.
+    actual_behavior: >
+      CodePipeline stages execute sequentially: Stage 1 must complete
+      before Stage 2 begins. Within a stage, actions with the same
+      runOrder value execute in parallel. Actions with different
+      runOrder values execute sequentially within the stage.
+    common_false_claim: >
+      "Configure the Build and Test stages to run in parallel for faster execution."
+    correct_action: "Put parallel actions in the same stage with the same runOrder. Stages always run sequentially."
+
+  - id: P2-cross-account-default-encryption
+    trigger_words: ["cross-account", "artifact encryption", "KMS", "aws/s3 key"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may not distinguish between AWS-managed and customer-managed
+      KMS keys. They suggest cross-account pipelines work with default
+      encryption, but the aws/s3 managed key cannot be shared.
+    actual_behavior: >
+      The default aws/s3 AWS-managed key is account-specific and cannot
+      be shared across accounts. Cross-account pipelines MUST use a
+      customer-managed KMS key. The key policy must grant kms:Decrypt
+      and kms:DescribeKey to the target account's IAM role.
+    common_false_claim: >
+      "Cross-account pipelines work out of the box with default S3 encryption."
+    correct_action: "Create a customer-managed KMS key, update the key policy for cross-account access, and configure the pipeline to use it."
+
+  - id: P3-codebuild-cache-persistent
+    trigger_words: ["CodeBuild cache", "local cache", "Docker layer cache", "build cache"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume CodeBuild local caches work like CI/CD caches in
+      other platforms (GitHub Actions, GitLab CI) where caches are
+      reliably stored and restored. CodeBuild local caches are
+      per-build-host and not guaranteed.
+    actual_behavior: >
+      CodeBuild local caches (SOURCE_CACHE, DOCKER_LAYER_CACHE,
+      CUSTOM_CACHE) are stored on the build host. Subsequent builds
+      may run on different hosts, resulting in cache misses. Docker
+      layer cache also requires privileged mode. For reliable caching,
+      use S3 cache type instead of local cache.
+    common_false_claim: >
+      "Enable local caching to guarantee faster builds every time."
+    correct_action: "Use S3 cache for reliable cross-build caching. Local cache provides best-effort performance improvement only."
+
+  - id: P4-deployment-rollback-behavior
+    trigger_words: ["rollback", "blue/green rollback", "in-place rollback", "automatic rollback"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate in-place and blue/green rollback mechanisms.
+      In-place rollback redeploys the previous revision. Blue/green
+      rollback reroutes traffic to the original target group.
+    actual_behavior: >
+      In-place rollback: CodeDeploy creates a new deployment that
+      redeploys the last known good revision to each instance.
+      Blue/green rollback: CodeDeploy reroutes traffic back to the
+      original target group/instances without redeploying. Blue/green
+      rollback is faster because no code is redeployed.
+    common_false_claim: >
+      "Rollback always redeploys the previous version to all instances."
+    correct_action: "Check deployment type first. Blue/green rollback reroutes traffic; in-place rollback redeploys the previous revision."
+
+  - id: P5-codedeploy-agent-optional
+    trigger_words: ["CodeDeploy agent", "agent install", "EC2 deployment", "on-premises"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest CodeDeploy works on EC2 without the agent,
+      similar to how ECS or Lambda deployments work. The agent is
+      required for EC2/On-Premises deployment type.
+    actual_behavior: >
+      The CodeDeploy agent must be installed and running on every EC2
+      instance targeted by an EC2/On-Premises deployment. The agent
+      polls CodeDeploy for deployment instructions. Without the agent,
+      deployments hang indefinitely at the instance level with no
+      error message. ECS and Lambda deployments do NOT need the agent.
+    common_false_claim: >
+      "CodeDeploy pushes deployment instructions directly to EC2 instances."
+    correct_action: "Verify agent is running: sudo service codedeploy-agent status. Install if missing via SSM or user data."
+
+  - id: P6-postbuild-skipped-on-failure
+    trigger_words: ["buildspec", "post_build", "build phase", "phase order"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume all phases after a failure are skipped, including
+      post_build. In reality, post_build always runs regardless of
+      whether previous phases succeeded or failed.
+    actual_behavior: >
+      If install, pre_build, or build phase fails, subsequent phases
+      are skipped EXCEPT post_build. The post_build phase always
+      executes. The environment variable CODEBUILD_BUILD_SUCCEEDING
+      is set to "0" if any previous phase failed, allowing conditional
+      logic in post_build scripts.
+    common_false_claim: >
+      "If the build phase fails, post_build is skipped entirely."
+    correct_action: "Use CODEBUILD_BUILD_SUCCEEDING in post_build to conditionally run cleanup vs success logic."
+
+  - id: P7-codebuild-vpc-internet
+    trigger_words: ["CodeBuild VPC", "VPC build", "private subnet build", "NAT gateway"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest placing CodeBuild in a VPC for security without
+      mentioning the internet access requirement. Without NAT or VPC
+      endpoints, builds cannot reach AWS services.
+    actual_behavior: >
+      CodeBuild in a VPC uses the VPC's networking. Private subnets
+      need a NAT gateway or VPC endpoints for S3 (artifacts), ECR
+      (Docker images), CloudWatch Logs (build logs), and STS
+      (credentials). Without these, builds fail at DOWNLOAD_SOURCE
+      or during Docker image pulls with timeout errors.
+    common_false_claim: >
+      "Put CodeBuild in a private subnet for better security — it handles AWS service access automatically."
+    correct_action: "Ensure private subnets have NAT gateway or create VPC endpoints for S3, ECR, CloudWatch Logs, and STS."
+
+  - id: P8-polling-vs-webhooks
+    trigger_words: ["source polling", "webhook", "EventBridge", "change detection"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may treat polling and webhooks as equivalent mechanisms
+      with the same behavior. They have different latency, cost,
+      and reliability characteristics.
+    actual_behavior: >
+      Polling: checks source every ~1 minute, adds up to 1 minute
+      latency, generates API calls (cost). Webhooks: near-instant
+      detection via HTTP callback, no polling cost. EventBridge:
+      recommended for CodeCommit/S3, event-driven, near-instant.
+      CodeStar Connections: manages GitHub/Bitbucket webhooks
+      automatically. Polling is legacy and not recommended for new
+      pipelines.
+    common_false_claim: >
+      "Polling and webhooks provide the same pipeline trigger speed."
+    correct_action: "Use EventBridge for CodeCommit/S3 sources. Use CodeStar Connections for GitHub/Bitbucket. Avoid polling."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

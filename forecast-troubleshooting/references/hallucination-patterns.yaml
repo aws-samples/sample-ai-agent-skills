@@ -1,0 +1,115 @@
+# =============================================================================
+# Amazon Forecast "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-instant-predictor
+    trigger_words: ["train predictor", "create predictor", "forecast model"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest predictors are ready immediately. Training takes hours.
+    actual_behavior: >
+      CreateAutoPredictor triggers training taking 1-6+ hours. Must
+      reach ACTIVE status before creating forecasts.
+    common_false_claim: "Create a predictor and query forecasts immediately."
+    correct_action: "Create predictor. Wait for ACTIVE (hours). Create forecast. Wait for ACTIVE. Then query."
+
+  - id: P2-auto-forecast
+    trigger_words: ["forecast", "generate forecast", "get predictions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest forecasts are automatic after training.
+      Forecast generation is a separate step.
+    actual_behavior: >
+      After predictor is ACTIVE, must explicitly CreateForecast.
+      Forecast generation takes additional time. Query with
+      QueryForecast after forecast is ACTIVE.
+    common_false_claim: "Query the predictor for forecast values."
+    correct_action: "Create forecast from predictor. Wait for ACTIVE. Then query forecast."
+
+  - id: P3-legacy-predictor
+    trigger_words: ["CreatePredictor", "predictor API", "algorithm selection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs reference legacy CreatePredictor API.
+      AutoPredictor is recommended.
+    actual_behavior: >
+      Legacy CreatePredictor is deprecated. Use CreateAutoPredictor
+      which automatically selects best algorithm and hyperparameters.
+    common_false_claim: "Use CreatePredictor with DeepAR+ algorithm."
+    correct_action: "Use CreateAutoPredictor. It automatically selects the best approach."
+
+  - id: P4-any-data-format
+    trigger_words: ["import data", "dataset", "CSV format"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't specify required CSV columns.
+    actual_behavior: >
+      Target time series requires item_id, timestamp, target_value.
+      Timestamp format must be consistent. Column names must match
+      schema definition.
+    common_false_claim: "Import any CSV with time series data."
+    correct_action: "Use required columns. Match schema. Use consistent timestamp format."
+
+  - id: P5-whatif-standalone
+    trigger_words: ["what-if", "scenario analysis", "what if forecast"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest what-if analysis works standalone.
+      Requires existing forecast.
+    actual_behavior: >
+      What-if analysis requires an existing forecast as baseline.
+      Modifies input data to model scenarios. Creates what-if
+      forecast for comparison.
+    common_false_claim: "Create a what-if analysis with your data."
+    correct_action: "Create predictor → forecast → what-if analysis → what-if forecast."
+
+  - id: P6-explainability-retroactive
+    trigger_words: ["explainability", "feature importance", "explain forecast"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest adding explainability to existing predictors.
+      Must be enabled at creation.
+    actual_behavior: >
+      Explainability must be enabled when creating the predictor.
+      Cannot be added retroactively. Create new predictor with
+      explainability enabled.
+    common_false_claim: "Enable explainability on your existing predictor."
+    correct_action: "Create new predictor with EnableExplainability=true."
+
+  - id: P7-related-historical-only
+    trigger_words: ["related time series", "additional features", "covariates"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention related data must extend into forecast horizon.
+    actual_behavior: >
+      Related time series must include values for the forecast
+      horizon period. Historical-only related data is insufficient
+      for future predictions.
+    common_false_claim: "Add historical related data to improve forecasts."
+    correct_action: "Include related data extending into forecast horizon (e.g., planned promotions)."
+
+  - id: P8-single-quantile
+    trigger_words: ["forecast value", "prediction", "forecast result"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest forecasts return single values.
+      Forecasts return quantile predictions.
+    actual_behavior: >
+      Forecasts generate quantile predictions (P10, P50, P90).
+      P50 is median. P10/P90 provide prediction intervals.
+      Custom quantiles can be specified.
+    common_false_claim: "The forecast returns a single predicted value."
+    correct_action: "Use P50 for point forecast. Use P10/P90 for prediction intervals."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

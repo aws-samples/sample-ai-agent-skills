@@ -1,0 +1,129 @@
+# =============================================================================
+# SES "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-smtp-is-iam-credentials
+    trigger_words: ["SMTP credentials", "SMTP password", "SMTP authentication"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using IAM access key and secret key directly for SMTP
+      authentication. SES SMTP credentials use a derived password.
+    actual_behavior: >
+      SES SMTP passwords are generated from IAM access keys using a
+      specific HMAC-based algorithm. The IAM secret access key cannot
+      be used directly as the SMTP password. Credentials must be
+      generated via the SES console or the documented algorithm.
+    common_false_claim: "Use your IAM access key ID as SMTP username and secret key as SMTP password."
+    correct_action: "Generate SMTP credentials via SES console or use the documented signing algorithm to derive the SMTP password from an IAM secret key."
+
+  - id: P2-sandbox-is-broken
+    trigger_words: ["cannot send email", "email rejected", "sandbox mode"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs diagnose sandbox restrictions as service failures. Sandbox
+      mode is the default state for new accounts.
+    actual_behavior: >
+      New SES accounts are in sandbox mode. In sandbox, sending is
+      limited to verified email addresses only, with a 200 email/day
+      quota and 1 email/second rate. This is expected behavior.
+      Production access requires an explicit request to AWS.
+    common_false_claim: "SES is rejecting your emails. There may be a service issue."
+    correct_action: "Check account status with get-account. If in sandbox, request production access or verify recipient addresses."
+
+  - id: P3-partial-dkim-works
+    trigger_words: ["DKIM setup", "DKIM verification", "DKIM CNAME"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest DKIM works with partial CNAME record setup. All
+      three records are required.
+    actual_behavior: >
+      SES Easy DKIM generates three CNAME records. All three must be
+      present in DNS for DKIM verification to succeed. Missing even
+      one record causes DKIM verification to fail entirely. There is
+      no partial DKIM signing.
+    common_false_claim: "Add the first DKIM CNAME record to get started with DKIM signing."
+    correct_action: "Add all three CNAME records to DNS. Verify with: aws sesv2 get-email-identity --email-identity <domain>"
+
+  - id: P4-spf-auto-aligned
+    trigger_words: ["SPF record", "SPF alignment", "DMARC alignment"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim SPF automatically aligns with the sender domain.
+      Default SES uses amazonses.com as MAIL FROM.
+    actual_behavior: >
+      By default, SES uses a subdomain of amazonses.com as the MAIL
+      FROM domain. SPF passes for amazonses.com, not the sender's
+      domain. For DMARC SPF alignment, a custom MAIL FROM domain
+      must be configured with its own SPF record.
+    common_false_claim: "SPF is automatically configured when you verify your domain."
+    correct_action: "Configure custom MAIL FROM domain and add SPF record: v=spf1 include:amazonses.com ~all"
+
+  - id: P5-all-receipt-rules-execute
+    trigger_words: ["receipt rule", "incoming email", "email receiving"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest multiple receipt rules will all process the same
+      email. Only the first matching rule executes.
+    actual_behavior: >
+      Receipt rules are evaluated in order within a rule set. The
+      first rule whose recipient condition matches the incoming email
+      processes it. No subsequent rules are evaluated for that
+      recipient. Rule ordering is critical.
+    common_false_claim: "Create separate receipt rules for S3 storage and Lambda processing of the same email."
+    correct_action: "Use a single receipt rule with multiple actions (S3 then Lambda) for the same recipient pattern."
+
+  - id: P6-suppression-list-permanent
+    trigger_words: ["suppression list", "suppressed address", "remove from suppression"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest removing addresses from the suppression list as a
+      permanent fix. Addresses can be re-added automatically.
+    actual_behavior: >
+      The account-level suppression list automatically adds addresses
+      that generate hard bounces or complaints. Manually removing an
+      address allows sending to it again, but if the next send also
+      bounces, the address is re-added. The underlying issue must be
+      fixed first.
+    common_false_claim: "Remove the address from the suppression list to fix the delivery issue."
+    correct_action: "Investigate why the address bounced. Fix the underlying issue. Then remove from suppression list."
+
+  - id: P7-ses-receiving-all-regions
+    trigger_words: ["SES receiving", "receipt rules region", "inbound email"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest setting up email receiving in any SES region.
+      Receiving is only available in specific regions.
+    actual_behavior: >
+      SES email receiving is only supported in us-east-1 (N. Virginia),
+      us-west-2 (Oregon), and eu-west-1 (Ireland). Receipt rules
+      cannot be created in other regions even if SES sending is
+      available there.
+    common_false_claim: "Set up receipt rules in your preferred SES region."
+    correct_action: "Use us-east-1, us-west-2, or eu-west-1 for email receiving. Configure MX records to point to the correct regional endpoint."
+
+  - id: P8-config-set-required
+    trigger_words: ["configuration set", "event tracking", "send email"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs imply configuration sets are required for sending email.
+      They are optional but recommended for tracking.
+    actual_behavior: >
+      Emails can be sent without specifying a configuration set.
+      Configuration sets enable event tracking (delivery, bounce,
+      complaint, open, click) via event destinations. They are
+      recommended for production use but not required for basic sending.
+    common_false_claim: "You must create a configuration set before sending emails."
+    correct_action: "Configuration sets are optional. Create one for event tracking. Specify it in the send call with --configuration-set-name."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

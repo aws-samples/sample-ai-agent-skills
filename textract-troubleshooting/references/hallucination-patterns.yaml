@@ -1,0 +1,120 @@
+# =============================================================================
+# Amazon Textract "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-sync-multipage
+    trigger_words: ["multi-page", "PDF", "multiple pages", "all pages"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest sync APIs process all pages. They only process
+      the first page.
+    actual_behavior: >
+      Synchronous APIs (DetectDocumentText, AnalyzeDocument) process
+      only the first page. For multi-page documents, use async APIs
+      (StartDocumentTextDetection, StartDocumentAnalysis).
+    common_false_claim: "Call AnalyzeDocument to process all pages of the PDF."
+    correct_action: "Use StartDocumentAnalysis for multi-page. Get results with GetDocumentAnalysis."
+
+  - id: P2-results-permanent
+    trigger_words: ["job results", "get results", "retrieve analysis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't mention result expiration. Results expire after 7 days.
+    actual_behavior: >
+      Async job results are available for 7 days after completion.
+      After that, GetDocumentAnalysis returns InvalidJobIdException.
+      Store results immediately after job completion.
+    common_false_claim: "Retrieve the results anytime using the job ID."
+    correct_action: "Store results within 7 days. Implement result persistence pipeline."
+
+  - id: P3-queries-automatic
+    trigger_words: ["query", "question", "extract specific", "find value"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest queries work automatically. They require explicit
+      feature type and configuration.
+    actual_behavior: >
+      Queries must be explicitly enabled with FeatureTypes=["QUERIES"]
+      and QueriesConfig parameter. Maximum 15 queries per call.
+      Queries are natural language questions about the document.
+    common_false_claim: "AnalyzeDocument automatically answers questions about the document."
+    correct_action: "Include QUERIES in FeatureTypes. Pass queries in QueriesConfig."
+
+  - id: P4-expense-generic
+    trigger_words: ["receipt", "invoice", "expense", "bill"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using AnalyzeDocument for receipts/invoices.
+      AnalyzeExpense is the specialized API.
+    actual_behavior: >
+      AnalyzeExpense is optimized for receipts and invoices with
+      standardized field extraction (vendor, total, line items).
+      Generic AnalyzeDocument works but provides less structured output.
+    common_false_claim: "Use AnalyzeDocument with FORMS to extract receipt data."
+    correct_action: "Use AnalyzeExpense for receipts/invoices. Use AnalyzeID for identity documents."
+
+  - id: P5-any-format
+    trigger_words: ["document format", "file type", "upload document"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Textract accepts any document format.
+      Only JPEG, PNG, PDF, and TIFF are supported.
+    actual_behavior: >
+      Supported formats: JPEG, PNG, PDF, TIFF. PDF and TIFF support
+      multi-page (async only). Password-protected PDFs not supported.
+      Other formats must be converted first.
+    common_false_claim: "Upload any document format to Textract."
+    correct_action: "Convert to supported format. Use PDF for multi-page documents."
+
+  - id: P6-perfect-extraction
+    trigger_words: ["extract text", "accuracy", "confidence", "quality"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Textract extraction is always perfect.
+      Quality depends heavily on document quality.
+    actual_behavior: >
+      Extraction accuracy depends on document quality: resolution,
+      skew, lighting, handwriting clarity. Confidence scores indicate
+      reliability. Low-quality documents produce lower confidence.
+    common_false_claim: "Textract perfectly extracts all text from any document."
+    correct_action: "Check confidence scores. Preprocess documents for quality. Implement human review for low confidence."
+
+  - id: P7-tables-simple
+    trigger_words: ["table extraction", "extract table", "table data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs oversimplify table extraction. Complex layouts need
+      careful handling.
+    actual_behavior: >
+      Table extraction returns CELL blocks with row/column indices.
+      Merged cells use spanning. Complex layouts (nested tables,
+      irregular grids) may not extract perfectly. Post-processing
+      needed to reconstruct table structure.
+    common_false_claim: "Textract returns tables as clean CSV data."
+    correct_action: "Parse TABLE and CELL blocks. Handle merged cells. Implement table reconstruction logic."
+
+  - id: P8-async-bytes
+    trigger_words: ["async", "start analysis", "multi-page processing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest async APIs accept bytes input like sync APIs.
+      Async only accepts S3 objects.
+    actual_behavior: >
+      Async APIs (Start*) only accept S3Object input. Documents
+      must be uploaded to S3 first. S3 bucket must be in same
+      region as API call.
+    common_false_claim: "Pass document bytes to StartDocumentAnalysis."
+    correct_action: "Upload document to S3. Pass S3Object reference to async API."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

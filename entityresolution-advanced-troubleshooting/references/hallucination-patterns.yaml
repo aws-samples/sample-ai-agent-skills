@@ -1,0 +1,148 @@
+# =============================================================================
+# AWS Entity Resolution Advanced "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-ml-matching-perfect
+    trigger_words: ["ML matching", "machine learning", "automatic matching", "AI matching"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest ML matching produces perfect results automatically.
+      ML matching is probabilistic and depends heavily on data quality.
+    actual_behavior: >
+      ML matching uses machine learning to find probable matches
+      but results are probabilistic, not deterministic. Accuracy
+      depends on data quality, volume, and field completeness.
+      Small datasets or datasets with many missing fields produce
+      poor results. ML matching requires tuning and validation —
+      it does not work perfectly out of the box.
+    common_false_claim: "ML matching will automatically find all matching records with high accuracy."
+    correct_action: "Validate ML matching results. Ensure sufficient data quality and volume. Use confidence scores to filter results."
+
+  - id: P2-schema-mapping-auto-detect
+    trigger_words: ["schema mapping", "auto-detect", "automatic mapping", "field mapping"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Entity Resolution automatically detects and maps
+      fields. Schema mappings must be explicitly configured.
+    actual_behavior: >
+      Schema mappings must be manually configured to define how
+      input data fields map to Entity Resolution attributes.
+      There is no automatic field detection or mapping. Incorrect
+      mappings cause poor matching results without errors — the
+      job completes but matches are wrong or missing.
+    common_false_claim: "Entity Resolution automatically detects your data schema and maps fields."
+    correct_action: "Manually create schema mappings. Verify field names match Glue table columns. Test with sample data."
+
+  - id: P3-provider-included
+    trigger_words: ["provider service", "LiveRamp", "TransUnion", "third-party"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest provider services are included with Entity
+      Resolution. They require separate subscriptions and fees.
+    actual_behavior: >
+      Provider services (LiveRamp, TransUnion, etc.) require
+      separate subscription agreements and have their own pricing.
+      Entity Resolution provides the integration framework, but
+      the provider service itself must be independently subscribed
+      to and configured. Provider errors may be subscription-related.
+    common_false_claim: "Just select the provider service in Entity Resolution and it will work."
+    correct_action: "Subscribe to the provider service separately. Configure provider credentials. Verify subscription status when troubleshooting."
+
+  - id: P4-matching-real-time
+    trigger_words: ["real-time matching", "instant match", "live matching", "streaming"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Entity Resolution performs real-time matching.
+      It is a batch processing service.
+    actual_behavior: >
+      Entity Resolution processes matching jobs in batch mode.
+      You submit a job, it processes all input data, and produces
+      output when complete. There is no real-time or streaming
+      matching capability. Job execution time depends on data
+      size and can range from minutes to hours.
+    common_false_claim: "Entity Resolution matches records in real-time as they arrive."
+    correct_action: "Submit batch matching jobs. Plan for processing time based on data volume. Use job status API to monitor progress."
+
+  - id: P5-rule-order-irrelevant
+    trigger_words: ["matching rules", "rule order", "rule priority", "rule configuration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest rule order does not matter in rule-based matching.
+      Rules are evaluated sequentially and order affects results.
+    actual_behavior: >
+      Rule-based matching evaluates rules in the defined order.
+      When a record matches a rule, it is assigned to that match
+      group. More specific rules should come before broader rules
+      to ensure precise matches are found first. Reordering rules
+      changes matching results.
+    common_false_claim: "The order of matching rules doesn't matter — all rules are evaluated equally."
+    correct_action: "Order rules from most specific to least specific. Test rule order impact on matching results."
+
+  - id: P6-output-always-plaintext
+    trigger_words: ["output", "results", "matched records", "output format"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest output always contains plain text data.
+      Privacy configurations can hash or encrypt output fields.
+    actual_behavior: >
+      Output content depends on privacy configuration. With
+      privacy-enhancing features enabled, output fields may
+      contain hashed values, encrypted data, or redacted content
+      instead of plain text. This is by design for data protection.
+      Output format also depends on the output configuration
+      (S3 path, file format).
+    common_false_claim: "The output will contain all matched records in plain text."
+    correct_action: "Check privacy configuration. Understand which fields are hashed/encrypted. Configure output format appropriately."
+
+  - id: P7-glue-optional
+    trigger_words: ["Glue", "data catalog", "input data", "data source"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Glue is optional for Entity Resolution.
+      Glue Data Catalog is required for input data definition.
+    actual_behavior: >
+      Entity Resolution uses AWS Glue Data Catalog to define
+      input data sources. Glue databases and tables must exist
+      and be properly configured before creating workflows.
+      The Glue table schema must match the Entity Resolution
+      schema mapping. Glue is not optional — it is a core
+      dependency.
+    common_false_claim: "You can use Entity Resolution without setting up Glue tables."
+    correct_action: "Create Glue database and tables for input data. Ensure table schema matches schema mappings. Verify Glue permissions."
+
+  - id: P8-cross-account-simple
+    trigger_words: ["cross-account", "other account", "multi-account", "shared data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cross-account workflows work by simply
+      referencing resources in other accounts.
+    actual_behavior: >
+      Cross-account Entity Resolution workflows require resource
+      policies on Glue databases, S3 buckets, and KMS keys in
+      source accounts. The Entity Resolution service role must
+      have cross-account access. RAM (Resource Access Manager)
+      may be needed for Glue catalog sharing. Simply referencing
+      cross-account ARNs is not sufficient.
+    common_false_claim: "Just reference the Glue table ARN from the other account."
+    correct_action: "Set up resource policies, cross-account IAM roles, and optionally RAM sharing. Test access before creating workflows."
+
+remediation_hallucinations:
+
+  - id: R1-recreate-workflow-for-accuracy
+    false_fix: "Delete and recreate the matching workflow to improve accuracy."
+    why_wrong: >
+      Recreating the workflow with the same configuration produces
+      the same results. Accuracy issues are caused by data quality,
+      schema mapping, or rule configuration — not the workflow itself.
+    correct_fix: "Improve data quality, fix schema mappings, or tune matching rules/ML configuration. Recreating the workflow does not change matching logic."
+
+  - id: R2-increase-ml-confidence-threshold
+    false_fix: "Increase the ML confidence threshold to get better matches."
+    why_wrong: >
+      Increasing the confidence threshold filters out more matches,
+      reducing recall. It improves precision but may miss valid
+      matches. The right threshold depends on the use case balance
+      between precision and recall.
+    correct_fix: "Tune the confidence threshold based on your precision/recall requirements. Validate with known match pairs. Consider rule-based matching for deterministic requirements."

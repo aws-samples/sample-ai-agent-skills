@@ -1,0 +1,129 @@
+# =============================================================================
+# AWS Elemental MediaConvert "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-generic-endpoint
+    trigger_words: ["endpoint", "API URL", "mediaconvert endpoint", "service endpoint"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs use generic AWS service endpoints for MediaConvert. MediaConvert
+      requires an account-specific endpoint for all API calls.
+    actual_behavior: >
+      MediaConvert uses account-specific endpoints in the format
+      https://<hash>.mediaconvert.<region>.amazonaws.com. You must call
+      describe-endpoints first to get your endpoint. All subsequent
+      API calls must use --endpoint-url with this value.
+    common_false_claim: "Call aws mediaconvert list-jobs without specifying an endpoint."
+    correct_action: "First call describe-endpoints, then use the returned URL for all API calls."
+
+  - id: P2-all-codecs-supported
+    trigger_words: ["codec", "format", "container", "video format", "transcode"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume MediaConvert supports all video codecs. Only specific
+      codecs and container combinations are supported.
+    actual_behavior: >
+      MediaConvert supports specific codecs: H.264, H.265/HEVC, MPEG-2,
+      Apple ProRes, AV1, VP8, VP9 for video. AAC, MP3, Dolby, FLAC for
+      audio. Not all codec/container combinations are valid. Some codecs
+      are input-only or output-only.
+    common_false_claim: "MediaConvert can transcode any video format."
+    correct_action: "Verify input codec support in documentation. Check error code 1020 for unsupported codecs."
+
+  - id: P3-reserved-queue-autoscale
+    trigger_words: ["reserved queue", "RTS", "reserved transcode", "queue capacity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume reserved queues auto-scale like on-demand. Reserved
+      queues have a fixed number of transcode slots.
+    actual_behavior: >
+      Reserved queues have a fixed number of Reserved Transcode Slots
+      (RTS) purchased with a commitment. They do NOT auto-scale.
+      If all RTS are busy, additional jobs queue. On-demand queues
+      auto-scale but cost more per minute.
+    common_false_claim: "Reserved queues will automatically scale to handle more jobs."
+    correct_action: "Purchase sufficient RTS for peak load. Use on-demand queues for burst capacity."
+
+  - id: P4-accelerated-all-jobs
+    trigger_words: ["accelerated", "fast transcode", "professional tier", "speed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest accelerated transcoding for all jobs. It has
+      specific eligibility requirements.
+    actual_behavior: >
+      Accelerated transcoding requires specific input codecs (H.264,
+      H.265, MPEG-2, ProRes), minimum input resolution, and compatible
+      output settings. Jobs that don't qualify either fall back to
+      standard or fail depending on configuration.
+    common_false_claim: "Enable accelerated transcoding to speed up all your jobs."
+    correct_action: "Check eligibility requirements. Set AccelerationMode to PREFERRED for graceful fallback."
+
+  - id: P5-drm-built-in
+    trigger_words: ["DRM", "content protection", "encryption", "SPEKE"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MediaConvert handles DRM key management directly.
+      It requires an external SPEKE-compatible key provider.
+    actual_behavior: >
+      MediaConvert uses SPEKE protocol to communicate with an external
+      key provider for DRM. You must set up a SPEKE-compatible key
+      server (AWS SPEKE Reference Server, PallyCon, BuyDRM, etc.).
+      MediaConvert does not store or manage DRM keys.
+    common_false_claim: "Configure DRM directly in MediaConvert without a key provider."
+    correct_action: "Set up a SPEKE key provider. Configure the key provider URL in the job settings."
+
+  - id: P6-auto-audio-selection
+    trigger_words: ["audio track", "audio selector", "multiple audio", "audio language"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume MediaConvert automatically selects the best audio
+      track. Explicit audio selector configuration is required.
+    actual_behavior: >
+      MediaConvert requires explicit audio selector configuration
+      when inputs have multiple audio tracks. Without selectors,
+      the output may have missing or incorrect audio. Use audio
+      selectors to specify tracks by PID, language, or track number.
+    common_false_claim: "MediaConvert automatically picks the best audio track."
+    correct_action: "Configure audio selectors explicitly for multi-track inputs."
+
+  - id: P7-job-priority-speed
+    trigger_words: ["priority", "job priority", "faster processing"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest higher priority makes jobs process faster.
+      Priority only affects queue ordering, not processing speed.
+    actual_behavior: >
+      Job priority (0-50) determines the order jobs are picked from
+      the queue. Higher priority jobs are processed before lower
+      priority ones. Priority does NOT affect encoding speed or
+      resource allocation. It only matters when jobs are queued.
+    common_false_claim: "Set priority to 50 to make the job encode faster."
+    correct_action: "Use priority for queue ordering. Use accelerated transcoding for faster encoding."
+
+  - id: P8-qvbr-vs-cbr
+    trigger_words: ["bitrate", "quality", "QVBR", "CBR", "VBR", "rate control"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs recommend CBR for all use cases. QVBR is often better
+      for quality-optimized encoding.
+    actual_behavior: >
+      QVBR (Quality-Defined Variable Bitrate) automatically adjusts
+      bitrate to maintain consistent quality. CBR uses fixed bitrate
+      regardless of content complexity. VBR varies within a range.
+      QVBR is recommended for most use cases as it optimizes
+      quality-to-bitrate ratio automatically.
+    common_false_claim: "Use CBR at 5 Mbps for consistent quality."
+    correct_action: "Use QVBR with a quality level (1-10) for automatic quality optimization."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

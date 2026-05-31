@@ -1,0 +1,156 @@
+# =============================================================================
+# Amazon Lookout for Equipment "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-realtime-anomaly-detection
+    trigger_words: ["real-time", "instant detection", "streaming", "live monitoring"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest Lookout for Equipment performs real-time streaming
+      anomaly detection. It operates on batch inference schedules.
+    actual_behavior: >
+      Lookout for Equipment runs inference on a fixed schedule
+      (5 min to 1 hour intervals). It reads batch data from S3
+      at each interval. It does NOT process streaming sensor data
+      in real-time. For real-time streaming anomaly detection,
+      use Amazon Lookout for Metrics or Amazon Kinesis Analytics.
+    common_false_claim: "Lookout for Equipment detects anomalies in real-time as sensor data streams in."
+    correct_action: "Configure inference scheduler with appropriate interval. Data must be written to S3 before each scheduled run."
+
+  - id: P2-any-data-format
+    trigger_words: ["any format", "JSON", "Parquet", "unstructured", "images"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest the service accepts various data formats.
+      Only CSV with specific structure is supported.
+    actual_behavior: >
+      Lookout for Equipment exclusively accepts CSV files with
+      a specific structure: one file per component in a named
+      subfolder, timestamps as the first column in ISO 8601
+      format, consistent sampling rates, and column headers
+      matching the registered schema. JSON, Parquet, images,
+      and other formats are not supported.
+    common_false_claim: "Upload your sensor data in any format — JSON, CSV, or Parquet."
+    correct_action: "Convert all sensor data to CSV format following the required structure before ingestion."
+
+  - id: P3-no-minimum-data
+    trigger_words: ["small dataset", "few days", "quick training", "minimal data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs underestimate the minimum data requirements for
+      training. The service requires at least 14 days of data.
+    actual_behavior: >
+      Model training requires a minimum of 14 days of continuous
+      sensor data. AWS recommends 90+ days for production-quality
+      models. Training with less than 14 days will fail. Training
+      with 14-30 days may succeed but produce low-quality models
+      with high false positive rates.
+    common_false_claim: "You can train a model with just a few hours of sensor data."
+    correct_action: "Ensure at least 14 days of continuous data. Target 90+ days for production models."
+
+  - id: P4-auto-remediation
+    trigger_words: ["auto-fix", "automatic repair", "self-healing", "remediate"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the service can automatically fix detected
+      equipment issues. It only detects anomalies.
+    actual_behavior: >
+      Lookout for Equipment detects anomalies in sensor data
+      and identifies which sensors are contributing to the
+      anomaly. It does NOT take any remediation action. It does
+      not connect to equipment control systems, send commands,
+      or trigger automated repairs. Remediation must be handled
+      by separate systems or human operators.
+    common_false_claim: "Lookout for Equipment will automatically shut down faulty equipment."
+    correct_action: "Use inference results to trigger alerts via SNS/EventBridge. Implement remediation in separate automation."
+
+  - id: P5-on-demand-inference
+    trigger_words: ["on-demand", "single prediction", "one-time inference", "ad-hoc"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest you can run one-off inference requests.
+      Inference only runs through scheduled schedulers.
+    actual_behavior: >
+      Inference in Lookout for Equipment runs exclusively through
+      inference schedulers on fixed intervals. There is no API
+      for on-demand or single-shot inference. To get a one-time
+      result, you must create a scheduler, wait for one execution,
+      then stop the scheduler.
+    common_false_claim: "Call the inference API with your sensor data to get an instant prediction."
+    correct_action: "Create an inference scheduler. For one-time analysis, start scheduler, wait for execution, then stop it."
+
+  - id: P6-all-regions
+    trigger_words: ["any region", "all regions", "global", "everywhere"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume the service is available in all AWS regions.
+      It has limited regional availability.
+    actual_behavior: >
+      Lookout for Equipment is available in select regions only
+      (us-east-1, eu-west-1, ap-northeast-2, and limited others).
+      Attempting to use the service in unsupported regions produces
+      endpoint resolution errors that can be confused with
+      network or IAM issues.
+    common_false_claim: "Deploy Lookout for Equipment in any AWS region."
+    correct_action: "Verify regional availability. Deploy in supported regions. Use cross-region data replication if needed."
+
+  - id: P7-model-explainability
+    trigger_words: ["explain", "root cause", "why anomaly", "feature importance"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs overstate the explainability capabilities of the
+      anomaly detection models.
+    actual_behavior: >
+      Lookout for Equipment provides sensor-level contribution
+      scores indicating which sensors contributed most to an
+      anomaly detection. It does NOT provide root cause analysis,
+      natural language explanations, or causal reasoning. The
+      contribution scores show correlation, not causation.
+    common_false_claim: "Lookout for Equipment explains the root cause of equipment failures."
+    correct_action: "Use sensor contribution scores to guide investigation. Combine with domain expertise for root cause analysis."
+
+  - id: P8-custom-algorithms
+    trigger_words: ["custom model", "algorithm", "hyperparameter", "neural network"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest users can customize the ML algorithm or
+      tune hyperparameters. The service is fully managed.
+    actual_behavior: >
+      Lookout for Equipment uses proprietary ML algorithms that
+      are fully managed. Users cannot select algorithms, tune
+      hyperparameters, or bring custom models. The only way to
+      influence model quality is through data quality, data
+      quantity, and labels. For custom ML, use SageMaker.
+    common_false_claim: "Configure the neural network architecture and hyperparameters for your model."
+    correct_action: "Focus on data quality and quantity. Add labels for known anomalies. Use SageMaker for custom ML needs."
+
+remediation_hallucinations:
+
+  - id: R1-delete-and-recreate-dataset
+    false_fix: "Delete the dataset and recreate it to fix ingestion errors."
+    why_dangerous: >
+      Deleting a dataset removes all associated models, inference
+      schedulers, and historical results. This is destructive and
+      irreversible. Ingestion errors are usually caused by data
+      format issues that can be fixed without dataset deletion.
+    correct_approach: >
+      Diagnose the ingestion error using describe-data-ingestion-job.
+      Fix the source data format in S3. Re-run ingestion with
+      start-data-ingestion-job. Only delete the dataset as a last
+      resort after backing up all model configurations.
+
+  - id: R2-widen-inference-window
+    false_fix: "Increase the inference scheduler interval to reduce failures."
+    why_dangerous: >
+      Widening the inference interval does not fix execution
+      failures — it just runs them less frequently. The root
+      cause (missing data, schema mismatch, S3 access) persists.
+      Wider intervals also mean slower anomaly detection, which
+      defeats the purpose of predictive maintenance.
+    correct_approach: >
+      Investigate the specific execution failure using
+      list-inference-executions with --status FAILED. Check S3
+      data availability, schema consistency, and IAM permissions.
+      Fix the root cause before adjusting the schedule.

@@ -1,0 +1,118 @@
+# =============================================================================
+# EFS "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-encryption-after-creation
+    trigger_words: ["encrypt EFS", "enable encryption", "add encryption"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling encryption on existing file systems. Encryption
+      at rest can only be set at creation time.
+    actual_behavior: >
+      Encryption at rest is immutable after creation. To encrypt an existing
+      file system, create a new encrypted file system and use AWS DataSync
+      or rsync to migrate data.
+    common_false_claim: "Enable encryption at rest on the existing file system."
+    correct_action: "Create a new encrypted file system and migrate data."
+
+  - id: P2-performance-mode-change
+    trigger_words: ["change performance mode", "switch to Max I/O", "modify performance"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest changing performance mode as a fix. Performance mode
+      is immutable after creation.
+    actual_behavior: >
+      Performance mode (General Purpose or Max I/O) is set at file system
+      creation and cannot be changed. A new file system must be created.
+    common_false_claim: "Change the performance mode to Max I/O to fix throughput."
+    correct_action: "Create a new file system with Max I/O mode and migrate data."
+
+  - id: P3-single-mount-target-all-azs
+    trigger_words: ["mount target", "mount from another AZ", "one mount target"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume one mount target serves all AZs. Each AZ needs its
+      own mount target for optimal performance.
+    actual_behavior: >
+      Mount targets are per-AZ. While cross-AZ mounting works, it adds
+      latency and data transfer costs. Best practice is one mount target
+      per AZ where clients exist.
+    common_false_claim: "Create one mount target and all instances can access it."
+    correct_action: "Create mount targets in each AZ where clients need access."
+
+  - id: P4-burst-credits-unlimited
+    trigger_words: ["burst throughput", "burst credits", "throughput drops"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs don't account for burst credit depletion on small file systems.
+      They assume bursting is always available.
+    actual_behavior: >
+      Burst credits accumulate at 50 MiB/s per TB. Small file systems
+      (< 1 TB) have limited burst credits that deplete under sustained
+      load, dropping throughput to the baseline rate.
+    common_false_claim: "EFS can always burst to 100 MiB/s."
+    correct_action: "Check BurstCreditBalance metric. Switch to Provisioned or Elastic throughput if credits are depleted."
+
+  - id: P5-nfs-security-group-one-side
+    trigger_words: ["mount failed", "connection timeout", "NFS port"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs fix only the mount target security group and forget the
+      client-side outbound rule.
+    actual_behavior: >
+      Both sides must allow NFS traffic: mount target SG must allow
+      inbound TCP 2049 from the client, AND the client SG must allow
+      outbound TCP 2049 to the mount target.
+    common_false_claim: "Add inbound rule for port 2049 on the mount target security group."
+    correct_action: "Check BOTH mount target inbound AND client outbound security group rules for port 2049."
+
+  - id: P6-access-point-root-directory
+    trigger_words: ["access point", "root directory", "POSIX permissions"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs confuse access point root directory creation with existing
+      directory permissions.
+    actual_behavior: >
+      Access points can specify a root directory path. If the path doesn't
+      exist, EFS creates it with the specified owner UID/GID and permissions.
+      If it exists, the existing permissions are used.
+    common_false_claim: "Access points always create the root directory."
+    correct_action: "Check if the root directory exists. If it does, verify its POSIX permissions match expectations."
+
+  - id: P7-lifecycle-all-files
+    trigger_words: ["lifecycle", "Infrequent Access", "IA transition"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs claim all files transition to IA. Files under 128 KB are
+      excluded from lifecycle transitions.
+    actual_behavior: >
+      Lifecycle policies only transition files 128 KB or larger to
+      Infrequent Access. Smaller files remain in Standard storage.
+    common_false_claim: "All files not accessed for 30 days move to IA."
+    correct_action: "Files < 128 KB stay in Standard. Only larger files transition to IA."
+
+  - id: P8-replication-bidirectional
+    trigger_words: ["replication", "cross-region", "disaster recovery"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs imply replication is bidirectional. EFS replication is
+      unidirectional with a read-only destination.
+    actual_behavior: >
+      EFS replication is one-way. The destination is read-only until
+      failover. Failover promotes the destination and breaks replication.
+      Re-establishing replication requires a new configuration.
+    common_false_claim: "Set up bidirectional replication between regions."
+    correct_action: "EFS replication is unidirectional. Plan failover and failback procedures separately."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

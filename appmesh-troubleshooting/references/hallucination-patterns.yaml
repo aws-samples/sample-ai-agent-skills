@@ -1,0 +1,134 @@
+# =============================================================================
+# AWS App Mesh "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-mesh-routes-traffic
+    trigger_words: ["mesh routes traffic", "app mesh proxy", "mesh handles requests"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate the App Mesh control plane with the Envoy data plane.
+      App Mesh configures Envoy but does not route traffic itself.
+    actual_behavior: >
+      App Mesh is a control plane that pushes configuration to Envoy
+      sidecar proxies. Envoy handles actual traffic routing. If Envoy
+      sidecars are not running, traffic is not routed through the mesh
+      regardless of App Mesh configuration. The Envoy Management Service
+      (EMS) endpoint delivers configuration to Envoy.
+    common_false_claim: "App Mesh intercepts and routes all traffic between your services."
+    correct_action: "Verify Envoy sidecars are running and connected to App Mesh. Check Envoy admin API for configuration state."
+
+  - id: P2-public-acm-for-mtls
+    trigger_words: ["ACM certificate", "public certificate", "request certificate for mTLS"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest using public ACM certificates for mTLS. App Mesh
+      mTLS requires ACM Private CA certificates.
+    actual_behavior: >
+      App Mesh mTLS exclusively uses certificates from ACM Private
+      Certificate Authority (ACM-PCA). Public ACM certificates cannot
+      be used for mutual TLS authentication. You must create a private
+      CA, issue certificates, and configure the mesh with the CA ARN.
+    common_false_claim: "Request an ACM certificate and configure it for mTLS in App Mesh."
+    correct_action: "Create an ACM-PCA private CA, issue certificates, and configure the mesh with the private CA ARN."
+
+  - id: P3-auto-sidecar-injection
+    trigger_words: ["automatic injection", "auto sidecar", "mesh auto-configures"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest Envoy sidecars are automatically injected into
+      all services. Injection requires explicit configuration.
+    actual_behavior: >
+      On EKS, the App Mesh controller injects Envoy sidecars based on
+      namespace annotations (appmesh.k8s.aws/sidecarInjectorWebhook)
+      and pod annotations. On ECS, the Envoy container must be manually
+      added to the task definition. Injection is never fully automatic
+      without configuration.
+    common_false_claim: "App Mesh automatically injects Envoy into all your services."
+    correct_action: "On EKS, configure namespace/pod annotations for injection. On ECS, add Envoy container to task definitions."
+
+  - id: P4-virtual-service-auto-routes
+    trigger_words: ["virtual service routes automatically", "auto routing", "service discovery routing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume virtual services automatically route to virtual nodes.
+      A provider must be explicitly configured.
+    actual_behavior: >
+      A virtual service requires an explicit provider configuration —
+      either a virtual router (for rule-based routing) or a virtual
+      node (for direct routing). Without a provider, the virtual service
+      does not route traffic. Creating a virtual service alone does
+      nothing for traffic routing.
+    common_false_claim: "Create a virtual service and it will automatically route to your backend."
+    correct_action: "Configure a provider (virtual router or virtual node) on the virtual service."
+
+  - id: P5-mesh-replaces-service-discovery
+    trigger_words: ["mesh handles discovery", "no need for DNS", "mesh finds services"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest App Mesh replaces service discovery. Virtual
+      nodes still require DNS or Cloud Map for discovery.
+    actual_behavior: >
+      App Mesh does not replace service discovery. Virtual nodes must
+      have a service discovery mechanism (DNS or AWS Cloud Map)
+      configured. Envoy uses service discovery to find the actual
+      endpoints for virtual nodes. Without service discovery, Envoy
+      cannot resolve where to send traffic.
+    common_false_claim: "App Mesh handles service discovery so you don't need DNS or Cloud Map."
+    correct_action: "Configure DNS or Cloud Map service discovery on each virtual node."
+
+  - id: P6-global-retry-timeout
+    trigger_words: ["global timeout", "mesh-wide retry", "default retry policy"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest global retry and timeout settings. These are
+      configured per-route in App Mesh.
+    actual_behavior: >
+      Retry policies and timeouts are configured on individual routes,
+      not at the mesh or virtual router level. Each route can have
+      different retry and timeout settings. There is no global
+      configuration. Default timeout is 15 seconds per route if not
+      explicitly set.
+    common_false_claim: "Set a global retry policy on the mesh to apply to all routes."
+    correct_action: "Configure retry policies and timeouts on each route individually."
+
+  - id: P7-envoy-version-control
+    trigger_words: ["choose envoy version", "upgrade envoy", "envoy version pin"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest full control over Envoy versions. App Mesh manages
+      the Envoy image and recommends specific versions.
+    actual_behavior: >
+      App Mesh provides recommended Envoy proxy images for each App
+      Mesh version. While you can specify the Envoy image in your task
+      definition or pod spec, using non-recommended versions may cause
+      compatibility issues. AWS publishes compatible Envoy images in
+      ECR public gallery.
+    common_false_claim: "Download and install any Envoy version for use with App Mesh."
+    correct_action: "Use the AWS-recommended Envoy proxy image from ECR public gallery matching your App Mesh version."
+
+  - id: P8-mesh-without-envoy
+    trigger_words: ["mesh without sidecar", "app mesh only", "no envoy needed"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may suggest App Mesh works without Envoy sidecars.
+      Envoy is required for all mesh functionality.
+    actual_behavior: >
+      App Mesh requires Envoy sidecar proxies on every service in the
+      mesh. Without Envoy, there is no traffic interception, routing,
+      observability, or mTLS. App Mesh is purely a control plane —
+      Envoy is the mandatory data plane component.
+    common_false_claim: "You can use App Mesh features without deploying Envoy sidecars."
+    correct_action: "Deploy Envoy sidecar containers alongside every service that participates in the mesh."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

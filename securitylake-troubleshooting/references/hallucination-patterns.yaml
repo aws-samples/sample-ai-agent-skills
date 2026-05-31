@@ -1,0 +1,137 @@
+# =============================================================================
+# Amazon Security Lake "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-s3-policy-access
+    trigger_words: ["access data", "S3 bucket policy", "subscriber access", "query data"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest S3 bucket policies for data access. Security Lake
+      uses Lake Formation for access control, not S3 policies.
+    actual_behavior: >
+      Security Lake data access is controlled by AWS Lake Formation
+      permissions. Subscribers need Lake Formation grants on the Glue
+      database and tables. S3 bucket policies alone do NOT grant
+      query access. Use lakeformation:GrantPermissions to grant
+      SELECT on tables to subscriber principals.
+    common_false_claim: "Add the subscriber role to the S3 bucket policy."
+    correct_action: "Grant Lake Formation permissions on Glue database and tables."
+
+  - id: P2-direct-account-sharing
+    trigger_words: ["cross-account", "share logs", "multi-account", "collect from account"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest direct account-to-account log sharing. Security
+      Lake requires AWS Organizations with delegated admin.
+    actual_behavior: >
+      Cross-account log collection requires AWS Organizations. A
+      delegated administrator manages Security Lake for the org.
+      Member accounts contribute logs when sources are configured
+      by the delegated admin. Direct account-to-account sharing
+      without Organizations is not supported.
+    common_false_claim: "Configure the source account ID in Security Lake settings."
+    correct_action: "Set up Organizations delegated admin. Configure sources for member accounts."
+
+  - id: P3-custom-source-any-format
+    trigger_words: ["custom source", "send logs", "custom data", "ingest custom"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest sending any log format to Security Lake. Custom
+      sources must deliver OCSF-compliant Apache Parquet data.
+    actual_behavior: >
+      Custom sources must: (1) Register via create-custom-log-source.
+      (2) Deliver data in OCSF-compliant Apache Parquet format.
+      (3) Use the correct S3 prefix assigned during registration.
+      (4) Follow OCSF event class schema for the data type.
+      Non-compliant data is rejected silently or with exceptions.
+    common_false_claim: "Send JSON logs to the Security Lake S3 bucket."
+    correct_action: "Register custom source. Deliver OCSF-compliant Parquet to assigned prefix."
+
+  - id: P4-rollup-moves-data
+    trigger_words: ["rollup region", "centralize data", "aggregate regions", "consolidate"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim rollup regions move data from source regions.
+      Rollup regions copy data; source regions retain their data.
+    actual_behavior: >
+      Rollup regions aggregate data by COPYING from contributing
+      regions. Source regions retain their data independently.
+      Both regions incur storage costs. Queries in the rollup
+      region see data from all contributing regions. Deleting
+      the rollup does not affect source region data.
+    common_false_claim: "Data is moved to the rollup region for centralized access."
+    correct_action: "Rollup copies data. Both regions retain data. Plan for double storage costs."
+
+  - id: P5-modify-managed-bucket
+    trigger_words: ["bucket policy", "lifecycle rule", "encryption", "S3 configuration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying the Security Lake S3 bucket directly.
+      The bucket is managed by Security Lake and should not be modified.
+    actual_behavior: >
+      Security Lake creates and manages the S3 bucket, including
+      bucket policies, lifecycle rules, and encryption. Direct
+      modifications may break Security Lake functionality. Use
+      Security Lake APIs for retention configuration. Use Lake
+      Formation for access control. Do not modify the bucket directly.
+    common_false_claim: "Update the S3 bucket lifecycle rule to change retention."
+    correct_action: "Use Security Lake update-data-lake API to configure retention settings."
+
+  - id: P6-instant-data
+    trigger_words: ["no data", "empty table", "missing logs", "data not appearing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs diagnose missing data immediately after source configuration.
+      Ingestion has inherent delays depending on source type.
+    actual_behavior: >
+      Log sources have ingestion delays: CloudTrail ~5-15 min,
+      VPC Flow Logs ~10-15 min, custom sources vary. Check
+      list-data-lake-exceptions for actual errors before diagnosing
+      data loss. Allow sufficient time for initial ingestion.
+      First data may take up to 30 minutes after source enablement.
+    common_false_claim: "Data should appear immediately after enabling the source."
+    correct_action: "Wait 15-30 minutes. Check list-data-lake-exceptions for errors."
+
+  - id: P7-manual-glue-tables
+    trigger_words: ["create table", "Glue table", "schema definition", "table structure"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manually creating Glue tables for Security Lake.
+      Tables are auto-created and managed by Security Lake.
+    actual_behavior: >
+      Security Lake automatically creates Glue database and tables
+      for each source type. Table names follow the pattern
+      amazon_security_lake_table_<region>_<source>_<version>.
+      Manual creation or modification breaks the managed schema.
+      Schema updates are applied automatically by Security Lake.
+    common_false_claim: "Create a Glue table with the OCSF schema for your source."
+    correct_action: "Tables are auto-created. Use list-log-sources to verify. Do not create manually."
+
+  - id: P8-iam-only-access
+    trigger_words: ["IAM policy", "subscriber role", "access permission", "grant access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest IAM policies alone for subscriber access.
+      Lake Formation permissions are required in addition to IAM.
+    actual_behavior: >
+      Subscriber access requires BOTH: (1) IAM permissions for
+      Athena, Glue, and S3 access. (2) Lake Formation grants on
+      the specific Glue database and tables. IAM alone is not
+      sufficient. Security Lake creates subscriber roles with
+      appropriate permissions, but Lake Formation grants must
+      also be in place.
+    common_false_claim: "Attach an IAM policy with Glue and S3 permissions to the subscriber role."
+    correct_action: "Ensure both IAM permissions AND Lake Formation grants are configured."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

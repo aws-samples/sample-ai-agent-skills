@@ -1,0 +1,128 @@
+# =============================================================================
+# AWS Mainframe Modernization "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-single-engine
+    trigger_words: ["mainframe modernization", "COBOL migration", "mainframe to AWS"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs describe a single modernization approach. AWS M2 has two
+      distinct engines with different strategies.
+    actual_behavior: >
+      Micro Focus engine replatforms (runs COBOL as-is on AWS managed
+      runtime). Blu Age engine refactors (converts COBOL to Java
+      automatically). Choice depends on modernization strategy,
+      timeline, and application complexity.
+    common_false_claim: "AWS Mainframe Modernization converts your COBOL to Java."
+    correct_action: "Choose engine based on strategy: Micro Focus for replatform, Blu Age for refactor."
+
+  - id: P2-instant-deployment
+    trigger_words: ["deploy application", "run application", "start application"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deploying directly. Environment must exist first
+      and application artifacts must be in S3.
+    actual_behavior: >
+      Deployment requires: 1) S3 artifacts uploaded, 2) Runtime
+      environment created and Available, 3) Application created with
+      definition, 4) Application deployed to environment. Each step
+      must complete before the next.
+    common_false_claim: "Deploy your mainframe application directly to AWS."
+    correct_action: "Upload to S3, create environment, create application, then deploy."
+
+  - id: P3-cics-blu-age
+    trigger_words: ["CICS", "IMS", "transaction processing", "online transactions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CICS/IMS configuration for all M2 applications.
+      CICS/IMS is Micro Focus engine only.
+    actual_behavior: >
+      CICS and IMS transaction processing is only available with
+      Micro Focus engine. Blu Age refactors CICS transactions to
+      REST APIs and modern equivalents. The approach differs
+      fundamentally between engines.
+    common_false_claim: "Configure CICS regions in your Blu Age application."
+    correct_action: "Use Micro Focus for CICS/IMS replatforming. Blu Age converts to modern APIs."
+
+  - id: P4-auto-data-migration
+    trigger_words: ["data migration", "data sets", "VSAM", "mainframe data"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest data migrates automatically. Data sets must be
+      explicitly imported.
+    actual_behavior: >
+      Mainframe data sets (VSAM, sequential, GDG) must be exported
+      from the mainframe, uploaded to S3, and imported into the M2
+      application. This is a manual process with specific format
+      requirements. Data doesn't migrate automatically.
+    common_false_claim: "Data sets are automatically migrated with the application."
+    correct_action: "Export data from mainframe, upload to S3, import via M2 API."
+
+  - id: P5-free-environment
+    trigger_words: ["environment cost", "pricing", "runtime cost"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs understate costs. Runtime environments provision real
+      compute resources with ongoing costs.
+    actual_behavior: >
+      Runtime environments provision EC2 instances, EFS storage, and
+      networking. You pay for these resources while the environment
+      exists, even if no applications are running. Stop environments
+      when not in use to reduce costs.
+    common_false_claim: "You only pay when applications are running."
+    correct_action: "Environments incur costs while running. Stop unused environments."
+
+  - id: P6-any-cobol-supported
+    trigger_words: ["COBOL version", "COBOL dialect", "compatibility"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest all COBOL dialects are supported. Compatibility
+      depends on the engine and specific features used.
+    actual_behavior: >
+      Micro Focus supports most IBM COBOL dialects but some
+      vendor-specific extensions may need modification. Blu Age
+      supports specific COBOL patterns for automated conversion.
+      Complex applications may need assessment before migration.
+    common_false_claim: "Any COBOL program runs as-is on AWS M2."
+    correct_action: "Assess COBOL compatibility with chosen engine. Some modifications may be needed."
+
+  - id: P7-built-in-scheduler
+    trigger_words: ["job scheduling", "batch schedule", "cron", "scheduler"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest M2 has built-in job scheduling like mainframe
+      JES. External scheduling is needed.
+    actual_behavior: >
+      M2 doesn't include a built-in job scheduler like JES2/JES3.
+      Batch jobs are submitted via API. Use EventBridge Scheduler,
+      Step Functions, or third-party schedulers (BMC, CA) for
+      automated job scheduling.
+    common_false_claim: "Configure job schedules in the M2 console."
+    correct_action: "Use EventBridge Scheduler or Step Functions for batch job scheduling."
+
+  - id: P8-lift-and-shift-only
+    trigger_words: ["modernization approach", "migration strategy", "how to modernize"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs present only lift-and-shift. M2 supports both replatform
+      and refactor strategies.
+    actual_behavior: >
+      M2 supports two strategies: Replatform (Micro Focus) runs
+      existing COBOL on managed AWS infrastructure. Refactor (Blu Age)
+      automatically converts COBOL to Java. The choice depends on
+      long-term goals, timeline, and team skills.
+    common_false_claim: "Just lift and shift your mainframe to AWS."
+    correct_action: "Evaluate both replatform and refactor. Use M2 assessment tools to decide."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

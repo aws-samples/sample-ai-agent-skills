@@ -1,0 +1,147 @@
+# =============================================================================
+# AWS Storage Gateway "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-cache-vs-upload-buffer
+    trigger_words: ["cache disk", "upload buffer", "local storage", "gateway disk"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate cache disks and upload buffer disks because both
+      are local storage on the gateway VM. They serve different purposes
+      and must be separate disks.
+    actual_behavior: >
+      Cache disks store frequently accessed data locally for low-latency
+      reads. Upload buffer is temporary storage for data being uploaded
+      to AWS. Both are required and must be SEPARATE physical or virtual
+      disks. Cache minimum is 150 GB. Upload buffer minimum is 150 GB.
+      When upload buffer fills, the gateway stops accepting writes.
+      When cache is full, least-recently-used data is evicted.
+    common_false_claim: "Add a single disk for both cache and upload buffer."
+    correct_action: "Allocate separate disks for cache and upload buffer. Both minimum 150 GB, SSD recommended."
+
+  - id: P2-s3-auto-sync
+    trigger_words: ["S3 sync", "automatic refresh", "file share sync", "S3 changes visible"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume changes made directly to S3 are automatically visible
+      through the file gateway share. They are not — cache refresh is required.
+    actual_behavior: >
+      File gateway caches S3 objects locally. Changes made directly to S3
+      (not through the gateway) are NOT automatically reflected in the
+      file share. You must trigger a cache refresh: aws storagegateway
+      refresh-cache --file-share-arn <arn>. Scheduled refresh can be
+      configured but is not enabled by default. Without refresh, clients
+      see stale data through the file share.
+    common_false_claim: "Changes to S3 objects are automatically visible through the file share."
+    correct_action: "Trigger cache refresh after S3 changes: aws storagegateway refresh-cache --file-share-arn <arn>"
+
+  - id: P3-volume-mode-change
+    trigger_words: ["cached volume", "stored volume", "change volume mode", "convert volume"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest changing a volume from cached to stored mode or
+      vice versa. The mode is immutable after volume creation.
+    actual_behavior: >
+      Volume gateway mode (cached or stored) is set when creating
+      each volume and CANNOT be changed afterward. Cached volumes
+      store primary data in S3 with local cache. Stored volumes
+      store primary data locally with async S3 backup. To switch
+      modes, create a new volume, migrate data, and delete the old
+      volume. This requires application downtime.
+    common_false_claim: "Convert the cached volume to stored mode for better latency."
+    correct_action: "Create a new volume with the desired mode. Migrate data. Volume mode cannot be changed in-place."
+
+  - id: P4-activation-port-permanent
+    trigger_words: ["port 80", "activation", "gateway ports", "firewall rules"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest keeping port 80 open permanently for gateway
+      operation. Port 80 is only needed during activation.
+    actual_behavior: >
+      Port 80 (HTTP) is used ONLY during gateway activation to
+      retrieve the activation key. After activation, port 80 can
+      and should be closed. Normal operation uses port 443 (HTTPS)
+      for AWS communication. Additional ports: 1026-1028, 1031
+      for local console, 2222 for support channel, 3260 for iSCSI
+      (volume/tape gateways only).
+    common_false_claim: "Keep port 80 open for gateway communication with AWS."
+    correct_action: "Open port 80 only during activation. Close after. Keep port 443 open for normal operation."
+
+  - id: P5-tape-instant-retrieval
+    trigger_words: ["tape retrieval", "archived tape", "Glacier tape", "restore tape"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest archived tapes can be accessed immediately.
+      Retrieval from Glacier takes hours.
+    actual_behavior: >
+      Virtual tapes in the tape library (VTL) are accessible immediately.
+      Archived tapes (in S3 Glacier or S3 Glacier Deep Archive) require
+      retrieval before access. Glacier retrieval: 3-5 hours. Deep Archive
+      retrieval: 12 hours. Retrieved tapes appear in the VTL. You cannot
+      read archived tapes without first retrieving them. Plan for
+      retrieval time in disaster recovery procedures.
+    common_false_claim: "Access the archived tape directly from Glacier."
+    correct_action: "Retrieve archived tape first (3-5 hours for Glacier, 12 hours for Deep Archive), then access from VTL."
+
+  - id: P6-gateway-type-change
+    trigger_words: ["change gateway type", "convert gateway", "file to volume", "gateway migration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest converting a file gateway to a volume gateway
+      or vice versa. Gateway type is set at deployment and cannot
+      be changed.
+    actual_behavior: >
+      Gateway type (File, Volume, Tape) is determined at deployment
+      and CANNOT be changed. To switch types, you must deploy a new
+      gateway VM, activate it as the desired type, and reconfigure
+      shares/volumes/tapes. The old gateway must be deleted separately.
+      Each gateway type has different resource requirements and
+      supported features.
+    common_false_claim: "Convert the file gateway to a volume gateway."
+    correct_action: "Deploy a new gateway VM with the desired type. Gateway type cannot be changed in-place."
+
+  - id: P7-bandwidth-bytes-vs-bits
+    trigger_words: ["bandwidth limit", "rate limit", "upload speed", "download speed"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse bits per second and bytes per second when
+      configuring bandwidth limits. The API uses bits per second.
+    actual_behavior: >
+      Storage Gateway bandwidth rate limits are specified in BITS
+      per second, not bytes. The minimum is 51200 bps (50 Kbps).
+      To set a 100 Mbps upload limit, use 104857600 (not 13107200).
+      Upload and download limits are set independently. Setting
+      limits too low causes upload buffer to fill and gateway to
+      stop accepting writes.
+    common_false_claim: "Set bandwidth to 100000000 for 100 MB/s upload."
+    correct_action: "Bandwidth is in bits/sec. For 100 Mbps: 104857600. For 100 MB/s: 838860800."
+
+  - id: P8-ad-join-simple
+    trigger_words: ["Active Directory", "AD join", "SMB authentication", "domain join"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs oversimplify AD join requirements, suggesting it's just
+      a username/password operation. Multiple prerequisites must be met.
+    actual_behavior: >
+      Joining a gateway to Active Directory requires: (1) DNS must
+      resolve the AD domain name from the gateway, (2) gateway must
+      reach AD domain controllers on ports 389 (LDAP), 445 (SMB),
+      88 (Kerberos), 53 (DNS), (3) time difference between gateway
+      and AD must be less than 5 minutes, (4) valid AD credentials
+      with domain join permissions. Failed joins are usually DNS
+      resolution or time sync issues, not credential problems.
+    common_false_claim: "Just provide AD credentials to join the domain."
+    correct_action: "Verify DNS resolution, port connectivity, time sync, then join with valid credentials."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

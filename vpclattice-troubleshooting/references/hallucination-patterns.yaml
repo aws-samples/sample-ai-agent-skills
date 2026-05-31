@@ -1,0 +1,133 @@
+# =============================================================================
+# Amazon VPC Lattice "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-dns-resolution
+    trigger_words: ["DNS resolution", "service discovery", "lattice DNS", "resolve service"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume VPC Lattice DNS works for any VPC in the region.
+      DNS resolution requires VPC association with the service network.
+    actual_behavior: >
+      VPC Lattice service DNS names only resolve from VPCs that are
+      associated with the service network. The VPC association must
+      be in ACTIVE state. Without association, DNS queries return
+      NXDOMAIN. Check vpc-lattice list-service-network-vpc-associations.
+    common_false_claim: "Any VPC in the region can resolve VPC Lattice service names."
+    correct_action: "Associate the client VPC with the service network. Verify ACTIVE state."
+
+  - id: P2-single-auth-policy
+    trigger_words: ["auth policy", "authorization", "access control", "policy deny"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs check only one auth policy level. VPC Lattice evaluates
+      auth policies at BOTH service network AND service levels.
+    actual_behavior: >
+      Auth policies are evaluated at two levels: service network and
+      service. BOTH must allow the request. A deny at either level
+      blocks access. An empty policy (auth type NONE) defaults to
+      allow. Check get-auth-policy for both the service network
+      and the service resource identifiers.
+    common_false_claim: "Set the auth policy on the service to control access."
+    correct_action: "Check auth policies at BOTH service network and service levels."
+
+  - id: P3-lambda-health-checks
+    trigger_words: ["Lambda health check", "target health", "Lambda target", "health status"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs apply health check concepts uniformly to all target types.
+      Lambda targets do not support health checks in VPC Lattice.
+    actual_behavior: >
+      VPC Lattice does not perform health checks on Lambda targets.
+      Lambda function availability is determined per-request. Health
+      checks only apply to IP, Instance, and ALB target types.
+      Lambda targets always show as healthy if the function exists.
+    common_false_claim: "Configure health checks for your Lambda target group."
+    correct_action: "Lambda targets don't support health checks. Check Lambda function errors directly."
+
+  - id: P4-access-logs-default
+    trigger_words: ["access logs", "request logs", "lattice logs", "traffic logs"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume logging is enabled by default for security services.
+      VPC Lattice requires explicit access log subscription creation.
+    actual_behavior: >
+      Access logs are NOT enabled by default. You must create an
+      access log subscription on the service network using
+      create-access-log-subscription. Logs can go to CloudWatch
+      Logs, S3, or Kinesis Data Firehose. Without this, no request
+      details are captured.
+    common_false_claim: "Check the VPC Lattice access logs for the failed request."
+    correct_action: "Create access log subscription first, then check logs."
+
+  - id: P5-target-type-change
+    trigger_words: ["change target type", "modify target group", "switch targets", "update target type"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest modifying target group type as a simple update.
+      Target type is immutable after creation.
+    actual_behavior: >
+      Target group type (IP, INSTANCE, LAMBDA, ALB) is set at
+      creation and cannot be changed. To switch target types,
+      create a new target group with the desired type, update
+      listener rules to point to the new group, then delete
+      the old group.
+    common_false_claim: "Update the target group to change from IP to Lambda type."
+    correct_action: "Create new target group with desired type. Update listener rules. Delete old group."
+
+  - id: P6-cross-account-auto
+    trigger_words: ["cross-account", "share service", "multi-account", "RAM sharing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs skip the RAM acceptance step for cross-account sharing.
+      Consumer accounts must accept the RAM share.
+    actual_behavior: >
+      Cross-account sharing requires: (1) Owner creates RAM resource
+      share with service network or service. (2) Consumer account
+      accepts the RAM share (auto-accept if same Organization with
+      setting enabled). (3) Consumer associates their VPC with the
+      shared service network. All three steps are required.
+    common_false_claim: "Share the service network ARN and the other account can use it."
+    correct_action: "Use RAM to share. Consumer must accept share and associate VPC."
+
+  - id: P7-link-local-security
+    trigger_words: ["security group", "NACL", "network ACL", "connectivity", "blocked traffic"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs forget that VPC Lattice uses link-local addresses that
+      must be allowed in security groups and NACLs.
+    actual_behavior: >
+      VPC Lattice traffic uses link-local addresses 169.254.171.0/24
+      (IPv4) and fd00:ec2:80::/48 (IPv6). Security groups must allow
+      outbound traffic to these prefixes. NACLs must allow both
+      outbound to and inbound from these ranges. Blocking link-local
+      ranges breaks VPC Lattice connectivity entirely.
+    common_false_claim: "Open the service port in the security group to the service IP."
+    correct_action: "Allow outbound to 169.254.171.0/24 (IPv4) or fd00:ec2:80::/48 (IPv6) in security groups."
+
+  - id: P8-service-association-required
+    trigger_words: ["service not reachable", "service unavailable", "cannot connect", "service down"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume creating a service makes it immediately available.
+      Services must be associated with a service network.
+    actual_behavior: >
+      A service must be associated with a service network to receive
+      traffic. Creating a service alone does not make it reachable.
+      The service-network-service-association must be in ACTIVE state.
+      Check list-service-network-service-associations to verify.
+    common_false_claim: "Create the service and clients can connect immediately."
+    correct_action: "Associate the service with a service network. Verify ACTIVE association state."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

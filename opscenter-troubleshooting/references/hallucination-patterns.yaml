@@ -1,0 +1,135 @@
+# =============================================================================
+# AWS SSM OpsCenter "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-incident-management
+    trigger_words: ["OpsCenter", "incident", "incident management", "outage"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs conflate OpsCenter with incident management. OpsCenter
+      is for operational issues, not incident response.
+    actual_behavior: >
+      OpsCenter tracks operational issues (OpsItems) for
+      investigation and resolution. For incident management
+      with escalation, response plans, and timelines, use AWS
+      Incident Manager. OpsCenter and Incident Manager are
+      complementary but distinct services.
+    common_false_claim: "Use OpsCenter to manage incidents and outages."
+    correct_action: "Use OpsCenter for operational issues. Use Incident Manager for incidents requiring coordinated response."
+
+  - id: P2-auto-remediation
+    trigger_words: ["auto-fix", "automatic remediation", "self-healing", "auto-resolve"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest OpsCenter automatically remediates issues.
+      OpsCenter provides runbooks but doesn't auto-execute them.
+    actual_behavior: >
+      OpsCenter associates automation runbooks with OpsItems but
+      does NOT automatically execute them. Runbook execution must
+      be initiated manually or through separate automation (e.g.,
+      EventBridge → Lambda → SSM). OpsCenter is a tracking and
+      investigation tool, not an auto-remediation engine.
+    common_false_claim: "OpsCenter automatically fixes operational issues using runbooks."
+    correct_action: "Associate runbooks with OpsItems for guided remediation. Execute runbooks manually or via separate automation."
+
+  - id: P3-dedup-content-based
+    trigger_words: ["deduplication", "duplicate OpsItems", "merge", "dedup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest deduplication is content-based. It uses a
+      specific dedup string in operational data.
+    actual_behavior: >
+      OpsItem deduplication is based on the /aws/dedup operational
+      data key. Only OpsItems with the SAME dedup string value
+      are deduplicated. It is NOT based on title, description,
+      or other content similarity. Without a dedup string, every
+      CreateOpsItem call creates a new OpsItem.
+    common_false_claim: "OpsCenter automatically deduplicates similar issues."
+    correct_action: "Set the /aws/dedup operational data key with a consistent string for items that should be deduplicated."
+
+  - id: P4-cross-account-automatic
+    trigger_words: ["cross-account", "all accounts", "organization-wide"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest OpsItems are automatically visible across
+      accounts. OpsCenter is regional and account-scoped.
+    actual_behavior: >
+      OpsItems are scoped to a single account and region. To view
+      OpsItems across accounts, you must configure SSM Explorer
+      with AWS Organizations. Without this setup, each account's
+      OpsItems are isolated and not visible from other accounts.
+    common_false_claim: "OpsCenter shows all operational issues across your organization."
+    correct_action: "Configure SSM Explorer with Organizations for cross-account OpsItem visibility."
+
+  - id: P5-opsitem-lifecycle
+    trigger_words: ["OpsItem status", "lifecycle", "auto-close", "auto-resolve"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest OpsItems auto-resolve or have automatic
+      lifecycle management. Status changes are manual.
+    actual_behavior: >
+      OpsItem status (Open, InProgress, Resolved) must be changed
+      manually or through automation. There is no automatic status
+      progression, no auto-close after a period, and no auto-resolve
+      when the underlying issue is fixed. Status management is
+      entirely manual or automation-driven.
+    common_false_claim: "OpsItems automatically close when the issue is resolved."
+    correct_action: "Update OpsItem status manually or build automation to update status based on resource state changes."
+
+  - id: P6-related-resources-live
+    trigger_words: ["related resources", "linked resources", "resource tracking"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest related resources provide live status. They
+      are static ARN references.
+    actual_behavior: >
+      Related resources in OpsItems are static ARN references
+      added at creation or update time. They do NOT provide live
+      resource status, auto-update when resources change, or
+      reflect current resource state. Always query the resource
+      directly for current status.
+    common_false_claim: "Related resources show the current state of affected resources."
+    correct_action: "Use related resource ARNs to identify affected resources, then query each resource directly for current state."
+
+  - id: P7-eventbridge-automatic
+    trigger_words: ["EventBridge", "automatic OpsItem", "event-driven"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest EventBridge automatically creates OpsItems
+      for all AWS events. Rules must be explicitly configured.
+    actual_behavior: >
+      EventBridge creates OpsItems only when specific rules are
+      configured to target SSM OpsCenter. AWS provides some
+      default rules for services like Config and CloudWatch, but
+      these must be enabled. Custom event patterns require custom
+      rules. Without rules, no OpsItems are created automatically.
+    common_false_claim: "EventBridge automatically creates OpsItems for all AWS service events."
+    correct_action: "Configure EventBridge rules with SSM OpsCenter as target for specific event patterns."
+
+  - id: P8-notification-builtin
+    trigger_words: ["notification", "alert", "notify", "OpsItem alert"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest OpsCenter has built-in notifications. It
+      requires EventBridge + SNS configuration.
+    actual_behavior: >
+      OpsCenter does NOT have built-in notification capabilities.
+      To receive notifications when OpsItems are created or
+      updated, you must configure EventBridge rules to match
+      OpsItem events and route them to SNS topics, Lambda
+      functions, or other targets.
+    common_false_claim: "OpsCenter sends notifications when new OpsItems are created."
+    correct_action: "Configure EventBridge rules for OpsItem events → SNS topic for notifications."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

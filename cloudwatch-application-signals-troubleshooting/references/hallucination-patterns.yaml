@@ -1,0 +1,161 @@
+# =============================================================================
+# CloudWatch Application Signals "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+hallucination_patterns:
+
+  - id: P1-single-agent-sufficient
+    trigger_words: ["Application Signals", "CloudWatch agent", "setup", "install"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest installing only the CloudWatch agent is sufficient
+      for Application Signals. Both the CloudWatch agent AND the ADOT
+      auto-instrumentation agent are required.
+    actual_behavior: >
+      Application Signals requires two components: the CloudWatch agent
+      (for metric forwarding and configuration) and the AWS Distro for
+      OpenTelemetry (ADOT) auto-instrumentation agent (for generating
+      traces, metrics, and service metadata). Installing only the
+      CloudWatch agent provides infrastructure metrics but NOT
+      Application Signals service-level data.
+    common_false_claim: "Install the CloudWatch agent to enable Application Signals."
+    correct_action: "Install both the CloudWatch agent and ADOT auto-instrumentation agent. On EKS, use the CloudWatch Observability addon."
+
+  - id: P2-auto-discovery-all-services
+    trigger_words: ["auto-discover", "automatic discovery", "all services", "detect services"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Application Signals automatically discovers all
+      services. Discovery depends on proper instrumentation attributes.
+    actual_behavior: >
+      Service discovery requires the ADOT agent to inject specific
+      OpenTelemetry resource attributes: service.name, deployment.environment,
+      and telemetry.sdk.language. Services without these attributes
+      will not appear in Application Signals. Discovery is not
+      automatic — it depends on correct instrumentation configuration.
+    common_false_claim: "Application Signals automatically discovers all services in your account."
+    correct_action: "Ensure ADOT agent is configured with correct resource attributes. Verify service.name and deployment.environment are set."
+
+  - id: P3-insufficient-data-means-healthy
+    trigger_words: ["insufficient data", "no data", "SLO healthy", "no issues"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs interpret SLO "Insufficient Data" as meaning the service
+      is healthy. It actually means metrics are not flowing.
+    actual_behavior: >
+      "Insufficient Data" on an SLO means CloudWatch does not have
+      enough metric data points to evaluate the SLO. This typically
+      indicates an instrumentation problem, metric collection failure,
+      or the service is not generating traffic. It does NOT mean the
+      service is healthy or meeting its SLO target.
+    common_false_claim: "The SLO shows Insufficient Data, so the service is fine."
+    correct_action: "Investigate why metrics are missing. Check instrumentation, CloudWatch agent, and ADOT agent status."
+
+  - id: P4-slo-creates-alarms
+    trigger_words: ["SLO alarm", "automatic alert", "SLO notification", "breach alert"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest creating an SLO automatically creates alarms.
+      SLOs and alarms are configured separately.
+    actual_behavior: >
+      Creating an SLO in Application Signals defines the objective
+      and tracks compliance. It does NOT automatically create
+      CloudWatch alarms or SNS notifications. Alarms must be
+      configured separately using CloudWatch Alarms, referencing
+      the SLO metrics or using composite alarms for error budget
+      monitoring.
+    common_false_claim: "Create an SLO and you'll be alerted when it breaches."
+    correct_action: "Create the SLO, then separately configure CloudWatch Alarms for SLO breach and error budget consumption."
+
+  - id: P5-all-languages-supported
+    trigger_words: ["any language", "all languages", "auto-instrument", "universal"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Application Signals auto-instrumentation works
+      with any programming language. Only specific languages are supported.
+    actual_behavior: >
+      ADOT auto-instrumentation supports Java, Python, .NET, and
+      Node.js. Other languages (Go, Rust, C++, etc.) require manual
+      OpenTelemetry SDK instrumentation to emit the correct metrics
+      and traces for Application Signals. Auto-instrumentation
+      language support has specific version requirements.
+    common_false_claim: "Application Signals works with any programming language."
+    correct_action: "Verify the application language is supported. For unsupported languages, implement manual OpenTelemetry instrumentation."
+
+  - id: P6-xray-not-needed
+    trigger_words: ["traces", "tracing", "X-Ray", "distributed tracing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Application Signals replaces X-Ray for tracing.
+      They are complementary and both are needed for full functionality.
+    actual_behavior: >
+      Application Signals uses X-Ray as the backend for distributed
+      tracing. Trace correlation, service dependency mapping, and
+      operation-level metrics all depend on X-Ray trace data. Disabling
+      X-Ray or not propagating trace context breaks these features.
+      Application Signals adds SLO monitoring and service-level views
+      on top of X-Ray tracing.
+    common_false_claim: "Application Signals replaces X-Ray for tracing."
+    correct_action: "Enable both Application Signals and X-Ray. Ensure trace context propagation between services."
+
+  - id: P7-real-time-slo
+    trigger_words: ["real-time SLO", "instant evaluation", "live SLO", "immediate breach"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SLOs evaluate in real-time. SLOs use rolling
+      windows and periodic evaluation.
+    actual_behavior: >
+      SLOs evaluate over rolling time windows (e.g., 30 days).
+      Evaluation happens periodically, not in real-time. A brief
+      spike in errors may not immediately show as an SLO breach
+      if the error budget has sufficient remaining capacity. SLO
+      status reflects the aggregate performance over the window.
+    common_false_claim: "SLOs immediately detect and alert on any service degradation."
+    correct_action: "Use SLOs for aggregate service health. Use CloudWatch Alarms for real-time anomaly detection."
+
+  - id: P8-eks-auto-setup
+    trigger_words: ["EKS automatic", "addon installs everything", "one-click", "auto-configure"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the EKS addon automatically instruments all
+      workloads. The addon deploys agents but workloads need
+      annotation for auto-instrumentation.
+    actual_behavior: >
+      The CloudWatch Observability EKS addon deploys the CloudWatch
+      agent and ADOT components as a DaemonSet. However, individual
+      workloads must be annotated for auto-instrumentation (e.g.,
+      instrumentation.opentelemetry.io/inject-java: "true"). The
+      addon does not automatically instrument all pods — only those
+      with the correct annotations.
+    common_false_claim: "Install the EKS addon and all workloads are automatically instrumented."
+    correct_action: "Install the addon, then annotate workloads for auto-instrumentation. Restart pods after annotation."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-slo
+    trigger_words: ["delete SLO", "recreate SLO", "reset SLO"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting and recreating an SLO resets its evaluation history.
+      The rolling window starts fresh, losing historical compliance
+      data. This can mask ongoing issues and disrupt error budget
+      tracking.
+    correct_approach: >
+      Update the existing SLO configuration instead of deleting.
+      Use update-service-level-objective to modify targets, metrics,
+      or evaluation windows. Only delete if the SLO is fundamentally
+      misconfigured and historical data is not needed.
+
+  - id: R2-disable-instrumentation
+    trigger_words: ["disable instrumentation", "remove agent", "stop tracing"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Disabling instrumentation to troubleshoot performance issues
+      removes all observability data. This makes it impossible to
+      diagnose the original problem and creates a monitoring gap.
+      SLOs will show Insufficient Data during the gap.
+    correct_approach: >
+      Instead of disabling instrumentation, reduce sampling rate
+      if overhead is a concern. Use ADOT sampling configuration
+      to control trace volume. Keep metrics collection active
+      even if trace sampling is reduced.

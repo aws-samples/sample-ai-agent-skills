@@ -1,0 +1,138 @@
+# =============================================================================
+# AWS Security Hub "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-controls-independent
+    trigger_words: ["security control", "control evaluation", "control check", "security check"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume Security Hub controls are independent security checks.
+      Most controls evaluate underlying AWS Config rules and require
+      Config to be enabled.
+    actual_behavior: >
+      Most Security Hub controls are backed by AWS Config rules. Without
+      Config recorder running and recording the required resource types,
+      controls show NO_DATA or UNKNOWN status. The control does not
+      perform its own independent evaluation — it reads the Config rule
+      compliance result.
+    common_false_claim: "Security Hub controls independently check your resources for compliance."
+    correct_action: "Always verify Config is enabled and recording required resource types before troubleshooting controls."
+
+  - id: P2-cross-region-automatic
+    trigger_words: ["cross-region", "all regions", "global view", "centralized findings"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Security Hub automatically aggregates findings across
+      regions. Cross-region aggregation requires explicit setup.
+    actual_behavior: >
+      Findings are regional by default. A finding aggregator must be
+      explicitly created in the aggregation region using
+      create-finding-aggregator. The aggregator can link specific
+      regions or all regions. Cross-region and cross-account aggregation
+      are separate configurations.
+    common_false_claim: "Security Hub provides a global view of findings across all regions automatically."
+    correct_action: "Create a finding aggregator in the desired aggregation region to enable cross-region visibility."
+
+  - id: P3-disable-deletes-findings
+    trigger_words: ["disable control", "turn off control", "stop control", "control disabled"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest disabling a control removes its findings. Existing
+      findings remain until manually archived or they age out.
+    actual_behavior: >
+      Disabling a control stops NEW finding generation and evaluation.
+      Existing findings remain in Security Hub until manually archived
+      or they reach the 90-day retention limit. Disabled controls are
+      excluded from compliance score calculation. Re-enabling triggers
+      fresh evaluation.
+    common_false_claim: "Disable the control to remove all its findings from your dashboard."
+    correct_action: "Disable the control to stop new findings. Manually archive existing findings if needed."
+
+  - id: P4-asff-optional
+    trigger_words: ["finding format", "import findings", "third-party findings", "custom findings"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest findings can be imported in any format. ASFF is
+      mandatory for all findings in Security Hub.
+    actual_behavior: >
+      All findings must conform to AWS Security Finding Format (ASFF).
+      Required fields include SchemaVersion, Id, ProductArn, GeneratorId,
+      AwsAccountId, Types, CreatedAt, UpdatedAt, Severity, Title, and
+      Resources. Missing required fields cause BatchImportFindings to
+      fail. Third-party integrations must transform to ASFF.
+    common_false_claim: "Import your findings in JSON format and Security Hub will normalize them."
+    correct_action: "Transform all findings to ASFF format before importing. Validate required fields."
+
+  - id: P5-score-all-controls
+    trigger_words: ["compliance score", "security score", "score calculation", "passing percentage"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs miscalculate the compliance score by including disabled
+      controls or misunderstanding NO_DATA treatment.
+    actual_behavior: >
+      Score = (passed controls / total enabled controls) × 100.
+      Disabled controls are excluded from both numerator and denominator.
+      Controls with NO_DATA count as NOT passed (reduce score).
+      Disabling failing controls artificially improves the score.
+    common_false_claim: "Your compliance score includes all controls, even disabled ones."
+    correct_action: "Understand that disabled controls are excluded. NO_DATA controls reduce the score."
+
+  - id: P6-custom-action-standalone
+    trigger_words: ["custom action", "action target", "manual action", "finding action"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest custom actions perform remediation directly.
+      Custom actions only send events to EventBridge — they need
+      rules to be useful.
+    actual_behavior: >
+      Custom actions send events to EventBridge with the selected
+      findings. Without corresponding EventBridge rules to process
+      these events, custom actions do nothing. The event source is
+      aws.securityhub with detail-type "Security Hub Findings -
+      Custom Action". EventBridge rules must match the custom action
+      ARN.
+    common_false_claim: "Create a custom action to automatically remediate the finding."
+    correct_action: "Create the custom action AND an EventBridge rule with a target (Lambda, SNS, etc.)."
+
+  - id: P7-finding-retention-unlimited
+    trigger_words: ["finding retention", "finding history", "old findings", "finding archive"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest findings are retained indefinitely. Findings are
+      deleted 90 days after their last update.
+    actual_behavior: >
+      Security Hub retains findings for 90 days after the last update
+      (UpdatedAt timestamp). Findings not updated within 90 days are
+      automatically deleted. Active findings continuously updated by
+      their source are retained. For long-term retention, export
+      findings to S3 via EventBridge.
+    common_false_claim: "Security Hub keeps all your findings forever for historical analysis."
+    correct_action: "Export findings to S3 for long-term retention. Findings auto-delete after 90 days of inactivity."
+
+  - id: P8-consolidated-findings-default
+    trigger_words: ["consolidated findings", "duplicate findings", "finding per standard", "control findings"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not account for consolidated control findings behavior,
+      which changes how findings are generated per control.
+    actual_behavior: >
+      With consolidated control findings enabled (default for new
+      accounts), Security Hub generates ONE finding per security check
+      per resource, regardless of how many standards include that
+      control. Without consolidation, separate findings are generated
+      for each standard. This affects finding count and reporting.
+    common_false_claim: "Each standard generates its own separate finding for every control check."
+    correct_action: "Check if consolidated control findings is enabled. It affects finding count and deduplication."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

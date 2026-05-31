@@ -1,0 +1,121 @@
+# =============================================================================
+# Amazon IVS "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-rtmp-vs-rtmps
+    trigger_words: ["RTMP", "ingest", "stream URL", "encoder config"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest RTMP for IVS ingest. IVS requires RTMPS (TLS).
+    actual_behavior: >
+      IVS only accepts RTMPS (RTMP over TLS) for ingest. The ingest
+      endpoint uses rtmps:// protocol. Plain rtmp:// connections are
+      rejected. Encoders must be configured for RTMPS.
+    common_false_claim: "Stream to rtmp://ingest.ivs.us-east-1.amazonaws.com"
+    correct_action: "Use rtmps:// protocol. Get exact ingest endpoint from channel creation response."
+
+  - id: P2-hls-player-low-latency
+    trigger_words: ["low latency", "sub-second", "real-time playback", "latency"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest any HLS player achieves low latency with IVS.
+      Only the IVS Player SDK provides sub-second latency.
+    actual_behavior: >
+      Standard HLS players add 10-15 seconds of latency. The IVS
+      Player SDK uses WebRTC when available for sub-second latency,
+      falling back to low-latency HLS. For true low-latency, the
+      IVS Player SDK is required.
+    common_false_claim: "Use HLS.js for low-latency IVS playback."
+    correct_action: "Use IVS Player SDK (Web, iOS, Android) for low-latency playback."
+
+  - id: P3-realtime-vs-lowlatency
+    trigger_words: ["stage", "real-time", "WebRTC", "multi-host"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse IVS Low-Latency Streaming with IVS Real-Time.
+      They are different products with different APIs.
+    actual_behavior: >
+      IVS Low-Latency uses channels and RTMPS ingest for one-to-many
+      streaming. IVS Real-Time uses stages and WebRTC for interactive
+      multi-participant sessions. Different APIs: ivs vs ivs-realtime.
+    common_false_claim: "Create an IVS channel for multi-host interactive streaming."
+    correct_action: "Use IVS Real-Time (stages) for interactive multi-participant, IVS channels for broadcast."
+
+  - id: P4-channel-type-change
+    trigger_words: ["upgrade channel", "change type", "BASIC to STANDARD"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest changing channel type. Channel type is immutable.
+    actual_behavior: >
+      Channel type (BASIC, STANDARD, ADVANCED) cannot be changed after
+      creation. To change type, create a new channel with the desired
+      type, update the stream key in the encoder, and delete the old channel.
+    common_false_claim: "Update the channel type from BASIC to STANDARD."
+    correct_action: "Create new channel with desired type, migrate stream key, delete old channel."
+
+  - id: P5-recording-active-stream
+    trigger_words: ["start recording", "record stream", "enable recording"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest recording can be enabled on an active stream.
+      Recording config must be attached before the stream starts.
+    actual_behavior: >
+      Recording configuration must be attached to the channel before
+      the stream begins. Attaching recording config during an active
+      stream does not record the current stream. Only the next stream
+      will be recorded.
+    common_false_claim: "Attach recording config to start recording the current stream."
+    correct_action: "Attach recording config, then start (or restart) the stream."
+
+  - id: P6-chat-token-server-side
+    trigger_words: ["chat token", "create chat token", "chat authentication"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs generate chat tokens client-side. Tokens must be
+      generated server-side with AWS credentials.
+    actual_behavior: >
+      Chat tokens must be generated server-side using the
+      CreateChatToken API with AWS credentials. The token is then
+      passed to the client. Client-side token generation would
+      expose AWS credentials. Tokens have configurable expiration.
+    common_false_claim: "Call CreateChatToken from the browser JavaScript."
+    correct_action: "Generate tokens server-side (Lambda, backend), pass to client."
+
+  - id: P7-all-regions-available
+    trigger_words: ["region", "create channel", "availability"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs assume IVS is available in all AWS regions.
+    actual_behavior: >
+      IVS is available in select regions only. Check AWS documentation
+      for current region availability. Creating resources in unsupported
+      regions fails. Recording S3 buckets must be in the same region.
+    common_false_claim: "Create an IVS channel in any AWS region."
+    correct_action: "Check IVS region availability, create resources in supported regions."
+
+  - id: P8-playback-url-construction
+    trigger_words: ["playback URL", "stream URL", "viewer URL"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs construct playback URLs manually. The URL is returned
+      by the API and should not be manually constructed.
+    actual_behavior: >
+      The playback URL is returned in the create-channel or
+      get-channel API response. It follows a specific format
+      that includes a unique identifier. Do not construct URLs
+      manually as the format may change.
+    common_false_claim: "The playback URL is https://ivs.us-east-1.amazonaws.com/<channel-id>"
+    correct_action: "Use the playbackUrl from get-channel API response."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

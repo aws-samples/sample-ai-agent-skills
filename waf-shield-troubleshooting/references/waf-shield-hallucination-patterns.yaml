@@ -1,0 +1,151 @@
+# =============================================================================
+# WAF & Shield "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-rule-priority-ordering-confusion
+    trigger_words: ["rule priority", "rule order", "evaluation order", "rule precedence"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs sometimes claim rules are evaluated alphabetically, by creation
+      date, or by rule type. In reality, WAF evaluates rules strictly by
+      priority number in ascending order (lowest number first).
+    actual_behavior: >
+      Rules are evaluated by their numeric priority value, lowest first.
+      Priority 0 is evaluated before priority 1. If a rule with a
+      terminating action (Block or Allow) matches, evaluation stops
+      immediately. Count actions do not stop evaluation. Priority
+      numbers must be unique within a web ACL.
+    common_false_claim: "WAF evaluates Block rules before Allow rules regardless of priority."
+    correct_action: "Check rule priority numbers. Lowest priority number is evaluated first."
+
+  - id: P2-wcu-unlimited-assumption
+    trigger_words: ["WCU", "capacity", "rule limit", "web ACL limit"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest adding many complex rules without considering WCU
+      limits. Each web ACL has a 1,500 WCU hard limit that constrains
+      the total complexity of all rules combined.
+    actual_behavior: >
+      Each web ACL has a 1,500 WCU default limit. Different rule types
+      consume different WCU amounts. Regex patterns cost 25 WCUs each.
+      Text transformations beyond the first add 10 WCUs each. Managed
+      rule groups consume their published WCU amount. The limit can be
+      increased via AWS Support but is not unlimited.
+    common_false_claim: "Add as many rules as you need to the web ACL."
+    correct_action: "Check current WCU usage before adding rules. Use describe-managed-rule-group to check managed group WCU costs."
+
+  - id: P3-rate-based-rule-instant-blocking
+    trigger_words: ["rate limit", "rate-based", "throttle", "request rate"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim rate-based rules block immediately after the threshold
+      is reached. The evaluation uses a sliding 5-minute window and
+      there is inherent latency in detection and enforcement.
+    actual_behavior: >
+      Rate-based rules evaluate over a sliding 5-minute window. The
+      minimum threshold is 100 requests. There is a short delay (typically
+      30 seconds to 2 minutes) between exceeding the threshold and
+      blocking taking effect. IPs are automatically unblocked when their
+      rate drops below the threshold. The rule does not block the exact
+      101st request instantly.
+    common_false_claim: "Set the rate limit to 10 requests per 5 minutes to block scrapers."
+    correct_action: "Minimum threshold is 100. Expect a short delay before blocking takes effect."
+
+  - id: P4-shield-standard-ddos-protection-scope
+    trigger_words: ["Shield Standard", "DDoS protection", "free DDoS", "automatic protection"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs overstate Shield Standard capabilities, claiming it provides
+      L7 protection, cost protection, or SRT access. Shield Standard
+      only covers L3/L4 attacks.
+    actual_behavior: >
+      Shield Standard is free and automatic. It protects against common
+      L3/L4 DDoS attacks (SYN floods, UDP reflection, DNS amplification).
+      It does NOT provide L7 (application layer) protection, DDoS cost
+      protection, SRT access, or advanced metrics. These features require
+      Shield Advanced at $3,000/month per organization.
+    common_false_claim: "Shield Standard protects against all DDoS attacks including application layer."
+    correct_action: "Shield Standard = L3/L4 only. Shield Advanced required for L7, cost protection, and SRT."
+
+  - id: P5-waf-blocks-all-ddos
+    trigger_words: ["WAF DDoS", "WAF protection", "WAF blocks attacks"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest WAF alone can stop DDoS attacks. WAF operates at L7
+      and cannot mitigate volumetric L3/L4 attacks. WAF rate-based rules
+      help with L7 floods but have limitations.
+    actual_behavior: >
+      WAF operates at the application layer (L7) only. It can mitigate
+      L7 DDoS attacks using rate-based rules, but cannot stop volumetric
+      L3/L4 attacks (SYN floods, UDP reflection). Shield Standard handles
+      L3/L4. For comprehensive protection, use Shield Advanced + WAF
+      together. WAF rate-based rules have a minimum threshold of 100
+      requests per 5 minutes.
+    common_false_claim: "Deploy WAF to protect against DDoS attacks."
+    correct_action: "WAF handles L7 only. Use Shield for L3/L4. Combine both for comprehensive protection."
+
+  - id: P6-body-inspection-full-content
+    trigger_words: ["body inspection", "request body", "POST body", "payload inspection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume WAF inspects the entire request body. By default,
+      WAF only inspects the first 8 KB. Content beyond the limit
+      passes through without inspection.
+    actual_behavior: >
+      Default body inspection limit is 8 KB. For REGIONAL web ACLs,
+      this can be increased to 16 KB, 32 KB, or 64 KB (increases WCU
+      cost). For CLOUDFRONT web ACLs, the limit is fixed at 8 KB.
+      Content beyond the configured limit is NOT inspected and passes
+      through. The oversize handling action determines what happens to
+      requests exceeding the limit (Continue, Match, or No Match).
+    common_false_claim: "WAF inspects the entire request body for SQL injection."
+    correct_action: "Check body inspection limit. Default is 8 KB. Increase for REGIONAL if needed."
+
+  - id: P7-managed-rules-auto-update
+    trigger_words: ["managed rules", "rule update", "AWS rules", "managed rule group"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs claim managed rule groups update silently without notice.
+      AWS provides SNS notifications for version changes and you can
+      pin to specific versions.
+    actual_behavior: >
+      AWS managed rule groups are versioned. By default, web ACLs use
+      the default version set by AWS. When AWS updates the default
+      version, your web ACL automatically uses the new version. You
+      can pin to a specific version to prevent automatic updates. AWS
+      publishes version change notifications via SNS. Always test new
+      versions in Count mode before enforcing. Version expiration
+      policies apply — expired versions are automatically upgraded.
+    common_false_claim: "AWS managed rules update automatically and you cannot control the version."
+    correct_action: "Pin to a specific version if needed. Subscribe to SNS notifications for updates."
+
+  - id: P8-shield-advanced-automatic
+    trigger_words: ["Shield Advanced", "enable Shield", "Shield setup"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest Shield Advanced is automatic once subscribed. In
+      reality, you must explicitly add protections to each resource
+      and configure health checks for cost protection.
+    actual_behavior: >
+      Shield Advanced subscription enables the service but does NOT
+      automatically protect resources. You must explicitly add each
+      resource (CloudFront, ALB, EIP, Global Accelerator, Route 53
+      hosted zone) using create-protection. For DDoS cost protection,
+      each resource needs an associated Route 53 health check. SRT
+      access requires an IAM role. Proactive engagement requires
+      health checks and contact information.
+    common_false_claim: "Subscribe to Shield Advanced and all your resources are automatically protected."
+    correct_action: "Subscribe, then explicitly add protections per resource. Configure health checks for cost protection."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

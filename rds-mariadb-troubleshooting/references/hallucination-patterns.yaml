@@ -1,0 +1,104 @@
+# =============================================================================
+# RDS MariaDB "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-mysql-gtid-confusion
+    trigger_words: ["MySQL GTID", "UUID GTID", "GTID_MODE", "gtid_executed"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse MariaDB GTID (domain-server_id-sequence) with MySQL
+      GTID (UUID-based). The formats and protocols are incompatible.
+    actual_behavior: >
+      MariaDB uses its own GTID format: domain_id-server_id-sequence_number.
+      MySQL GTID variables like GTID_MODE do not exist in MariaDB.
+    common_false_claim: "Check GTID_MODE and gtid_executed for replication status."
+    correct_action: "Use SHOW SLAVE STATUS or check gtid_slave_pos for MariaDB GTID replication."
+
+  - id: P2-super-privilege
+    trigger_words: ["SUPER", "SET GLOBAL", "CHANGE MASTER"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest SUPER privilege operations from self-managed docs.
+    actual_behavior: >
+      RDS MariaDB does not grant SUPER. Use RDS stored procedures.
+    common_false_claim: "Run SET GLOBAL to change system variables."
+    correct_action: "Use parameter groups or mysql.rds_set_configuration()."
+
+  - id: P3-readable-standby
+    trigger_words: ["read from standby", "query standby", "standby reads"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse Multi-AZ standby with read replicas.
+    actual_behavior: >
+      Multi-AZ standby is for failover only. Not accessible for reads.
+    common_false_claim: "Connect to the Multi-AZ standby for read queries."
+    correct_action: "Create read replicas for read scaling."
+
+  - id: P4-mariadb-is-mysql
+    trigger_words: ["MySQL 10", "MySQL compatible", "same as MySQL"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat MariaDB as identical to MySQL. While forked from MySQL,
+      MariaDB has diverged significantly in features and internals.
+    actual_behavior: >
+      MariaDB has unique features: thread pool, system-versioned tables,
+      Aria engine, different optimizer, different GTID, different
+      replication internals. Not all MySQL features/syntax work.
+    common_false_claim: "MariaDB is the same as MySQL, use MySQL troubleshooting."
+    correct_action: "Use MariaDB-specific documentation and syntax. Check version-specific features."
+
+  - id: P5-in-place-pitr
+    trigger_words: ["restore in place", "in-place recovery"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest in-place restore. RDS PITR always creates a new instance.
+    actual_behavior: >
+      PITR creates a new DB instance with a new endpoint.
+    common_false_claim: "Use PITR to roll back the database."
+    correct_action: "Restore to a new instance, verify, redirect applications."
+
+  - id: P6-mycnf-editing
+    trigger_words: ["my.cnf", "/etc/mysql", "config file"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest editing config files. No filesystem access on RDS.
+    actual_behavior: >
+      Configuration via RDS parameter groups only.
+    common_false_claim: "Edit my.cnf to change settings."
+    correct_action: "Modify the RDS parameter group."
+
+  - id: P7-aria-for-production
+    trigger_words: ["Aria engine", "use Aria", "Aria tables"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Aria as a production engine since it's MariaDB-specific.
+      Aria is primarily for internal temporary tables.
+    actual_behavior: >
+      Aria is crash-safe but lacks full transactional support like InnoDB.
+      It's used internally for temporary tables. InnoDB is recommended
+      for all production data.
+    common_false_claim: "Use Aria engine for better performance on read-heavy tables."
+    correct_action: "Use InnoDB for production tables. Aria is for internal use."
+
+  - id: P8-encrypt-existing
+    trigger_words: ["enable encryption", "encrypt existing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest enabling encryption on running instances.
+    actual_behavior: >
+      Encryption at rest must be set at creation. Cannot encrypt in-place.
+    common_false_claim: "Enable encryption on your existing instance."
+    correct_action: "Snapshot, copy with encryption, restore from encrypted copy."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

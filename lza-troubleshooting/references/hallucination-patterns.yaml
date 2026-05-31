@@ -1,0 +1,164 @@
+# =============================================================================
+# Landing Zone Accelerator "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-lza-creates-accounts-directly
+    trigger_words: ["LZA creates accounts", "LZA provisions accounts", "account creation"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest LZA directly creates AWS accounts via the
+      Organizations API. LZA uses Control Tower Account Factory.
+    actual_behavior: >
+      LZA creates accounts through AWS Control Tower Account Factory
+      (Service Catalog), not directly via the Organizations API.
+      The accounts-config.yaml defines accounts, and LZA submits
+      provisioning requests to Control Tower. Account creation
+      failures should be diagnosed at the Control Tower level,
+      not the Organizations API level.
+    common_false_claim: "LZA calls organizations:CreateAccount to provision new accounts."
+    correct_action: "Check Control Tower Account Factory and Service Catalog for account provisioning status."
+
+  - id: P2-edit-cloudformation-directly
+    trigger_words: ["edit CloudFormation", "modify stack", "update template", "fix stack"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest directly editing CloudFormation stacks or
+      templates to fix LZA issues. LZA regenerates stacks from config.
+    actual_behavior: >
+      LZA generates CloudFormation templates from configuration
+      files via CDK synthesis. Directly editing CloudFormation
+      stacks or templates is overwritten on the next pipeline run.
+      All changes must be made in the LZA configuration files
+      (YAML) and deployed through the pipeline.
+    common_false_claim: "Update the CloudFormation template to fix the resource configuration."
+    correct_action: "Modify the appropriate LZA configuration YAML file and re-run the pipeline."
+
+  - id: P3-single-config-file
+    trigger_words: ["LZA config", "configuration file", "config.yaml"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs refer to a single LZA configuration file. LZA uses
+      six separate configuration files with different scopes.
+    actual_behavior: >
+      LZA uses six configuration files: accounts-config.yaml
+      (account definitions), organization-config.yaml (OU structure,
+      SCPs), network-config.yaml (VPCs, TGW, routing), security-config.yaml
+      (security services), global-config.yaml (global settings,
+      logging), and customizations-config.yaml (custom resources).
+      Each file has a specific schema and scope.
+    common_false_claim: "Update the LZA configuration file to add a new VPC."
+    correct_action: "Identify the correct configuration file (network-config.yaml for VPCs) and update it."
+
+  - id: P4-instant-deployment
+    trigger_words: ["deploy immediately", "instant", "quick change", "fast update"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest LZA changes deploy quickly. Full pipeline
+      runs take 1–3 hours across all accounts and regions.
+    actual_behavior: >
+      LZA pipeline runs deploy CloudFormation stacks across
+      multiple accounts and regions sequentially. A full pipeline
+      run typically takes 1–3 hours depending on the number of
+      accounts, regions, and changes. Some changes (VPC creation,
+      Transit Gateway) take even longer due to AWS resource
+      provisioning times.
+    common_false_claim: "Make the change and it will deploy in a few minutes."
+    correct_action: "Plan for 1–3 hour deployment windows. Monitor pipeline progress through each stage."
+
+  - id: P5-rollback-is-simple
+    trigger_words: ["rollback", "undo", "revert", "roll back changes"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest LZA changes can be easily rolled back. Some
+      changes (account creation, OU moves) are irreversible.
+    actual_behavior: >
+      Not all LZA changes are reversible. Account creation cannot
+      be undone (accounts must go through the closure process).
+      OU restructuring may have cascading SCP effects. Network
+      changes may disrupt connectivity. Reverting configuration
+      files and re-running the pipeline works for some changes
+      but not all. Always assess rollback feasibility before
+      making changes.
+    common_false_claim: "Just revert the config file and re-run the pipeline to undo the change."
+    correct_action: "Assess rollback feasibility. For reversible changes, revert config and re-run. For irreversible changes, plan forward fixes."
+
+  - id: P6-lza-manages-everything
+    trigger_words: ["LZA manages", "all resources", "everything in the account"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest LZA manages all resources in all accounts.
+      LZA manages specific resources defined in configuration.
+    actual_behavior: >
+      LZA manages only the resources defined in its configuration
+      files. It creates and manages OUs, SCPs, VPCs, security
+      services, logging, and other infrastructure components.
+      It does NOT manage application workloads, databases, or
+      resources created outside of LZA configuration. Resources
+      not in LZA config are not affected by LZA pipeline runs.
+    common_false_claim: "LZA manages all resources in your AWS accounts."
+    correct_action: "LZA manages infrastructure defined in its config files. Application resources are managed separately."
+
+  - id: P7-config-validation-catches-all
+    trigger_words: ["validation", "config check", "validate config", "syntax check"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest LZA config validation catches all errors.
+      Validation checks schema but not all semantic issues.
+    actual_behavior: >
+      LZA validates configuration file schema (required fields,
+      types, references) during CDK synthesis. However, it cannot
+      validate all semantic issues: CIDR conflicts, resource
+      limits, cross-account permission issues, or AWS service
+      availability in specific regions. Many errors only surface
+      during CloudFormation deployment.
+    common_false_claim: "If CDK synth passes, the deployment will succeed."
+    correct_action: "CDK synth validates schema. Deployment validates resources. Both can fail independently."
+
+  - id: P8-customizations-override-core
+    trigger_words: ["customizations", "override", "custom config", "extend"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest customizations-config.yaml can override
+      core LZA resources. It can only add new resources.
+    actual_behavior: >
+      The customizations-config.yaml adds resources on top of
+      LZA-managed infrastructure. It does NOT override or modify
+      resources managed by the core configuration files. Attempting
+      to manage the same resource in both core config and
+      customizations causes CloudFormation conflicts and
+      deployment failures.
+    common_false_claim: "Use customizations-config.yaml to override the VPC configuration."
+    correct_action: "Modify core config files for LZA-managed resources. Use customizations only for additional resources."
+
+remediation_hallucinations:
+
+  - id: R1-delete-cloudformation-stacks
+    false_advice: "Delete the failed CloudFormation stacks and re-run the pipeline."
+    why_dangerous: >
+      Deleting LZA-managed CloudFormation stacks removes the
+      infrastructure they manage (VPCs, security groups, IAM roles).
+      This can cause service outages, security gaps, and
+      irrecoverable state inconsistencies. LZA expects its stacks
+      to exist and will fail if they are missing.
+    correct_approach: >
+      Fix the configuration error that caused the stack failure.
+      Re-run the pipeline to update the stack. If the stack is
+      in ROLLBACK_COMPLETE, it may need to be deleted, but only
+      after understanding what resources it manages and ensuring
+      they can be safely recreated.
+
+  - id: R2-modify-resources-outside-lza
+    false_advice: "Manually fix the resource in the AWS console to resolve the error."
+    why_dangerous: >
+      Manually modifying LZA-managed resources causes drift.
+      The next pipeline run will either fail (detecting the
+      unexpected state) or overwrite the manual change. This
+      creates an unreliable cycle of manual fixes and pipeline
+      failures.
+    correct_approach: >
+      Make all changes through LZA configuration files and the
+      pipeline. If an emergency manual change is needed, document
+      it and update the LZA configuration to match before the
+      next pipeline run.

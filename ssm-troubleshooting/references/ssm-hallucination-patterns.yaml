@@ -1,0 +1,154 @@
+# =============================================================================
+# AWS Systems Manager "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-agent-only-sufficient
+    trigger_words: ["SSM Agent", "install agent", "agent installed", "managed instance"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest installing the SSM Agent is sufficient for managed
+      instance functionality. The agent requires an IAM instance profile
+      with AmazonSSMManagedInstanceCore policy to communicate with SSM.
+    actual_behavior: >
+      SSM Agent requires BOTH installation AND an IAM instance profile
+      with AmazonSSMManagedInstanceCore (or equivalent permissions).
+      Without the IAM role, the agent cannot authenticate to SSM
+      endpoints and the instance will not appear in Fleet Manager.
+      Amazon Linux 2 and Windows Server 2016+ have the agent
+      pre-installed but still need the IAM role.
+    common_false_claim: "Install the SSM Agent on the instance to make it a managed instance."
+    correct_action: "Install SSM Agent AND attach IAM instance profile with AmazonSSMManagedInstanceCore policy."
+
+  - id: P2-single-vpc-endpoint
+    trigger_words: ["VPC endpoint", "private subnet", "no internet", "ssm endpoint"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest creating a single SSM VPC endpoint for full
+      functionality. Three separate endpoints are required for
+      complete SSM functionality.
+    actual_behavior: >
+      Full SSM functionality requires three VPC endpoints:
+      com.amazonaws.<region>.ssm (API calls),
+      com.amazonaws.<region>.ssmmessages (Session Manager),
+      com.amazonaws.<region>.ec2messages (Run Command).
+      Missing ssmmessages breaks Session Manager. Missing
+      ec2messages breaks Run Command. All three need proper
+      security group rules allowing HTTPS from instance subnets.
+    common_false_claim: "Create a VPC endpoint for SSM to enable Systems Manager in private subnets."
+    correct_action: "Create all three VPC endpoints: ssm, ssmmessages, and ec2messages."
+
+  - id: P3-run-command-unlimited-timeout
+    trigger_words: ["Run Command", "command timeout", "long running", "script timeout"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Run Command can run indefinitely or that the
+      timeout is the only limit. There is also a 2-hour idle
+      timeout that terminates commands producing no output.
+    actual_behavior: >
+      Run Command has two timeout mechanisms: the configurable
+      execution timeout (default 3600s, max 172800s) and an
+      idle timeout that terminates commands producing no output
+      for 2 hours. Long-running scripts must write periodic
+      output to stdout/stderr to avoid the idle timeout. The
+      maximum document size for Run Command is 64KB.
+    common_false_claim: "Set the timeout to 48 hours for long-running scripts."
+    correct_action: "Set execution timeout AND ensure scripts produce periodic output to avoid 2-hour idle timeout."
+
+  - id: P4-parameter-store-free-unlimited
+    trigger_words: ["Parameter Store", "free tier", "parameter limit", "parameter size"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse standard and advanced parameter tier limits
+      and costs. Standard is free with limits; advanced has costs
+      but higher limits.
+    actual_behavior: >
+      Standard parameters: free, 10,000 max per account/region,
+      4KB max size, 40 TPS default throughput. Advanced parameters:
+      $0.05/month each, 100,000 max, 8KB max size, parameter
+      policies supported. Higher throughput (1,000 TPS) is a
+      separate opt-in setting that costs extra. Advanced parameters
+      CANNOT be converted back to standard.
+    common_false_claim: "Parameter Store is free for all parameters up to 8KB."
+    correct_action: "Standard tier is free (4KB, 10K params). Advanced tier costs $0.05/month (8KB, 100K params)."
+
+  - id: P5-session-manager-ssh-replacement
+    trigger_words: ["Session Manager", "SSH", "port 22", "inbound rules"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Session Manager requires inbound port 22 or
+      that it uses SSH under the hood. Session Manager uses
+      outbound HTTPS via the ssmmessages endpoint.
+    actual_behavior: >
+      Session Manager provides interactive shell access WITHOUT
+      any inbound ports. It uses the SSM Agent's outbound HTTPS
+      connection to the ssmmessages endpoint. No SSH keys, no
+      bastion hosts, no inbound security group rules needed.
+      However, the Session Manager plugin must be installed on
+      the local machine for CLI usage. Session logging can be
+      sent to S3 or CloudWatch Logs.
+    common_false_claim: "Open port 22 in the security group for Session Manager access."
+    correct_action: "Ensure outbound HTTPS to ssmmessages endpoint. No inbound ports needed."
+
+  - id: P6-patch-baseline-cross-os
+    trigger_words: ["patch baseline", "patching", "patch group", "baseline"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest a single patch baseline can cover multiple
+      operating systems. Baselines are OS-specific.
+    actual_behavior: >
+      Each patch baseline targets exactly one operating system.
+      AWS provides separate default baselines for Windows,
+      Amazon Linux 2, Ubuntu, RHEL, SUSE, etc. Custom baselines
+      must specify the OS. A patch group can only be registered
+      to one baseline per OS. Applying a Windows baseline to
+      Linux instances has no effect and may cause errors.
+    common_false_claim: "Create a single patch baseline for all your instances."
+    correct_action: "Create separate patch baselines per OS. Register patch groups to OS-specific baselines."
+
+  - id: P7-automation-runs-on-instance
+    trigger_words: ["Automation", "runbook", "automation document", "aws:executeScript"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse Automation documents with Command documents.
+      Automation runs in the SSM service context, not directly
+      on instances.
+    actual_behavior: >
+      Automation documents (schemaVersion 0.3) run in the SSM
+      service context and use steps like aws:executeAwsApi,
+      aws:approve, aws:branch, aws:executeScript (Lambda-like).
+      They do NOT run directly on instances. To run commands on
+      instances from Automation, use the aws:runCommand step.
+      Command documents (schemaVersion 2.2) run directly on
+      instances. Using the wrong schema version causes failures.
+    common_false_claim: "Create an Automation document to run shell commands directly on the instance."
+    correct_action: "Use aws:runCommand step in Automation to execute on instances. Automation itself runs in SSM service."
+
+  - id: P8-hybrid-activation-reusable
+    trigger_words: ["hybrid activation", "on-premises", "mi-", "activation code"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest activation codes can be reused indefinitely.
+      Activations have a registration limit and expiration date.
+    actual_behavior: >
+      Hybrid activations have a registration limit (number of
+      instances that can register) and an expiration date. Once
+      the limit is reached or the activation expires, no new
+      instances can register with that activation. Each registered
+      instance gets a unique "mi-" prefixed ID. The IAM service
+      role for hybrid instances is separate from EC2 instance
+      profiles and must trust the ssm.amazonaws.com service.
+    common_false_claim: "Create one activation and use it for all on-premises servers indefinitely."
+    correct_action: "Create activations with appropriate registration limits and expiration. Monitor usage."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

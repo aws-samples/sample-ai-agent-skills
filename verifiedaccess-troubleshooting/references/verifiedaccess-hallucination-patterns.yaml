@@ -1,0 +1,145 @@
+# =============================================================================
+# AWS Verified Access "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-iam-policy-syntax
+    trigger_words: ["Verified Access policy", "access policy", "Cedar policy", "policy document"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs default to IAM JSON policy syntax when discussing AWS
+      access policies. Verified Access uses Cedar, a completely
+      different policy language.
+    actual_behavior: >
+      Verified Access policies use Cedar language with permit/forbid
+      statements and when clauses. Example: permit(principal, action,
+      resource) when { context.identity.groups.contains("engineering") };
+      Cedar is NOT JSON. It has its own syntax, operators, and types.
+      IAM policy elements (Effect, Action, Resource, Condition) do
+      NOT apply to Cedar policies.
+    common_false_claim: "Add an IAM policy with Effect: Allow and Condition for Verified Access."
+    correct_action: "Write a Cedar policy: permit(principal, action, resource) when { context.<provider>.<claim> == \"value\" };"
+
+  - id: P2-policy-on-endpoint
+    trigger_words: ["endpoint policy", "attach policy to endpoint", "endpoint access control"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest attaching policies to endpoints because endpoints
+      are the access points. Policies are on groups, not endpoints.
+    actual_behavior: >
+      Cedar policies are attached to Verified Access GROUPS, not
+      endpoints. Endpoints inherit the policy of their parent group.
+      All endpoints in a group share the same policy. To apply
+      different policies to different applications, place them in
+      different groups. Use aws ec2 modify-verified-access-group-policy
+      to set group policies.
+    common_false_claim: "Attach a policy to the Verified Access endpoint."
+    correct_action: "Set policy on the group: aws ec2 modify-verified-access-group-policy --verified-access-group-id <id> --policy-document <cedar>"
+
+  - id: P3-network-firewall-replacement
+    trigger_words: ["replace firewall", "network security", "replace security groups", "zero trust network"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs position Verified Access as a replacement for network
+      security controls. It operates at the application layer only.
+    actual_behavior: >
+      Verified Access evaluates policies at the HTTP/HTTPS application
+      layer based on identity and device context. It does NOT replace
+      security groups, NACLs, or network firewalls. Network-level
+      controls are still needed for defense in depth. Verified Access
+      complements network security by adding identity-aware access
+      control at the application layer.
+    common_false_claim: "Replace your security groups with Verified Access for zero trust."
+    correct_action: "Use Verified Access alongside security groups. It adds application-layer identity checks, not network filtering."
+
+  - id: P4-auto-logging
+    trigger_words: ["access logs", "Verified Access logs", "audit trail", "log analysis"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume access logging is enabled by default because
+      it's critical for security. It must be explicitly enabled.
+    actual_behavior: >
+      Verified Access does NOT log access decisions by default.
+      Logging must be explicitly enabled on the Verified Access
+      instance using modify-verified-access-instance-logging-configuration.
+      Logs can go to CloudWatch Logs, S3, or Kinesis Data Firehose.
+      Without logging, you cannot see policy evaluation results,
+      denied requests, or user context.
+    common_false_claim: "Check the Verified Access logs for denied requests."
+    correct_action: "First enable logging, then check logs. Logging is not enabled by default."
+
+  - id: P5-trust-provider-grants-access
+    trigger_words: ["trust provider", "identity provider", "device trust", "grant access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest trust providers grant or deny access. They only
+      supply context data for policy evaluation.
+    actual_behavior: >
+      Trust providers supply context (user identity claims, device
+      posture) that Cedar policies evaluate. The trust provider
+      itself does NOT make access decisions. A user authenticated
+      by the identity provider is still denied if the Cedar policy
+      doesn't permit access. Device trust providers report device
+      state but don't enforce compliance — policies do.
+    common_false_claim: "Configure the trust provider to allow access for this user group."
+    correct_action: "Trust providers supply context. Write Cedar policies that evaluate the context to permit/deny access."
+
+  - id: P6-multiple-identity-providers
+    trigger_words: ["multiple IdP", "multiple identity providers", "two OIDC", "switch provider"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest attaching multiple identity providers to one
+      instance. Only one identity and one device provider are allowed.
+    actual_behavior: >
+      A Verified Access instance supports exactly ONE identity trust
+      provider and ONE device trust provider. You cannot attach
+      multiple identity providers (e.g., two OIDC providers) to the
+      same instance. To support multiple identity sources, use a
+      single IdP that federates multiple sources, or create separate
+      Verified Access instances.
+    common_false_claim: "Add a second OIDC provider for the partner organization."
+    correct_action: "One identity provider per instance. Federate multiple sources through a single IdP."
+
+  - id: P7-dns-auto-configured
+    trigger_words: ["endpoint DNS", "access URL", "endpoint domain", "custom domain"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume DNS is automatically configured when creating
+      an endpoint. A CNAME record must be manually created.
+    actual_behavior: >
+      Each Verified Access endpoint gets a generated DNS name but
+      you must create a CNAME record in your DNS zone pointing your
+      application domain to the endpoint DNS name. Without the CNAME,
+      users cannot reach the application through Verified Access.
+      The endpoint DNS name format is:
+      <endpoint-id>.prod.verified-access.<region>.amazonaws.com.
+    common_false_claim: "Users can access the application immediately after endpoint creation."
+    correct_action: "Create a DNS CNAME record: app.example.com → <endpoint-dns-name>. Then users access app.example.com."
+
+  - id: P8-cedar-context-path
+    trigger_words: ["context path", "policy reference", "claim access", "context variable"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs guess at Cedar context paths without knowing the trust
+      provider's policy reference name, leading to policy failures.
+    actual_behavior: >
+      Cedar context paths use the format: context.<policy-reference-name>.<claim>.
+      The policy reference name is set when creating the trust provider
+      and must match exactly in policies. For example, if the trust
+      provider has policyReferenceName="myoidc", use context.myoidc.email.
+      Using context.identity.email (wrong reference name) causes the
+      policy to evaluate the claim as missing, resulting in deny.
+    common_false_claim: "Use context.identity.email in your Cedar policy."
+    correct_action: "Use the exact policy reference name: context.<your-policy-reference-name>.<claim>. Check trust provider config for the name."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

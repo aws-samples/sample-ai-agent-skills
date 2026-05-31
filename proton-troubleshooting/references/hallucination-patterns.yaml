@@ -1,0 +1,137 @@
+# =============================================================================
+# AWS Proton "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-proton-runs-terraform
+    trigger_words: ["terraform apply", "proton terraform", "proton runs terraform", "terraform state"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume Proton directly executes Terraform like it does
+      CloudFormation. For self-managed provisioning, Proton only
+      manages desired state — external infrastructure runs Terraform.
+    actual_behavior: >
+      Proton with self-managed provisioning sends provisioning requests
+      (desired state) but does NOT execute terraform apply. You must
+      set up external infrastructure (CodeBuild, GitHub Actions) to
+      listen for Proton events and execute Terraform. Proton manages
+      CloudFormation directly but NOT Terraform.
+    common_false_claim: "Proton will automatically run terraform apply when you deploy."
+    correct_action: "Set up external provisioning pipeline for Terraform. Proton only manages desired state for self-managed provisioning."
+
+  - id: P2-deploy-draft-version
+    trigger_words: ["deploy draft", "use draft version", "draft template"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs may not distinguish between DRAFT and PUBLISHED template
+      version states. Only PUBLISHED versions can be deployed.
+    actual_behavior: >
+      Template versions must be in PUBLISHED status before they can
+      be used for environment or service deployment. DRAFT versions
+      are for development and testing. Publishing is a separate step
+      after registration. REGISTRATION_FAILED versions must be fixed
+      and re-registered.
+    common_false_claim: "Create the template version and immediately deploy it."
+    correct_action: "Register the template version, wait for DRAFT status, then publish it before deploying."
+
+  - id: P3-auto-codestar-auth
+    trigger_words: ["create connection", "auto authorize", "connection API", "programmatic connection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest CodeStar connections can be fully created and
+      authorized via API. The authorization step requires manual
+      console interaction.
+    actual_behavior: >
+      CodeStar connections created via API or CLI start in PENDING
+      status. Authorization requires completing an OAuth flow in the
+      AWS Console with the Git provider. This manual step cannot be
+      automated. The connection must reach AVAILABLE status before use.
+    common_false_claim: "Create and authorize the CodeStar connection using the AWS CLI."
+    correct_action: "Create the connection via CLI, then complete authorization manually in the AWS Console."
+
+  - id: P4-proton-auto-remediate-drift
+    trigger_words: ["auto fix drift", "drift remediation", "automatic drift correction"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest Proton automatically fixes detected drift.
+      Drift detection is informational only.
+    actual_behavior: >
+      Proton can detect drift between desired and actual infrastructure
+      state, but it does NOT automatically remediate drift. Manual
+      intervention is required — either update the environment/service
+      to the desired state or accept the drift. Drift detection helps
+      identify issues but does not fix them.
+    common_false_claim: "Proton will automatically correct any infrastructure drift it detects."
+    correct_action: "Review drift details and manually update or redeploy to resolve the difference."
+
+  - id: P5-component-auto-provision
+    trigger_words: ["proton provisions component", "auto component", "component managed by proton"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs conflate Proton-managed resources with customer-managed
+      components. Components are explicitly customer-managed.
+    actual_behavior: >
+      Proton components are customer-managed infrastructure attached
+      to service instances. The customer is responsible for provisioning
+      and managing component infrastructure. Proton tracks component
+      state and outputs but does not provision or update components
+      automatically.
+    common_false_claim: "Proton will automatically provision the component infrastructure."
+    correct_action: "Provision component infrastructure yourself and register it with Proton."
+
+  - id: P6-single-iam-role
+    trigger_words: ["proton role", "single role", "one IAM role"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may suggest a single IAM role for all Proton operations.
+      Proton uses multiple specialized roles.
+    actual_behavior: >
+      Proton uses separate IAM roles: Proton service role (for API
+      operations), pipeline service role (for CI/CD), component role
+      (for component provisioning), and environment provisioning role.
+      Each role has different trust policies and permission requirements.
+      Using the wrong role causes permission failures.
+    common_false_claim: "Create one IAM role with all permissions for Proton."
+    correct_action: "Create separate roles for each Proton function with appropriate trust policies and permissions."
+
+  - id: P7-template-bundle-format
+    trigger_words: ["template file", "upload template", "template format"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may suggest incorrect template bundle structures or
+      missing required files like schema.yaml or manifest.yaml.
+    actual_behavior: >
+      Proton template bundles require a specific directory structure:
+      schema/ directory with schema.yaml defining inputs/outputs,
+      infrastructure/ directory with CloudFormation or Terraform
+      templates and manifest.yaml, and optionally pipeline/ for
+      service templates. The bundle is uploaded as a tar.gz to S3.
+    common_false_claim: "Just upload your CloudFormation template directly to Proton."
+    correct_action: "Create a properly structured template bundle with schema.yaml, manifest.yaml, and infrastructure templates."
+
+  - id: P8-environment-before-service
+    trigger_words: ["create service first", "service without environment", "skip environment"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs may not enforce the deployment ordering requirement.
+      Services depend on environment outputs.
+    actual_behavior: >
+      Environments must be fully provisioned (IN_SERVICE status)
+      before services can be deployed into them. Service templates
+      reference environment outputs as inputs. Creating a service
+      before its environment is ready will fail with missing input
+      errors.
+    common_false_claim: "You can create the service and environment simultaneously."
+    correct_action: "Deploy the environment first, wait for IN_SERVICE status, then create the service."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

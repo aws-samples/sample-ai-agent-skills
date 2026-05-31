@@ -1,0 +1,136 @@
+# =============================================================================
+# AWS Application Migration Service "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-discovery
+    trigger_words: ["MGN", "discover servers", "automatic discovery"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest MGN automatically discovers source servers.
+      MGN requires manual agent installation on each server.
+    actual_behavior: >
+      AWS MGN does NOT auto-discover servers. The AWS Replication
+      Agent must be installed on each source server manually. The
+      agent registers with MGN and begins replication. Without
+      agent installation, servers do not appear in MGN.
+    common_false_claim: "MGN will scan your network and discover servers to migrate."
+    correct_action: "Install the AWS Replication Agent on each source server individually."
+
+  - id: P2-cutover-reversible
+    trigger_words: ["cutover", "finalize", "rollback", "undo cutover"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest FinalizeCutover can be undone. Once finalized,
+      replication stops permanently and cannot be resumed.
+    actual_behavior: >
+      FinalizeCutover is a one-way operation. It permanently stops
+      replication for the source server. After finalization, you
+      cannot resume replication, roll back, or re-migrate through
+      MGN without re-installing the agent and starting fresh.
+      Always validate thoroughly before finalizing.
+    common_false_claim: "If something goes wrong after cutover, just roll back."
+    correct_action: "Test thoroughly before FinalizeCutover. Keep source server running until validation is complete. Rollback means reverting DNS/traffic to source."
+
+  - id: P3-waves-affect-replication
+    trigger_words: ["wave", "application group", "migration wave", "batch migration"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest waves control replication timing or behavior.
+      Waves are purely organizational groupings.
+    actual_behavior: >
+      Waves and Applications in MGN are organizational constructs
+      for grouping servers logically. They do NOT control when
+      replication starts, how data is replicated, or launch
+      behavior. Each server replicates independently. Waves help
+      with planning and tracking but have no technical effect.
+    common_false_claim: "Add servers to a wave to replicate them together."
+    correct_action: "Use waves for organizational tracking. Replication starts when the agent is installed, regardless of wave assignment."
+
+  - id: P4-instant-migration
+    trigger_words: ["migrate instantly", "quick migration", "fast cutover"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs understate the time required for migration. Initial
+      sync alone can take hours to days.
+    actual_behavior: >
+      Migration with MGN requires: agent installation, initial
+      sync (hours to days depending on data volume), continuous
+      replication to reach steady state, test launch validation,
+      and finally cutover. The entire process typically takes
+      days to weeks per server. Cutover itself takes minutes
+      but requires prior replication completion.
+    common_false_claim: "Migrate your servers to AWS in minutes with MGN."
+    correct_action: "Plan for days of initial sync plus validation time. Cutover is fast only after replication is complete."
+
+  - id: P5-mgn-drs-simultaneous
+    trigger_words: ["MGN and DRS", "both services", "migration and DR"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using MGN and DRS simultaneously on the same
+      server. They share the same agent and are mutually exclusive.
+    actual_behavior: >
+      MGN and DRS share the AWS Replication Agent. A source server
+      can only be registered with one service at a time. To switch
+      from MGN to DRS (e.g., after migration for DR), you must
+      disconnect from MGN and re-register with DRS. You cannot
+      run both simultaneously on the same server.
+    common_false_claim: "Use MGN for migration and DRS for DR on the same server simultaneously."
+    correct_action: "Complete migration with MGN first, then disconnect and register with DRS for ongoing DR protection."
+
+  - id: P6-file-level-replication
+    trigger_words: ["file replication", "selective files", "specific folders"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MGN can replicate specific files or directories.
+      MGN replicates at the block level for entire disks.
+    actual_behavior: >
+      MGN performs block-level replication of entire disks. You
+      cannot select specific files, folders, or partitions for
+      replication. The only granularity is including or excluding
+      entire disks. All data on included disks is replicated,
+      including OS, applications, temp files, and data.
+    common_false_claim: "Configure MGN to replicate only your application directory."
+    correct_action: "MGN replicates entire disks. Exclude unnecessary disks at the disk level. Clean up unwanted data before or after migration."
+
+  - id: P7-no-cost-replication
+    trigger_words: ["free migration", "MGN cost", "no charge"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs claim MGN is free. While the service itself is free
+      for 90 days, infrastructure costs apply immediately.
+    actual_behavior: >
+      MGN service is free for 90 days per source server. However,
+      replication infrastructure costs (replication server EC2
+      instances, EBS volumes, S3 storage, data transfer) apply
+      from day one. Cutover and test instances incur standard
+      EC2 costs. After 90 days, MGN service charges also apply.
+    common_false_claim: "MGN is completely free to use."
+    correct_action: "MGN service is free for 90 days but infrastructure costs (EC2, EBS, S3, data transfer) apply immediately."
+
+  - id: P8-automatic-dns-update
+    trigger_words: ["DNS update", "traffic redirect", "automatic switchover"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest MGN automatically updates DNS or redirects
+      traffic after cutover. DNS changes are manual.
+    actual_behavior: >
+      MGN does NOT automatically update DNS records, load balancer
+      targets, or application configurations after cutover. The
+      migrated instance gets a new IP address. You must manually
+      update DNS records, load balancer configurations, and any
+      hardcoded references to point to the new instance.
+    common_false_claim: "After cutover, traffic automatically routes to the new instance."
+    correct_action: "Plan DNS and traffic cutover separately. Update Route 53 records, load balancer targets, and application configs manually."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

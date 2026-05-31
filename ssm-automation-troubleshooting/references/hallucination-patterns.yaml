@@ -1,0 +1,146 @@
+# =============================================================================
+# SSM Automation "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-auto-rollback
+    trigger_words: ["automation", "rollback", "auto-rollback", "undo"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest SSM Automation automatically rolls back failed
+      executions. There is no built-in auto-rollback mechanism.
+    actual_behavior: >
+      SSM Automation does NOT automatically roll back failed steps
+      or executions. If a step fails, the execution stops (or
+      continues based on onFailure setting) but does NOT undo
+      completed steps. Rollback must be implemented as explicit
+      steps in the document or handled manually.
+    common_false_claim: "SSM Automation will automatically roll back changes if a step fails."
+    correct_action: "Implement explicit rollback steps using onFailure: step:<rollback-step> or handle rollback manually."
+
+  - id: P2-latest-is-default
+    trigger_words: ["document version", "latest version", "update document", "default version"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume updating a document makes the new version the
+      default. $LATEST and $DEFAULT are independent.
+    actual_behavior: >
+      Updating an SSM document creates a new version that becomes
+      $LATEST but does NOT change $DEFAULT. Executions use $DEFAULT
+      unless a specific version is provided. You must explicitly
+      call update-document-default-version to change which version
+      executions use by default.
+    common_false_claim: "After updating the document, all new executions will use the updated version."
+    correct_action: "After updating, explicitly set default: aws ssm update-document-default-version --name <name> --document-version <version>."
+
+  - id: P3-cross-account-simple
+    trigger_words: ["cross-account", "other account", "target account", "multi-account"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest cross-account automation works by simply
+      specifying a target account ID. It requires Organizations
+      and IAM role setup.
+    actual_behavior: >
+      Cross-account automation requires AWS Organizations with
+      the source being the management account or delegated admin.
+      Target accounts need IAM roles with trust policies. The
+      automation uses sts:AssumeRole to execute in target accounts.
+      It does NOT work between standalone accounts.
+    common_false_claim: "Just specify the target account ID in the automation parameters."
+    correct_action: "Set up Organizations, create IAM roles in target accounts with trust policies, use management account or delegated admin."
+
+  - id: P4-approval-auto-approve
+    trigger_words: ["approval", "approve step", "waiting for approval", "auto-approve"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest approval steps can auto-approve or that
+      timeouts result in approval. Timeouts cause failure.
+    actual_behavior: >
+      Approval steps (aws:approve) require explicit manual approval
+      via the SSM console or API (send-automation-signal). If no
+      approver acts within the timeout period (default 7 days),
+      the step FAILS with a timeout error. There is no auto-approve
+      mechanism. The timeout is defined in the document.
+    common_false_claim: "If no one responds to the approval, it will auto-approve after the timeout."
+    correct_action: "Monitor approval requests. Set appropriate timeouts. Use SNS notifications to alert approvers."
+
+  - id: P5-calendar-delays-execution
+    trigger_words: ["change calendar", "calendar", "maintenance window", "schedule"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Change Calendar delays or queues executions
+      until the calendar opens. It blocks them entirely.
+    actual_behavior: >
+      When a Change Calendar is CLOSED, automation executions
+      referencing it are immediately rejected with
+      CalendarStateIsClosedException. The execution is NOT queued
+      or delayed — it fails immediately. You must retry the
+      execution when the calendar is OPEN.
+    common_false_claim: "The automation will wait and execute when the change calendar opens."
+    correct_action: "Check calendar state before executing. Schedule executions during open windows. Handle CalendarStateIsClosedException in calling code."
+
+  - id: P6-output-parameter-types
+    trigger_words: ["output", "step output", "parameter", "variable passing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest output parameters support complex types.
+      All outputs are strings or string lists.
+    actual_behavior: >
+      SSM Automation output parameters are always strings or
+      StringList types. Complex objects must be serialized to
+      JSON strings and parsed in subsequent steps. Output
+      references use {{stepName.outputKey}} syntax and are
+      case-sensitive. Invalid references produce empty strings,
+      not errors.
+    common_false_claim: "Pass the JSON object directly as an output parameter to the next step."
+    correct_action: "Serialize complex objects to JSON strings. Parse them in subsequent steps using aws:executeScript."
+
+  - id: P7-rate-control-parallel
+    trigger_words: ["rate control", "concurrent", "parallel", "MaxConcurrency"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest rate control runs all steps in parallel.
+      It runs the entire document against multiple targets concurrently.
+    actual_behavior: >
+      Rate Control executes the complete automation document
+      against multiple targets concurrently, controlled by
+      MaxConcurrency (number or percentage). Within each target
+      execution, steps still run sequentially. MaxErrors controls
+      how many target failures are tolerated before stopping.
+    common_false_claim: "Rate control runs all automation steps in parallel for faster execution."
+    correct_action: "Use rate control for multi-target execution. Steps within each target run sequentially. Set MaxConcurrency and MaxErrors appropriately."
+
+  - id: P8-service-role-ssm-only
+    trigger_words: ["service role", "automation role", "AssumeRole", "IAM role"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the automation service role only needs SSM
+      permissions. It needs permissions for all actions in the document.
+    actual_behavior: >
+      The automation service role (specified via AssumeRole parameter)
+      must have permissions for EVERY AWS API call made by the
+      document steps. This includes SSM permissions AND permissions
+      for EC2, S3, Lambda, IAM, or any other service the document
+      interacts with. A role with only ssm:* will fail on non-SSM steps.
+    common_false_claim: "Create a role with SSM permissions for the automation."
+    correct_action: "Grant the service role permissions for all AWS actions in the document. Review each step's required permissions."
+
+remediation_hallucinations:
+
+  - id: R1-delete-and-recreate-document
+    false_fix: "Delete the automation document and recreate it to fix versioning issues."
+    why_wrong: >
+      Deleting a document removes all versions and any executions
+      referencing it lose their document context. Version issues
+      should be fixed by creating new versions and updating the
+      default version.
+    correct_fix: "Create a new document version and update the default version. Do not delete documents with active or historical executions."
+
+  - id: R2-disable-calendar-permanently
+    false_fix: "Disable the change calendar to allow automations to run."
+    why_wrong: >
+      Change calendars exist for change management governance.
+      Disabling them bypasses organizational controls and may
+      violate compliance requirements.
+    correct_fix: "Schedule automations during calendar OPEN windows. Add calendar exceptions for emergency changes. Follow change management process."

@@ -1,0 +1,122 @@
+# =============================================================================
+# Amazon Kendra "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-instant-index
+    trigger_words: ["create index", "index creation", "new index"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Kendra indices are instantly available.
+      Index creation takes 15-30 minutes.
+    actual_behavior: >
+      Index creation provisions compute and storage infrastructure.
+      The index transitions through CREATING state. Queries fail
+      until status is ACTIVE. Plan for provisioning time.
+    common_false_claim: "Create an index and start querying immediately."
+    correct_action: "Create index, wait for ACTIVE status, then configure data sources and query."
+
+  - id: P2-auto-sync
+    trigger_words: ["data source", "sync", "documents available"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest documents are automatically indexed when added.
+      Sync must be explicitly triggered.
+    actual_behavior: >
+      After configuring a data source, StartDataSourceSyncJob must
+      be called. Sync crawls and indexes documents. Schedule-based
+      sync can be configured but is not default for all connectors.
+    common_false_claim: "Add documents to S3 and they appear in search results."
+    correct_action: "Configure data source, trigger sync, wait for completion, then query."
+
+  - id: P3-perfect-relevance
+    trigger_words: ["search relevance", "query results", "ranking"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest Kendra provides perfect relevance out of the box.
+      Relevance requires tuning and quality content.
+    actual_behavior: >
+      Kendra uses ML for relevance ranking but results depend on
+      document quality, metadata, and content structure. Relevance
+      tuning involves boosting fields, adding metadata, and using
+      relevance feedback. No search engine provides perfect results.
+    common_false_claim: "Kendra automatically returns the most relevant results."
+    correct_action: "Add metadata, configure field boosting, use relevance feedback to improve results."
+
+  - id: P4-any-document-format
+    trigger_words: ["document format", "file types", "supported formats"]
+    hallucination_risk: MEDIUM
+    why_llms_get_this_wrong: >
+      LLMs suggest Kendra supports all document formats.
+      Only specific formats are supported.
+    actual_behavior: >
+      Kendra supports HTML, PDF, MS Word, PowerPoint, plain text,
+      and a few other formats. Unsupported formats are skipped
+      during sync. Some formats require specific processing.
+    common_false_claim: "Upload any file format to Kendra."
+    correct_action: "Check supported formats. Convert unsupported formats before ingestion."
+
+  - id: P5-free-tier-unlimited
+    trigger_words: ["pricing", "free tier", "cost"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs understate Kendra costs. It is a premium service.
+    actual_behavior: >
+      Kendra Developer Edition starts at ~$810/month. Enterprise
+      Edition is significantly more. Costs include index hours,
+      document storage, and query volume. There is a limited
+      free tier for Developer Edition only.
+    common_false_claim: "Kendra is inexpensive for small workloads."
+    correct_action: "Review pricing carefully. Use Developer Edition for testing. Plan for costs."
+
+  - id: P6-edition-changeable
+    trigger_words: ["index edition", "developer edition", "enterprise edition"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest edition can be changed after creation.
+      Edition is immutable.
+    actual_behavior: >
+      Index edition (Developer or Enterprise) is set at creation
+      and cannot be changed. To switch editions, create a new
+      index and re-sync data sources. Plan edition choice carefully.
+    common_false_claim: "Upgrade from Developer to Enterprise edition."
+    correct_action: "Choose edition at creation. Create new index to change edition."
+
+  - id: P7-acl-optional
+    trigger_words: ["access control", "ACL", "document permissions"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat ACLs as optional. Misconfigured ACLs cause
+      users to see no results.
+    actual_behavior: >
+      When ACLs are enabled on a data source, queries must include
+      user context (user ID, groups). Without user context, ACL-
+      protected documents are filtered out. This is the most
+      common cause of "no results" with ACL-enabled sources.
+    common_false_claim: "ACLs are optional and don't affect query results."
+    correct_action: "Include user context in queries when ACLs are enabled. Test with and without ACLs."
+
+  - id: P8-experience-no-sso
+    trigger_words: ["experience builder", "search application", "Kendra experience"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs omit the IAM Identity Center requirement.
+    actual_behavior: >
+      Experience Builder requires AWS IAM Identity Center (SSO)
+      for user authentication. Without SSO configured in the
+      account, experience creation fails. Users must be provisioned
+      in IAM Identity Center.
+    common_false_claim: "Create a Kendra experience without any authentication setup."
+    correct_action: "Configure IAM Identity Center first. Provision users. Then create experience."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

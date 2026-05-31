@@ -1,0 +1,128 @@
+# =============================================================================
+# App Runner "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-scale-to-zero
+    trigger_words: ["scale to zero", "min instances 0", "no instances", "zero instances"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume App Runner supports scale-to-zero like Lambda or Cloud Run.
+      App Runner always maintains at least 1 warm instance (MinSize >= 1).
+    actual_behavior: >
+      App Runner MinSize defaults to 1 and cannot be set to 0. There is
+      always at least one instance running and billed. This ensures low
+      latency for the first request. MaxSize defaults to 25.
+    common_false_claim: "Set MinSize to 0 to save costs when there's no traffic."
+    correct_action: "MinSize minimum is 1. For cost optimization, use the smallest instance size and reduce MaxSize."
+
+  - id: P2-cpu-based-scaling
+    trigger_words: ["CPU scaling", "memory scaling", "CPU utilization", "auto scaling policy"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs apply ECS/EC2 auto-scaling concepts to App Runner. App Runner
+      uses concurrent request-based scaling, not resource utilization.
+    actual_behavior: >
+      App Runner scales based on MaxConcurrency (concurrent requests per
+      instance, default 100). When concurrent requests exceed MaxConcurrency
+      × current instances, App Runner adds instances. CPU and memory
+      utilization do not trigger scaling.
+    common_false_claim: "Configure a CPU utilization target of 70% for App Runner auto-scaling."
+    correct_action: "Adjust MaxConcurrency in the auto-scaling configuration. Lower values = more aggressive scaling."
+
+  - id: P3-custom-domain-acm
+    trigger_words: ["ACM certificate", "custom domain", "SSL certificate", "import certificate"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs assume App Runner custom domains work like CloudFront or ALB
+      where you provide your own ACM certificate.
+    actual_behavior: >
+      App Runner provisions and manages its own SSL certificates for custom
+      domains. You add CNAME validation records to your DNS. You do NOT
+      create, import, or attach ACM certificates. Certificate provisioning
+      and renewal are fully managed.
+    common_false_claim: "Create an ACM certificate and attach it to your App Runner service for the custom domain."
+    correct_action: "Use associate-custom-domain API and add the provided CNAME records for validation."
+
+  - id: P4-container-exec-ssh
+    trigger_words: ["SSH", "exec", "shell access", "connect to container", "debug container"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest container exec or SSH based on ECS Exec or Kubernetes
+      kubectl exec patterns. App Runner has no such capability.
+    actual_behavior: >
+      App Runner does not support any form of direct container access.
+      No SSH, no exec, no remote shell. Debugging is done through
+      CloudWatch Logs, CloudWatch Metrics, X-Ray traces, and
+      application-level logging/instrumentation.
+    common_false_claim: "Use App Runner exec to connect to the running container and debug."
+    correct_action: "Check CloudWatch Logs for application output. Add structured logging for debugging."
+
+  - id: P5-vpc-default-access
+    trigger_words: ["VPC", "private subnet", "RDS", "ElastiCache", "internal"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume App Runner services can access VPC resources by default,
+      similar to EC2 instances or ECS tasks in a VPC.
+    actual_behavior: >
+      App Runner services run outside your VPC by default and can only
+      reach public endpoints. A VPC connector must be explicitly attached
+      to access private VPC resources. The VPC connector specifies subnets
+      and security groups for the outbound connection.
+    common_false_claim: "Your App Runner service can connect to the RDS instance in your private subnet."
+    correct_action: "Create and attach a VPC connector with appropriate subnets and security groups."
+
+  - id: P6-xray-daemon-manual
+    trigger_words: ["X-Ray daemon", "X-Ray agent", "tracing setup", "install X-Ray"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest manually installing and running the X-Ray daemon in
+      the container, based on EC2 or ECS patterns.
+    actual_behavior: >
+      App Runner automatically manages the X-Ray daemon when tracing is
+      enabled via an observability configuration. The application only
+      needs the X-Ray SDK or OpenTelemetry SDK. Running a manual daemon
+      causes port conflicts (UDP 2000) and duplicate/lost traces.
+    common_false_claim: "Add the X-Ray daemon to your Dockerfile and start it alongside your application."
+    correct_action: "Create an observability configuration with tracing enabled and attach it to the service."
+
+  - id: P7-build-runtime-env-vars
+    trigger_words: ["build environment", "runtime environment", "build variable", "env var not found"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs assume environment variables are shared between build and
+      runtime phases, or that build-time variables persist to runtime.
+    actual_behavior: >
+      Build environment variables and runtime environment variables are
+      separate configurations. Build-time variables are only available
+      during the build phase. Runtime variables are only available when
+      the application runs. They must be configured independently.
+    common_false_claim: "Set the environment variable once and it will be available during both build and runtime."
+    correct_action: "Configure build environment variables in BuildConfiguration and runtime variables in the service configuration separately."
+
+  - id: P8-port-configuration
+    trigger_words: ["port", "PORT env", "listen port", "8080", "3000", "application port"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest hardcoding ports or assume the application can listen
+      on any port. App Runner requires the PORT env var to be respected.
+    actual_behavior: >
+      App Runner sets the PORT environment variable (default 8080) and
+      sends traffic and health checks to that port. The application must
+      read process.env.PORT (Node.js), os.environ['PORT'] (Python), etc.
+      If the app hardcodes a different port, health checks fail and the
+      deployment rolls back.
+    common_false_claim: "Configure your application to listen on port 3000 and set the App Runner port to 3000."
+    correct_action: "Make the application read the PORT environment variable. Set the port in App Runner service configuration if needed."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"

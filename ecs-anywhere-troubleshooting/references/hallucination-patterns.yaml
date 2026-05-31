@@ -1,0 +1,143 @@
+# =============================================================================
+# ECS Anywhere "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-awsvpc-support
+    trigger_words: ["ECS Anywhere", "awsvpc", "network mode", "ENI"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest awsvpc network mode for ECS Anywhere tasks.
+      External instances do not support awsvpc.
+    actual_behavior: >
+      ECS Anywhere external instances only support host and bridge
+      network modes. awsvpc mode requires ENI attachment which is
+      an EC2-specific feature. Task definitions with awsvpc network
+      mode will fail to place on external instances with a
+      "no container instances found" error.
+    common_false_claim: "Use awsvpc network mode for your ECS Anywhere tasks to get per-task networking."
+    correct_action: "Use host or bridge network mode. Map container ports explicitly in bridge mode."
+
+  - id: P2-ec2-instance-id
+    trigger_words: ["instance ID", "i-", "EC2 instance", "external instance"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs use EC2 instance ID format (i-*) for external instances.
+      External instances use managed instance IDs (mi-*).
+    actual_behavior: >
+      External instances registered through SSM use managed instance
+      IDs with the mi-* prefix (e.g., mi-0123456789abcdef0). They
+      are NOT EC2 instances and do not have i-* IDs. Using i-* IDs
+      in API calls for external instances will fail.
+    common_false_claim: "Find your external instance using its EC2 instance ID (i-xxx)."
+    correct_action: "Use the managed instance ID (mi-*) from SSM. Find it with: aws ssm describe-instance-information."
+
+  - id: P3-auto-runtime-install
+    trigger_words: ["ECS Anywhere", "install Docker", "container runtime", "setup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest ECS Anywhere automatically installs Docker.
+      The container runtime must be pre-installed.
+    actual_behavior: >
+      ECS Anywhere does NOT install Docker or containerd on
+      external instances. The container runtime must be installed
+      and running BEFORE the instance is registered with ECS.
+      The ECS install script installs the ECS Agent and SSM Agent
+      but expects the container runtime to already be present.
+    common_false_claim: "Register your instance with ECS and it will automatically install Docker."
+    correct_action: "Install Docker or containerd on the instance first, then run the ECS Anywhere installation script."
+
+  - id: P4-fargate-external
+    trigger_words: ["ECS Anywhere", "Fargate", "serverless", "external"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using Fargate with ECS Anywhere.
+      Fargate is a cloud-only compute option.
+    actual_behavior: >
+      Fargate is NOT available for ECS Anywhere. External instances
+      use the EXTERNAL launch type exclusively. Fargate runs
+      containers on AWS-managed infrastructure, which is
+      fundamentally incompatible with on-premises or external
+      instances. Tasks must use EXTERNAL launch type.
+    common_false_claim: "Use Fargate launch type for your ECS Anywhere tasks for easier management."
+    correct_action: "Use EXTERNAL launch type for ECS Anywhere tasks. Fargate is only for AWS-hosted containers."
+
+  - id: P5-efs-support
+    trigger_words: ["ECS Anywhere", "EFS", "shared storage", "persistent volume"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest using EFS volumes with ECS Anywhere.
+      EFS is not supported on external instances.
+    actual_behavior: >
+      ECS Anywhere external instances do NOT support EFS volume
+      mounts in task definitions. EFS requires VPC networking
+      and ENI attachment, which are EC2-specific features. For
+      shared storage on external instances, use local volumes,
+      NFS mounts configured at the host level, or bind mounts.
+    common_false_claim: "Mount an EFS volume in your ECS Anywhere task definition for shared storage."
+    correct_action: "Use bind mounts or host-level NFS mounts. Configure shared storage at the OS level, not in the task definition."
+
+  - id: P6-ssm-optional
+    trigger_words: ["SSM Agent", "optional", "alternative", "without SSM"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest SSM Agent is optional or has alternatives
+      for ECS Anywhere. It is mandatory.
+    actual_behavior: >
+      SSM Agent is MANDATORY for ECS Anywhere. It handles instance
+      registration, credential delivery, credential rotation, and
+      the communication channel between the external instance and
+      AWS. There is no alternative mechanism. If SSM Agent stops,
+      the instance loses connectivity to ECS.
+    common_false_claim: "You can register external instances without SSM Agent using IAM access keys."
+    correct_action: "Ensure SSM Agent is installed, running, and can reach SSM endpoints. It is not optional."
+
+  - id: P7-auto-scaling-external
+    trigger_words: ["ECS Anywhere", "auto scaling", "scale out", "capacity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest ECS auto-scales external instances like EC2.
+      External instance scaling is manual.
+    actual_behavior: >
+      ECS Anywhere does NOT automatically provision or terminate
+      external instances. Unlike EC2 Auto Scaling Groups, there
+      is no mechanism for ECS to add or remove external instances.
+      Capacity management for external instances is manual. ECS
+      service auto-scaling adjusts desired task count but cannot
+      add instances.
+    common_false_claim: "ECS will automatically scale your external instances based on demand."
+    correct_action: "Manually manage external instance capacity. ECS service auto-scaling adjusts tasks but not instances."
+
+  - id: P8-same-as-ec2
+    trigger_words: ["ECS Anywhere", "same as EC2", "identical", "no difference"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs treat ECS Anywhere as identical to ECS on EC2.
+      There are significant differences.
+    actual_behavior: >
+      ECS Anywhere has important differences from ECS on EC2:
+      no awsvpc network mode, no GPU support, no EFS volumes,
+      no Elastic Inference, no auto-scaling of instances, managed
+      instance IDs (mi-*) instead of EC2 IDs (i-*), credentials
+      via SSM instead of instance profiles, and different
+      placement strategies.
+    common_false_claim: "ECS Anywhere works exactly like ECS on EC2, just on your own hardware."
+    correct_action: "Review ECS Anywhere limitations. Use EXTERNAL launch type and compatible features only."
+
+remediation_hallucinations:
+
+  - id: R1-use-instance-profile
+    false_fix: "Attach an IAM instance profile to the external instance for ECS task credentials."
+    why_wrong: >
+      External instances are not EC2 instances and cannot use
+      EC2 instance profiles. Credentials are delivered through
+      SSM Agent, not instance metadata service.
+    correct_fix: "Ensure SSM Agent is running for credential delivery. Use task IAM roles (delivered via ECS Agent credential proxy)."
+
+  - id: R2-enable-awsvpc
+    false_fix: "Switch to awsvpc network mode to fix networking issues on external instances."
+    why_wrong: >
+      awsvpc network mode is not supported on external instances.
+      It requires ENI attachment which is an EC2-specific feature.
+    correct_fix: "Use host or bridge network mode. For port conflicts in host mode, use bridge mode with port mappings."

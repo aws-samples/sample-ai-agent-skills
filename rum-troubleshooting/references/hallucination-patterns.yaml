@@ -1,0 +1,159 @@
+# =============================================================================
+# CloudWatch RUM "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-synthetic-monitoring
+    trigger_words: ["RUM", "synthetic", "probes", "automated tests", "health checks"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs confuse RUM with synthetic monitoring. RUM collects
+      data from real user browser sessions only.
+    actual_behavior: >
+      CloudWatch RUM (Real User Monitoring) collects performance
+      and error data from actual user browser sessions via a
+      JavaScript snippet. It does NOT send synthetic probes,
+      automated tests, or health checks. For synthetic monitoring,
+      use CloudWatch Synthetics. RUM data depends on real users
+      visiting the application.
+    common_false_claim: "RUM automatically tests your application endpoints for availability."
+    correct_action: "RUM monitors real users. Use CloudWatch Synthetics for automated endpoint testing."
+
+  - id: P2-automatic-data-collection
+    trigger_words: ["automatic", "no setup", "out of the box", "default collection"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest RUM collects data automatically without setup.
+      A JavaScript snippet must be installed.
+    actual_behavior: >
+      RUM requires a JavaScript snippet to be embedded in the web
+      application's HTML. The snippet must be loaded before other
+      scripts for accurate timing data. Without the snippet, no
+      data is collected. The snippet also requires a Cognito
+      Identity pool for authentication.
+    common_false_claim: "Enable RUM and it automatically starts collecting data from your application."
+    correct_action: "Install the JavaScript snippet in the application and configure the Cognito Identity pool."
+
+  - id: P3-session-replay-default
+    trigger_words: ["session replay", "recording", "playback", "user recording"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest session replay is enabled by default.
+      It must be explicitly enabled and increases cost.
+    actual_behavior: >
+      Session replay is an optional feature that must be explicitly
+      enabled in the app monitor configuration. When enabled, it
+      captures DOM changes and user interactions for playback.
+      This significantly increases data volume and cost. It is
+      NOT enabled by default.
+    common_false_claim: "Check the session replay to see what the user did."
+    correct_action: "Verify session replay is enabled in the app monitor configuration before expecting replay data."
+
+  - id: P4-all-browsers-supported
+    trigger_words: ["all browsers", "every browser", "universal", "complete coverage"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest RUM works in all browsers. It depends on
+      browser API support.
+    actual_behavior: >
+      RUM relies on modern browser APIs including the Performance
+      API, Navigation Timing API, and Resource Timing API. Older
+      browsers (IE11, older mobile browsers) may not support all
+      features. Some data types may not be available in all
+      browsers. Coverage depends on the user's browser capabilities.
+    common_false_claim: "RUM provides complete performance data from all browsers."
+    correct_action: "Check browser compatibility for specific RUM features. Some data may be missing from older browsers."
+
+  - id: P5-cloudwatch-metrics-automatic
+    trigger_words: ["CloudWatch metrics", "automatic metrics", "default metrics", "RUM metrics"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest RUM data automatically appears as CloudWatch
+      metrics. Export must be explicitly configured.
+    actual_behavior: >
+      RUM data is NOT automatically exported as CloudWatch metrics.
+      Metric export must be configured using put-rum-metrics-destination
+      and batch-create-rum-metric-definitions APIs. Without this
+      configuration, RUM data is only available through the RUM
+      console and get-app-monitor-data API.
+    common_false_claim: "Check CloudWatch metrics for your RUM performance data."
+    correct_action: "Configure metric export first. Use put-rum-metrics-destination and batch-create-rum-metric-definitions."
+
+  - id: P6-cognito-optional
+    trigger_words: ["without Cognito", "no authentication", "anonymous", "direct access"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest RUM can work without Cognito. Cognito Identity
+      pools are required for browser authentication.
+    actual_behavior: >
+      RUM requires an Amazon Cognito Identity pool to authenticate
+      browser clients. The identity pool must allow unauthenticated
+      identities so that any visitor can send RUM data. The
+      associated IAM role must have rum:PutRumEvents permission.
+      Without Cognito, the JavaScript snippet cannot authenticate
+      and data collection fails silently.
+    common_false_claim: "RUM works without any authentication setup."
+    correct_action: "Configure a Cognito Identity pool with unauthenticated access and correct IAM role."
+
+  - id: P7-custom-events-default
+    trigger_words: ["custom events", "automatic events", "all events", "event tracking"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest custom events are collected automatically.
+      They require explicit configuration and API calls.
+    actual_behavior: >
+      Custom events are NOT collected by default. The app monitor
+      must have custom events enabled in its configuration, and
+      the application must explicitly call the RUM web client's
+      recordEvent API to send custom events. Standard events
+      (page loads, errors, HTTP requests) are collected automatically
+      by the snippet, but custom business events are not.
+    common_false_claim: "RUM automatically tracks all user interactions as custom events."
+    correct_action: "Enable custom events in app monitor config. Use the RUM web client recordEvent API in application code."
+
+  - id: P8-free-unlimited
+    trigger_words: ["free", "no cost", "unlimited", "pricing"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs may not accurately represent RUM pricing which is
+      based on RUM events collected.
+    actual_behavior: >
+      RUM pricing is based on the number of RUM events collected.
+      There is a free tier, but beyond that, charges apply per
+      million events. Session replay significantly increases event
+      volume. The session sample rate directly affects cost —
+      higher rates mean more events. Cognito Identity pool usage
+      may also incur costs.
+    common_false_claim: "CloudWatch RUM is free to use."
+    correct_action: "Check pricing based on event volume. Adjust session sample rate and disable session replay to control costs."
+
+remediation_hallucinations:
+
+  - id: R1-delete-recreate-monitor
+    trigger_words: ["delete monitor", "recreate", "start fresh"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Deleting an app monitor loses all historical RUM data,
+      configured metrics, and the associated Cognito Identity pool
+      configuration. The JavaScript snippet in the application
+      will stop working until updated with new monitor credentials.
+    correct_approach: >
+      Update the existing app monitor configuration instead of
+      deleting. Use update-app-monitor to change settings. Only
+      delete if the monitor is truly no longer needed and the
+      application has been updated to remove the snippet.
+
+  - id: R2-sample-rate-100-percent
+    trigger_words: ["sample rate 100%", "capture everything", "all sessions"]
+    hallucination_risk: HIGH
+    why_dangerous: >
+      Setting the session sample rate to 1.0 (100%) captures
+      every user session. For high-traffic applications, this
+      dramatically increases cost and data volume. Combined with
+      session replay, costs can escalate rapidly.
+    correct_approach: >
+      Start with a lower sample rate (0.1 or 10%) and increase
+      based on data needs and budget. For most applications,
+      10-25% sample rate provides sufficient data for analysis.
+      Calculate expected cost before increasing the sample rate.

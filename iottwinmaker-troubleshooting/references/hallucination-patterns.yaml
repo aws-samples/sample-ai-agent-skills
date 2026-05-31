@@ -1,0 +1,134 @@
+# =============================================================================
+# AWS IoT TwinMaker "Looks Real but Wrong" Hallucination Patterns
+# =============================================================================
+
+patterns:
+
+  - id: P1-workspace-no-s3
+    trigger_words: ["workspace", "create workspace", "workspace storage"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest creating workspaces without S3 buckets. Every
+      workspace requires a dedicated S3 bucket.
+    actual_behavior: >
+      Each workspace requires an S3 bucket for storing scenes, 3D
+      models, and workspace content. The bucket must exist before
+      workspace creation. The workspace IAM role must have read/write
+      access to the bucket. The bucket should be in the same region.
+    common_false_claim: "Create a workspace and it will manage its own storage."
+    correct_action: "Create an S3 bucket first, then create workspace referencing the bucket."
+
+  - id: P2-direct-database-access
+    trigger_words: ["data connector", "database query", "direct access", "data source"]
+    hallucination_risk: CRITICAL
+    why_llms_get_this_wrong: >
+      LLMs suggest TwinMaker directly queries databases. Data
+      connectors use Lambda functions as intermediaries.
+    actual_behavior: >
+      TwinMaker data connectors invoke Lambda functions to retrieve
+      property values from external data sources. The Lambda function
+      handles the actual database/API calls. The function must return
+      data in TwinMaker's expected format. There is no direct
+      database connectivity from TwinMaker.
+    common_false_claim: "Configure TwinMaker to connect directly to your Timestream database."
+    correct_action: "Create a Lambda function that queries Timestream and configure it as a data connector."
+
+  - id: P3-scene-dashboard
+    trigger_words: ["scene", "dashboard", "visualization", "3D view"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs confuse TwinMaker scenes with Grafana dashboards.
+      Scenes are 3D visualizations; dashboards are 2D.
+    actual_behavior: >
+      Scenes are 3D visualizations stored as JSON in S3. They
+      reference 3D models (glTF/GLB format) also stored in S3.
+      Scenes are viewed in the TwinMaker console or embedded via
+      the Grafana TwinMaker plugin. Grafana dashboards are separate
+      2D visualizations that can include TwinMaker scene panels.
+    common_false_claim: "Create a scene to show time-series charts."
+    correct_action: "Use Grafana dashboards for charts. Use scenes for 3D spatial visualization."
+
+  - id: P4-entity-auto-sync
+    trigger_words: ["entity sync", "automatic sync", "real-time entity"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest entities automatically sync with external systems.
+      Sync requires explicit configuration.
+    actual_behavior: >
+      Entity property values are retrieved on-demand via data
+      connectors (Lambda functions). Sync jobs synchronize entity
+      definitions from external sources (like SiteWise). Sync is
+      not real-time — it runs periodically. Property values from
+      data connectors are fetched when requested, not pushed.
+    common_false_claim: "Entities automatically reflect the latest sensor data."
+    correct_action: "Configure data connectors for on-demand property retrieval. Use sync jobs for entity definitions."
+
+  - id: P5-component-type-edit
+    trigger_words: ["edit component type", "modify component", "update schema"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest freely editing component types. Changes affect
+      all entities using that type.
+    actual_behavior: >
+      Updating a component type affects all entities that use it.
+      Adding properties is generally safe. Removing or changing
+      property types can break existing entities. Component type
+      changes are not versioned — there is only one active version.
+      Test changes in a non-production workspace first.
+    common_false_claim: "Update the component type without affecting existing entities."
+    correct_action: "Component type changes affect all entities. Test in non-production first."
+
+  - id: P6-unlimited-entities
+    trigger_words: ["entity limit", "scale", "many entities"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest unlimited entities per workspace. There are
+      per-workspace limits.
+    actual_behavior: >
+      Workspaces have limits on entities, component types, and
+      scenes. Default limits vary by region. Large digital twins
+      may require limit increases via Service Quotas. Entity
+      hierarchy depth also has limits.
+    common_false_claim: "Create millions of entities in a single workspace."
+    correct_action: "Check workspace limits. Request increases via Service Quotas for large twins."
+
+  - id: P7-grafana-auto-plugin
+    trigger_words: ["Grafana plugin", "TwinMaker Grafana", "Grafana setup"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest the TwinMaker Grafana plugin is pre-installed.
+      It must be explicitly installed and configured.
+    actual_behavior: >
+      The TwinMaker Grafana plugin must be installed in Amazon
+      Managed Grafana or self-hosted Grafana. It requires IAM
+      authentication configuration. The Grafana workspace must
+      have the TwinMaker data source configured with workspace ID
+      and region. Scene panels require additional configuration.
+    common_false_claim: "Open Grafana and the TwinMaker data is automatically available."
+    correct_action: "Install TwinMaker plugin, configure data source with workspace ID and IAM auth."
+
+  - id: P8-sync-instant
+    trigger_words: ["sync job", "instant sync", "real-time sync"]
+    hallucination_risk: HIGH
+    why_llms_get_this_wrong: >
+      LLMs suggest sync jobs provide real-time synchronization.
+      Sync jobs run periodically with eventual consistency.
+    actual_behavior: >
+      Sync jobs synchronize entity definitions from external
+      sources (like SiteWise) on a periodic basis. They are not
+      real-time. Sync jobs can take minutes to hours depending on
+      the number of entities. Conflicts between local changes and
+      sync source are resolved based on sync configuration.
+    common_false_claim: "Sync jobs keep entities in real-time sync with SiteWise."
+    correct_action: "Sync jobs run periodically. Allow for sync delay. Check sync job status for errors."
+
+remediation_hallucinations:
+  - id: R1-overly-broad-fix
+    trigger: "access denied or permission error"
+    dangerous_suggestion: "Grant overly broad permissions (Action: *, Resource: *) to resolve the error"
+    correct_approach: "Identify the specific denied action from error details or CloudTrail and grant only that action on the specific resource"
+
+  - id: R2-disable-security-control
+    trigger: "blocked by security control or policy"
+    dangerous_suggestion: "Disable the security control to unblock the operation"
+    correct_approach: "Add a specific exception for the legitimate use case while keeping the control active"
