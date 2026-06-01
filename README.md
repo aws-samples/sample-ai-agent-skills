@@ -1,4 +1,4 @@
-# AWS AI Agent Troubleshooting Skills
+# AI Agent Troubleshooting Skills for AWS Services
 
 A collection of 225 troubleshooting skills for AI agents working with AWS infrastructure. Each skill provides structured runbooks, anti-hallucination guardrails, and systematic investigation workflows that agents use during diagnostics.
 
