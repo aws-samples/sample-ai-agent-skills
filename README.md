@@ -1,12 +1,27 @@
-# AWS DevOps Agent Skills
+# AWS AI Agent Troubleshooting Skills
 
-A collection of 225 troubleshooting skills for the AWS DevOps Agent. Each skill provides structured runbooks, anti-hallucination guardrails, and systematic investigation workflows that the agent uses during diagnostics.
+A collection of 225 troubleshooting skills for AI agents working with AWS infrastructure. Each skill provides structured runbooks, anti-hallucination guardrails, and systematic investigation workflows that agents use during diagnostics.
 
-
+These skills are **agent-agnostic** — they're plain markdown and YAML files that work with any AI agent or coding assistant, including AWS DevOps Agent, Kiro, Cursor, Copilot, or your own custom agent setup.
 
 ## Quick Start
 
-1. Download the `.zip` file for the skill you need
+### Any AI Agent
+
+Each skill is a self-contained folder of markdown and YAML files. Clone the repo and point your agent at the relevant skill folder:
+
+```bash
+git clone https://github.com/aws-samples/sample-ai-agent-skills.git
+```
+
+Use the skill files as context for your agent — either by referencing them directly, adding them to your agent's knowledge base, or including them as steering/system context.
+
+### AWS DevOps Agent
+
+1. Compress the skill folder to a `.zip` file:
+   ```bash
+   zip -r ec2-troubleshooting.zip ec2-troubleshooting/
+   ```
 2. Open the AWS DevOps Agent web app
 3. Go to **Settings** → **Add Skill** → **Upload Skill**
 4. Select the `.zip` file and upload
@@ -397,7 +412,11 @@ To create a new skill following the same pattern:
 2. Add `SKILL.md` with frontmatter, investigation workflow, gotchas, and anti-hallucination rules
 3. Add `README.md` with skill documentation
 4. Create `references/` with runbooks (A1, A2, ..., Z1), guardrails, and hallucination patterns
-5. Zip the directory and place the `.zip` alongside it
+
+For AWS DevOps Agent, zip the directory before uploading:
+```bash
+zip -r <service>-troubleshooting.zip <service>-troubleshooting/
+```
 
 Each runbook should follow the standard format with YAML frontmatter (including `version: "1.0.0"`), Phase 1 Triage, Phase 2 Remediate (with safety ratings), Phase 3 Rollback (for state-changing actions), Common Issues, Escalation Conditions, and Output Format sections. See [SECURITY.md](SECURITY.md) for the full security framework.
 
