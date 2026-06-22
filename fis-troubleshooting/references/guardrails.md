@@ -1,4 +1,4 @@
-# AWS Fault Injection Simulator Anti-Misdiagnosis Guardrails
+# AWS Fault Injection Service Anti-Misdiagnosis Guardrails
 
 Read these guardrails BEFORE concluding on any FIS issue.
 
