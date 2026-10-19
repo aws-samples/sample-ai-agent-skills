@@ -16,7 +16,7 @@ compatibility: >
   cloudwatch, and cloudtrail permissions.
 ---
 
-# AWS Fault Injection Simulator Diagnostics
+# AWS Fault Injection Service Diagnostics
 
 ## When to use
 
@@ -61,7 +61,7 @@ Read `references/guardrails.md` before concluding on any FIS issue.
 | `fis stop-experiment` | Stop running experiment |
 | `fis list-actions` | List available FIS actions |
 
-## Gotchas: AWS Fault Injection Simulator
+## Gotchas: AWS Fault Injection Service
 
 - FIS experiments cause REAL failures in your infrastructure. They are not simulations — they actually stop instances, inject latency, etc. Always use stop conditions.
 - The FIS IAM role must have permissions to perform the actions AND to the target resources. A common mistake is granting FIS permissions but not resource-level permissions.

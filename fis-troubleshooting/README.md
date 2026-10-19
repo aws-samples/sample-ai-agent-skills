@@ -1,4 +1,4 @@
-# AWS Fault Injection Simulator Diagnostics Skill
+# AWS Fault Injection Service Diagnostics Skill
 
 Agent skill for investigating and troubleshooting AWS FIS problems using structured runbooks, anti-hallucination guardrails, and systematic investigation workflows.
 

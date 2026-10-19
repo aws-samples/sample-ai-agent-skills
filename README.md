@@ -183,7 +183,7 @@ You can always edit (customize), activate/de-activate or delete skills from the 
 | Elastic Disaster Recovery Diagnostics | `drs-troubleshooting.zip` | 17 | Source server, replication, recovery, failback, drill testing |
 | Application Migration Service Diagnostics | `mgn-troubleshooting.zip` | 15 | Source server, replication, cutover, post-migration, agent |
 | Resilience Hub Diagnostics | `resiliencehub-troubleshooting.zip` | 15 | Application, resiliency policy, assessment, recommendations, drift |
-| Fault Injection Simulator Diagnostics | `fis-troubleshooting.zip` | 14 | Experiment templates, targets, actions, stop conditions, execution |
+| Fault Injection Service Diagnostics | `fis-troubleshooting.zip` | 14 | Experiment templates, targets, actions, stop conditions, execution |
 | Change Manager Diagnostics | `changemanager-troubleshooting.zip` | 12 | Change templates, requests, approvals, runbook execution |
 | OpsCenter Diagnostics | `opscenter-troubleshooting.zip` | 12 | OpsItems, automation, related resources, deduplication |
 | Audit Manager Diagnostics | `auditmanager-troubleshooting.zip` | 14 | Assessments, frameworks, controls, evidence collection, reports |
@@ -375,7 +375,7 @@ Documented patterns where LLMs commonly produce incorrect information about the 
 - SQS / SNS / EventBridge, Step Functions, Kinesis, AppSync, EventBridge Advanced (Scheduler/Pipes), Amazon MQ, IoT Core, SNS Advanced, IoT Greengrass, IoT SiteWise, IoT Events, IoT Analytics, IoT TwinMaker, IoT Device Defender, IoT Device Management, IoT FleetWise, Location Service, AppFlow
 
 ### Management & Governance
-- Control Tower, Control Tower AFT, Landing Zone Accelerator, CloudFormation / CDK, Organizations, Config, CloudWatch, SSM (Systems Manager), SSM Automation Advanced, SSM Fleet Manager, SSM Distributor, CloudTrail, Service Quotas, RAM, Trusted Advisor, Health Dashboard, Incident Manager, Cost Explorer / Budgets, Budgets Actions, Change Manager, OpsCenter, DevOps Guru, Compute Optimizer, Well-Architected Tool, Resilience Hub, Fault Injection Simulator, AppConfig, CloudShell, Service Catalog, Resource Explorer, License Manager
+- Control Tower, Control Tower AFT, Landing Zone Accelerator, CloudFormation / CDK, Organizations, Config, CloudWatch, SSM (Systems Manager), SSM Automation Advanced, SSM Fleet Manager, SSM Distributor, CloudTrail, Service Quotas, RAM, Trusted Advisor, Health Dashboard, Incident Manager, Cost Explorer / Budgets, Budgets Actions, Change Manager, OpsCenter, DevOps Guru, Compute Optimizer, Well-Architected Tool, Resilience Hub, Fault Injection Service, AppConfig, CloudShell, Service Catalog, Resource Explorer, License Manager
 
 ### Developer Tools
 - CI/CD Pipeline (CodePipeline / CodeBuild / CodeDeploy), ECR, CodeArtifact, Proton, CodeGuru, Q Developer, CodeCatalyst
